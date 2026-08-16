@@ -160,6 +160,26 @@ Facts established from the data that will otherwise cost you time:
 - Strength ordering is the **one value not derived from upstream** — Archi does not encode
   it. It is the conventional order, marked unverified in code and in the generated file.
 
+### C4 (ADR-0007)
+
+`metamodel/c4-mapping.yaml` is **hand-authored** and lives separately from the generated
+metamodel on purpose: one is derived from upstream and checked for drift, the other is an
+editorial decision. The loader validates every concept it names against the metamodel.
+
+Two things here are easy to get wrong and expensive when wrong:
+
+- **C4 levels are never stored on an element.** Whether something is a Software System or a
+  Container depends on where the boundary is drawn — the same service is both, seen from
+  different systems. Level is depth relative to a view's focus. Do not add a "C4 type" field.
+- **C4 and ArchiMate point relationships in opposite directions.** C4 draws consumer →
+  provider ("uses"); ArchiMate Serving is provider → consumer ("serves"). The `reverse` flag
+  on `C4RelationshipIntent` handles it. Getting this wrong yields a plausible-looking diagram
+  whose impact analysis is exactly backwards.
+
+`C4Shape.OMITTED` is the default and the correct answer for 52 of 62 concepts — C4 has no
+behaviour, interfaces, motivation, strategy or implementation elements. The count of
+representable concepts is pinned by a test; changing it is a design change for ADR-0007.
+
 ## Environment and version discipline
 
 Versions in this repo were verified against `repo1.maven.org/.../maven-metadata.xml`, not

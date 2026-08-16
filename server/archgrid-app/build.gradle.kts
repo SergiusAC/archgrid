@@ -48,6 +48,7 @@ tasks.named<org.springframework.boot.gradle.tasks.bundling.BootJar>("bootJar") {
 tasks.named<ProcessResources>("processResources") {
     from(rootDir.parentFile.resolve("metamodel")) {
         include("archimate-3.2.yaml")
+        include("c4-mapping.yaml")
         into("metamodel")
     }
 }

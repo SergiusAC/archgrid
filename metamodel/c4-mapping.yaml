@@ -1,0 +1,139 @@
+# C4 <-> ArchiMate mapping.
+#
+# HAND-AUTHORED. Unlike archimate-3.2.yaml, which is generated from upstream and checked for
+# drift, this file is an editorial decision. Changing it is a design change: read ADR-0007
+# first (docs/adr/0007-c4-projection.md).
+#
+# The governing decision: C4 is a projection, never stored. Elements carry ArchiMate types
+# and containment; a C4 level is depth relative to the focus of a view, because in C4 whether
+# something is a Software System or a Container depends on where the boundary is drawn, not
+# on what the thing is.
+
+version: 1
+appliesTo:
+  language: archimate
+  version: "3.2"
+
+# ---------------------------------------------------------------------------------------
+# ArchiMate -> C4: how an element renders in a C4 view.
+#
+# Anything not listed here is OMITTED, and that is the honest answer for most of the
+# language: C4 has no equivalent for behaviour, interfaces, motivation, strategy or
+# implementation & migration. A C4 view must be able to say "these elements are not shown"
+# rather than invent a shape for them.
+#
+# BOX elements take their C4 level - system, container or component - from their depth
+# relative to the view's focus. That is why there is no 'softwareSystem' entry here.
+# ---------------------------------------------------------------------------------------
+rendering:
+  person:
+    # C4's Person is a human. BusinessRole is the capacity rather than the individual, but
+    # both are drawn as a person in every C4 diagram anyone actually produces.
+    - BusinessActor
+    - BusinessRole
+
+  box:
+    - ApplicationComponent
+    - ApplicationCollaboration
+    # Technology-layer boxes: a C4 "container" is very often a DBMS, a broker or a runtime.
+    - Node
+    - Device
+    - SystemSoftware
+    # A deployed file, a file system, an object store.
+    - Artifact
+
+  boundary:
+    # C4's system and container boundaries. Grouping is exactly this concept; Location is
+    # the geographic variant and reads the same way on a diagram.
+    - Grouping
+    - Location
+
+# ---------------------------------------------------------------------------------------
+# Which ArchiMate layers each C4 level admits.
+#
+# Context shows people and software systems only - putting technology on a context diagram
+# is the most common way a C4 diagram stops being a context diagram.
+# ---------------------------------------------------------------------------------------
+# 'depth' is how far below the view's focus the level looks. It is the entire C4 level
+# model: 0 shows the focus and its neighbours, 1 shows the focus's children, 2 their
+# children. Nothing about a level is stored on an element.
+levels:
+  - code: context
+    name: System Context
+    depth: 0
+    layers: [business, application]
+  - code: container
+    name: Container
+    depth: 1
+    layers: [business, application, technology]
+  - code: component
+    name: Component
+    depth: 2
+    layers: [application]
+
+# ---------------------------------------------------------------------------------------
+# C4 -> ArchiMate: what to create when authoring or importing in C4 terms.
+#
+# One-to-many in this direction, so each entry carries a default and, where the C4 concept
+# is genuinely ambiguous, discriminators matched against C4's free-text 'technology' field.
+# First match wins; matching is case-insensitive substring.
+# ---------------------------------------------------------------------------------------
+authoring:
+  - c4: person
+    concept: BusinessActor
+
+  - c4: software-system
+    concept: ApplicationComponent
+
+  - c4: container
+    # "Container" is the ambiguous one. C4 calls an application, a database and a message
+    # broker all containers; ArchiMate does not.
+    concept: ApplicationComponent
+    discriminators:
+      - concept: SystemSoftware
+        technologyMatches:
+          [postgres, postgresql, mysql, mariadb, oracle, sql server, sqlserver, db2, sqlite,
+           mongodb, cassandra, dynamodb, couchbase, neo4j, redis, memcached,
+           elasticsearch, opensearch, clickhouse,
+           kafka, rabbitmq, activemq, artemis, nats, pulsar, sqs, service bus,
+           zookeeper, etcd, consul,
+           nginx, tomcat, jetty, iis, apache http]
+      - concept: Artifact
+        technologyMatches: [file system, filesystem, nfs, s3, blob storage, object storage]
+
+  - c4: component
+    concept: ApplicationComponent
+
+  - c4: deployment-node
+    concept: Node
+
+  - c4: infrastructure-node
+    concept: Node
+
+# ---------------------------------------------------------------------------------------
+# Relationships.
+#
+# READ ADR-0007 BEFORE CHANGING 'reverse'. C4 draws an arrow from consumer to provider;
+# ArchiMate's Serving points from provider to consumer. Importing without reversing produces
+# a model where every dependency faces backwards - the diagram still looks plausible while
+# impact analysis answers the exact opposite of the truth.
+# ---------------------------------------------------------------------------------------
+relationships:
+  default: uses
+  intents:
+    - intent: uses
+      description: A uses B, A depends on B
+      concept: Serving
+      reverse: true
+    - intent: sends
+      description: A sends data to B
+      concept: Flow
+      reverse: false
+    - intent: triggers
+      description: A triggers B
+      concept: Triggering
+      reverse: false
+    - intent: accesses
+      description: A reads from or writes to B
+      concept: Access
+      reverse: false

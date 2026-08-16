@@ -31,6 +31,7 @@ Architecture Knowledge Platform: архитектурный граф как sour
 | [0004](adr/0004-commands-and-versioning-from-day-one.md) | Изменения — только команды; версии в схеме с первого дня | accepted |
 | [0005](adr/0005-collaboration-strategy.md) | Presence сейчас, CRDT только для layout потом | accepted |
 | [0006](adr/0006-ai-as-isolated-optional-sidecar.md) | AI — изолированный отключаемый sidecar | accepted |
+| [0007](adr/0007-c4-projection.md) | C4 — проекция поверх ArchiMate, а не второй набор типов | accepted |
 
 ## Ключевые вехи
 
