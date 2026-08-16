@@ -1,0 +1,43 @@
+# --- Java / Gradle ---
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+out/
+*.class
+*.log
+hs_err_pid*
+replay_pid*
+
+# --- Node / web ---
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+coverage/
+
+# --- IDE ---
+.idea/
+!.idea/icon.png
+*.iml
+*.iws
+*.ipr
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.settings/
+.classpath
+.project
+.factorypath
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Secrets / local config ---
+.env
+.env.local
+*.pem
+*.key
+!deploy/keycloak/*.json

@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    name: Server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          # The wrapper JAR is committed; verifying its checksum against Gradle's published
+          # list is what stops a tampered wrapper from executing arbitrary code in CI.
+          validate-wrappers: true
+          build-root-directory: server
+
+      # Integration tests use Testcontainers. GitHub-hosted Ubuntu runners provide a Docker
+      # daemon, so dev.archgrid.support.Docker#isAvailable is true and nothing is skipped.
+      - name: Build and test
+        working-directory: server
+        run: ./gradlew build --no-daemon --stacktrace
+
+      - name: Publish test report
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: server-test-results
+          path: server/**/build/reports/tests/**
+          retention-days: 7
+          if-no-files-found: ignore
+
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type-check and build
+        run: npm run build

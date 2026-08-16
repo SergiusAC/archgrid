@@ -1,0 +1,65 @@
+# Local development stack for ArchGrid.
+#
+# This is NOT the production deployment descriptor — that is a Helm chart, added in
+# phase 8. What this file must stay faithful to is the *shape* of a production install:
+# exactly one stateful component (PostgreSQL) and an external identity provider that
+# ArchGrid does not own.
+#
+#   docker compose -f deploy/docker-compose.yml up -d
+#
+# Postgres  localhost:5433   archgrid / archgrid
+# Keycloak  localhost:8081   admin / admin   (realm: archgrid)
+#
+# The database is published on 5433 rather than 5432 on purpose: a developer machine very
+# often already has something on the default PostgreSQL port, and a stack that refuses to
+# start on first run is a bad first impression of the project. Override with
+# ARCHGRID_DB_PORT if 5433 is taken too; the default in application.yaml matches.
+
+name: archgrid
+
+services:
+  postgres:
+    # pgvector rather than stock postgres: semantic search arrives in phase 7, and
+    # switching the database image late means re-validating every migration against a
+    # different build. The extension costs nothing while it is unused.
+    image: pgvector/pgvector:pg18
+    container_name: archgrid-postgres
+    environment:
+      POSTGRES_DB: archgrid
+      POSTGRES_USER: archgrid
+      POSTGRES_PASSWORD: archgrid
+      # Deterministic collation: index ordering must not depend on the host locale.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    ports:
+      - "${ARCHGRID_DB_PORT:-5433}:5432"
+    volumes:
+      # PostgreSQL 18+ images store data in a major-version subdirectory, so the mount
+      # goes on /var/lib/postgresql, not /var/lib/postgresql/data. Mounting the old path
+      # makes the container refuse to start.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U archgrid -d archgrid"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.1
+    container_name: archgrid-keycloak
+    # Development mode only: no TLS, in-memory H2, permissive hostname handling.
+    # A customer install points ArchGrid at their own identity provider instead.
+    command: ["start-dev", "--import-realm", "--http-port=8081"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+    name: archgrid-postgres-data

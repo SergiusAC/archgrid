@@ -1,0 +1,22 @@
+# Versions verified against repo1.maven.org on 2026-08-17.
+# Everything managed by the Spring Boot BOM is intentionally NOT pinned here:
+# Flyway 12.4.0, PostgreSQL driver 42.7.11, Testcontainers 2.0.5, JUnit 6.0.3,
+# AssertJ 3.27.7, Micrometer 1.17.0, JSpecify 1.0.0, Spring Framework 7.0.8,
+# Spring Security 7.1.0 all come from spring-boot-dependencies:4.1.0.
+
+[versions]
+spring-boot = "4.1.0"
+archunit = "1.5.0"
+springdoc = "3.1.0"
+
+[libraries]
+spring-boot-bom = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot" }
+
+# Core ArchUnit, not archunit-junit5: the JUnit-engine integration targets the JUnit 5
+# platform, and the Boot 4.1 BOM brings JUnit 6. Plain assertions work on any platform.
+archunit = { module = "com.tngtech.archunit:archunit", version.ref = "archunit" }
+
+springdoc-openapi = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version.ref = "springdoc" }
+
+[plugins]
+spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }

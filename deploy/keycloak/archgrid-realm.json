@@ -1,0 +1,57 @@
+{
+  "realm": "archgrid",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginTheme": "keycloak",
+  "accessTokenLifespan": 1800,
+  "roles": {
+    "realm": [
+      { "name": "viewer", "description": "Read models, views and documentation." },
+      { "name": "contributor", "description": "Change models through validated commands." },
+      { "name": "owner", "description": "Manage models, views and members of a workspace." },
+      { "name": "admin", "description": "Administer the installation." }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "archgrid-web",
+      "name": "ArchGrid web client",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:5173/*"],
+      "webOrigins": ["http://localhost:5173"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:5173/*"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "architect",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "architect@archgrid.local",
+      "firstName": "Ada",
+      "lastName": "Architect",
+      "credentials": [{ "type": "password", "value": "architect", "temporary": false }],
+      "realmRoles": ["viewer", "contributor", "owner"]
+    },
+    {
+      "username": "reader",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "reader@archgrid.local",
+      "firstName": "Rick",
+      "lastName": "Reader",
+      "credentials": [{ "type": "password", "value": "reader", "temporary": false }],
+      "realmRoles": ["viewer"]
+    }
+  ]
+}
