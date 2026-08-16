@@ -160,6 +160,28 @@ Facts established from the data that will otherwise cost you time:
 - Strength ordering is the **one value not derived from upstream** — Archi does not encode
   it. It is the conventional order, marked unverified in code and in the generated file.
 
+### Profiles — ArchiMate's own extension mechanism (ADR-0002)
+
+"Specialization" means two different things in ArchiMate and both are supported, differently:
+
+- The **Specialization relationship** is one of the 11 relationship types, no special handling.
+- **Specialization of concepts** — Archi calls it a Profile, the exchange format a Stereotype —
+  lets a model define "Microservice" as a kind of Application Component. This is how a
+  customer extends the language without the product abandoning conformance, which is why
+  arbitrary per-tenant metamodels are still refused.
+
+The invariant that makes profiles safe: **a profiled element is validated exactly as its base
+concept.** A profile adds vocabulary and attributes, never changes what is permitted.
+Resolution happens in one place, `ProfileCatalog.resolve`; anything that resolves a type name
+elsewhere is a bug waiting to break that guarantee.
+
+Profiles belong to a model, not the metamodel — they are customer content, stored in the
+`profile` table, never in the generated `archimate-3.2.yaml`. Attribute types are exactly the
+exchange format's six so export loses nothing; mandatory-attribute rules are deliberately not
+modelled here (they are model-quality governance and would not survive a round trip).
+Specialisability is read from the matrix rather than hard-coded: 61 of 62 concepts qualify,
+`Relationship` being the exception.
+
 ### C4 (ADR-0007)
 
 `metamodel/c4-mapping.yaml` is **hand-authored** and lives separately from the generated

@@ -57,10 +57,10 @@ class WorkspaceApiIT {
     void schema_is_migrated() {
         Integer tables = jdbc.sql(
                         "select count(*) from information_schema.tables "
-                                + "where table_schema = 'public' and table_name in ('workspace', 'model')")
+                                + "where table_schema = 'public' and table_name in ('workspace', 'model', 'profile')")
                 .query(Integer.class)
                 .single();
-        assertThat(tables).isEqualTo(2);
+        assertThat(tables).isEqualTo(3);
     }
 
     @Test
