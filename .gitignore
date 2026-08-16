@@ -41,3 +41,6 @@ desktop.ini
 *.pem
 *.key
 !deploy/keycloak/*.json
+
+# Local scratch
+notes.txt

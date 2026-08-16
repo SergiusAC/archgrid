@@ -40,3 +40,24 @@ dependencies {
 tasks.named<org.springframework.boot.gradle.tasks.bundling.BootJar>("bootJar") {
     archiveFileName = "archgrid.jar"
 }
+
+// The canonical metamodel lives at the repository root next to the upstream sources it is
+// generated from, not buried in src/main/resources — it is a reviewable artefact, not an
+// implementation detail. It is copied onto the classpath so the running application and the
+// air-gapped distribution both carry it.
+tasks.named<ProcessResources>("processResources") {
+    from(rootDir.parentFile.resolve("metamodel")) {
+        include("archimate-3.2.yaml")
+        into("metamodel")
+    }
+}
+
+// Rewrites metamodel/archimate-3.2.yaml from the vendored Archi sources. Kept out of the
+// normal build on purpose: regenerating is a deliberate act whose diff must be read, not a
+// side effect of compiling. MetamodelGenerationTest guarantees the committed file matches.
+tasks.register<JavaExec>("generateMetamodel") {
+    group = "archgrid"
+    description = "Regenerate metamodel/archimate-3.2.yaml from metamodel/upstream/archi."
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass = "dev.archgrid.metamodel.upstream.ArchiMetamodelGenerator"
+}

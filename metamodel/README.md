@@ -1,33 +1,63 @@
 # Metamodel
 
-This directory will hold `archimate-3.2.yaml` — the machine-readable ArchiMate 3.2
-metamodel that ArchGrid loads at startup: element types, relationship types, the
-structural-strength ordering used for relationship derivation, the permitted-relationship
-matrix, viewpoints with their palettes, and the C4 ↔ ArchiMate type mapping.
+`archimate-3.2.yaml` is the canonical ArchiMate metamodel ArchGrid loads at startup: 11
+relationship types, 62 concepts (60 element types plus two matrix endpoints), the 62 × 62
+permitted-relationship matrix, and 25 viewpoints with expanded palettes.
 
-It is empty in phase 0 by design. Filling it is the whole of **phase 1**, and the rule that
-governs it is not negotiable (see [ADR-0002](../docs/adr/0002-metamodel-as-data.md)):
-
-> The permitted-relationship matrix and the strength ordering are transcribed from the
-> official ArchiMate 3.2 specification, Appendix B. Not from memory, not from an LLM, not
-> from a third-party repository without line-by-line verification.
-
-An error in this file makes the product give an architect a false guarantee about the
-correctness of their model. That is the one failure the target user does not forgive, and
-no amount of polish elsewhere compensates for it.
-
-## Planned layout
+**It is generated. Do not edit it by hand.**
 
 ```
 metamodel/
-├── archimate-3.2.yaml        # the metamodel itself
-├── checksum.txt              # verified at startup; a mismatch fails the boot
-└── conformance/              # control cases taken from the specification, used as tests
+├── archimate-3.2.yaml     generated canonical metamodel (~4300 lines)
+├── VERIFICATION.md        what was checked against a first-party source, and what was not
+└── upstream/archi/        vendored Archi sources, pinned to a commit — see PROVENANCE.md
 ```
 
-## Why data and not code
+## Regenerating
 
-A 60×60 matrix expressed as conditional statements is untestable and unmaintainable. As
-data it can be validated automatically for completeness, internal contradiction and
-unresolved references — and extended with new viewpoints or notation mappings without a
-release.
+```bash
+cd server && ./gradlew generateMetamodel
+```
+
+Then read the diff before committing it. That is the entire point of this arrangement: an
+unexplained change in the matrix is a defect, not an update. `MetamodelGenerationTest` fails
+the build if the committed file is not exactly what the generator produces, so a hand edit or
+a half-applied upstream change cannot survive.
+
+## What is derived from what
+
+| Output | Derived from |
+|---|---|
+| Relationship types, keys | `relationships-keys.xml` |
+| Relationship category | `archimate.ecore` — the `eSuperTypes` of each relationship class |
+| Element types | source concepts of `relationships.xml` |
+| Layer, aspect | `archimate.ecore` — `ApplicationComponent` is an `ApplicationElement` and an `ActiveStructureElement` |
+| Permitted matrix | `relationships.xml`, letters sorted for stable diffs |
+| Viewpoints, palettes | `viewpoints.xml`, with `$ApplicationElements$`-style macros expanded against the same type hierarchy |
+| Structural strength ordering | **nothing upstream** — see below |
+
+## The one value that is not derived
+
+Archi encodes which relationship types are structural but not their relative strength, and
+the weakest-link derivation rule needs an order. The generator carries the conventional
+ordering — Composition, Aggregation, Assignment, Realization — and marks it **unverified**,
+in the code, in the generated file and in `VERIFICATION.md`. It affects derived relationships
+(phase 4) only, never plain validation.
+
+## Two traps this format exists to avoid
+
+- **Viewpoint macros.** Upstream palettes are not plain concept lists. Parsed naively,
+  Application Cooperation is a two-item palette and Technology is a two-item palette. The
+  generator expands them; the loader would have no way to know they were wrong.
+- **YAML booleans.** `no` is a legitimate matrix value — Influence plus Association — and
+  YAML 1.1 parses it unquoted as the boolean `false`. Every matrix value and every
+  relationship key in the generated file is quoted for this reason. This was found by a test,
+  after it had already silently corrupted one cell.
+
+## Verification status
+
+Vocabulary is verified against The Open Group exchange-format XSD. The matrix, the strength
+ordering and the palettes are **accepted on the authority of Archi** by an explicit decision
+recorded in [ADR-0002](../docs/adr/0002-metamodel-as-data.md); they have not been checked
+against the specification's Appendix B. Until that is closed the product may not claim
+metamodel conformance. Details in [VERIFICATION.md](VERIFICATION.md).

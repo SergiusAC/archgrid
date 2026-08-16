@@ -50,9 +50,15 @@ All 60 real element types agree exactly, across all layers and aspects.
 
 ## Result 3 — the matrix substantially includes derived relationships
 
-Structure of `relationships.xml`: 62 × 62 = 3844 ordered pairs, **every cell non-empty**,
-11569 permitted relationships in total, averaging 3.01 of the 11 types per cell. Full
-density is expected — Association is permitted almost everywhere.
+Structure of `relationships.xml`: 62 × 62 = 3844 ordered pairs, all present, 11569 permitted
+relationships in total, averaging 3.01 of the 11 types per cell. Near-total density is
+expected — Association is permitted almost everywhere.
+
+Exactly **three** cells permit nothing at all, and all three lie between the two
+pseudo-concepts: `Junction → Relationship`, `Relationship → Junction`,
+`Relationship → Relationship`. Every pair of real element types permits at least one
+relationship. This is pinned by a test rather than merely observed — a fourth empty cell
+after an upstream update would mean two element types silently became unconnectable.
 
 To find out whether the table lists only directly permitted relationships or also derivable
 ones, the matrix was tested for closure under the structural weakest-link rule (a—R1→b,

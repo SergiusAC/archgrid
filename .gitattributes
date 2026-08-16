@@ -1,5 +1,10 @@
 * text=auto eol=lf
 
+# Vendored upstream data must survive round-tripping byte for byte: its SHA-256 is recorded
+# in metamodel/upstream/archi/PROVENANCE.md and verified by MetamodelGenerationTest. Line
+# ending normalisation would change those bytes and fail the build on a fresh clone.
+metamodel/upstream/** -text
+
 *.bat        text eol=crlf
 *.cmd        text eol=crlf
 gradlew      text eol=lf
