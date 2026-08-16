@@ -129,6 +129,26 @@ product give an architect a false guarantee about their model's correctness. If 
 in the matrix without a source, say so and ask for the specification rather than producing
 something that looks right. See ADR-0002.
 
+**Source status — read `metamodel/VERIFICATION.md` before touching the metamodel.** The base
+is Archi's `relationships.xml` / `viewpoints.xml` (MIT, declares `version="3.2"`). Vocabulary
+— 11 relationship types and 60 element types — is verified against The Open Group exchange
+XSD and matches exactly. The **matrix itself, the strength ordering and the viewpoint
+palettes are still unverified**, because the XSD does not describe them; only Appendix B can.
+Until that is closed, the product may not claim metamodel conformance.
+
+Two facts established from the data that will otherwise cost you time:
+
+- The matrix substantially includes **derived** relationships (97 % closure under the
+  structural weakest-link rule on core concepts). It answers "may this relationship exist
+  between these types", never "is this instance explicit or derived" — that is computed by
+  our own derivation engine from the model graph.
+- `viewpoints.xml` palettes contain macro placeholders (`$ApplicationElements$`,
+  `$BusinessElements$`, and five more) that the loader must expand. An implausibly small
+  palette is a parsing bug; an empty one (`layered`) means all concepts are allowed.
+
+Wording is constrained: "ArchiMate 3.2 compatible" is permitted, "ArchiMate-certified" or
+"conforming implementation" is not, anywhere in UI, docs or README.
+
 ## Environment and version discipline
 
 Versions in this repo were verified against `repo1.maven.org/.../maven-metadata.xml`, not
