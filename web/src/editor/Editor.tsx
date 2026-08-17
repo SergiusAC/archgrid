@@ -8,16 +8,20 @@ import {
   type Connection,
   type Edge,
   type NodeChange,
+  type ReactFlowInstance,
 } from '@xyflow/react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { Api } from '../api/client.ts'
 import { ApiError } from '../api/client.ts'
 import type { Command, ElementType, ModelElement, ModelRelationship } from '../api/types.ts'
-import { Metamodel } from '../metamodel/Metamodel.ts'
+import { LAYER_COLORS, Metamodel } from '../metamodel/Metamodel.ts'
 import ArchimateNodeView, { type ArchimateNode } from './ArchimateNode.tsx'
+import ContextMenu, { type ContextTarget } from './ContextMenu.tsx'
+import MarkerDefs from './MarkerDefs.tsx'
 import Palette from './Palette.tsx'
-import { autoLayout, nextFreePosition } from './layout.ts'
+import { NODE_HEIGHT, NODE_WIDTH, autoLayout, nextFreePosition } from './layout.ts'
+import { marker, notationFor } from './notation.ts'
 import { invert, useHistoryStore, useLayoutStore } from './store.ts'
 
 import '@xyflow/react/dist/style.css'
@@ -39,10 +43,17 @@ export default function Editor({ api, workspace, model, metamodel, profiles }: E
   const [connectingFrom, setConnectingFrom] = useState<string | null>(null)
   const [message, setMessage] = useState<{ kind: 'error' | 'info'; text: string } | null>(null)
   const [selected, setSelected] = useState<string[]>([])
+  const [context, setContext] = useState<ContextTarget | null>(null)
+  const flow = useRef<ReactFlowInstance<ArchimateNode, Edge> | null>(null)
+  const fitted = useRef(false)
 
   const positions = useLayoutStore((state) => state.positions)
+  const hidden = useLayoutStore((state) => state.hidden)
   const setPositions = useLayoutStore((state) => state.setPositions)
   const setPosition = useLayoutStore((state) => state.setPosition)
+  const hide = useLayoutStore((state) => state.hide)
+  const show = useLayoutStore((state) => state.show)
+  const showAll = useLayoutStore((state) => state.showAll)
   const history = useHistoryStore()
 
   const snapshot = useQuery({
@@ -74,15 +85,23 @@ export default function Editor({ api, workspace, model, metamodel, profiles }: E
     [relationships],
   )
 
-  // Elements without a position have just appeared; lay the whole thing out again rather than
-  // dropping them at the origin on top of each other.
+  const visibleElements = useMemo(() => elements.filter((element) => !hidden[element.key]), [elements, hidden])
+  const visibleRelationships = useMemo(
+    () =>
+      relationships.filter(
+        (relationship) => !hidden[relationship.source] && !hidden[relationship.target],
+      ),
+    [relationships, hidden],
+  )
+  const hiddenElements = useMemo(() => elements.filter((element) => hidden[element.key]), [elements, hidden])
+
   useEffect(() => {
-    const missing = elements.filter((element) => !positions[element.key])
-    if (missing.length === 0 || elements.length === 0) {
+    const missing = visibleElements.filter((element) => !positions[element.key])
+    if (missing.length === 0) {
       return
     }
     if (Object.keys(positions).length === 0) {
-      void autoLayout(elements, relationships).then(setPositions)
+      void autoLayout(visibleElements, visibleRelationships).then(setPositions)
     } else {
       const placed: Record<string, { x: number; y: number }> = {}
       let taken = positions
@@ -93,17 +112,26 @@ export default function Editor({ api, workspace, model, metamodel, profiles }: E
       }
       setPositions(placed)
     }
-  }, [elements, relationships, positions, setPositions])
+  }, [visibleElements, visibleRelationships, positions, setPositions])
+
+  // Auto-layout resolves after the canvas has already mounted, so React Flow's own `fitView`
+  // has by then fitted a diagram whose nodes were all at the origin. Refit once the first real
+  // positions land, otherwise the model opens zoomed into a corner.
+  useEffect(() => {
+    if (fitted.current || !flow.current || visibleElements.length === 0) {
+      return
+    }
+    if (visibleElements.every((element) => positions[element.key])) {
+      fitted.current = true
+      window.requestAnimationFrame(() => flow.current?.fitView({ padding: 0.2, duration: 300 }))
+    }
+  }, [visibleElements, positions])
 
   const apply = useMutation({
     mutationFn: async ({ commands, label }: { commands: Command[]; label: string }) => {
       const inverse = invert(commands, { elements: byKey, relationships: relationshipsByKey })
-      const result = await api.applyCommands(workspace, model, {
-        baseCommitId: headCommitId,
-        message: label,
-        commands,
-      })
-      return { result, inverse, commands, label }
+      await api.applyCommands(workspace, model, { baseCommitId: headCommitId, message: label, commands })
+      return { inverse, commands, label }
     },
     onSuccess: async ({ inverse, commands, label }) => {
       history.push({ forward: commands, inverse, label })
@@ -113,7 +141,7 @@ export default function Editor({ api, workspace, model, metamodel, profiles }: E
     onError: (error: unknown) => setMessage({ kind: 'error', text: describe(error) }),
   })
 
-  /** Applies a batch without recording it, used by undo and redo so they do not stack on themselves. */
+  /** Applies a batch without recording it, so undo and redo do not stack on themselves. */
   const applySilently = useCallback(
     async (commands: Command[], label: string) => {
       try {
@@ -131,12 +159,16 @@ export default function Editor({ api, workspace, model, metamodel, profiles }: E
 
   const nodes: ArchimateNode[] = useMemo(
     () =>
-      elements.map((element) => {
+      visibleElements.map((element) => {
         const type = metamodel.elementType(element.conceptType)
         return {
           id: element.key,
           type: 'archimate' as const,
           position: positions[element.key] ?? { x: 0, y: 0 },
+          // Explicit dimensions: the minimap draws from these, and without them it renders
+          // an empty rectangle until every node has been measured.
+          width: NODE_WIDTH,
+          height: NODE_HEIGHT,
           selected: selected.includes(element.key),
           data: {
             elementKey: element.key,
@@ -148,20 +180,26 @@ export default function Editor({ api, workspace, model, metamodel, profiles }: E
           },
         }
       }),
-    [elements, positions, selected, metamodel, connectingFrom, byKey, relationshipType],
+    [visibleElements, positions, selected, metamodel, connectingFrom, byKey, relationshipType],
   )
 
   const edges: Edge[] = useMemo(
     () =>
-      relationships.map((relationship) => ({
-        id: relationship.key,
-        source: relationship.source,
-        target: relationship.target,
-        label: relationship.name ?? relationship.type,
-        className: `ag-edge ag-edge-${relationship.type.toLowerCase()}`,
-        animated: relationship.type === 'Flow',
-      })),
-    [relationships],
+      visibleRelationships.map((relationship) => {
+        const notation = notationFor(relationship.type)
+        return {
+          id: relationship.key,
+          source: relationship.source,
+          target: relationship.target,
+          label: relationship.name ?? relationship.type,
+          markerEnd: marker(notation.markerEnd),
+          markerStart: marker(notation.markerStart),
+          animated: notation.animated ?? false,
+          style: notation.dash ? { strokeDasharray: notation.dash } : undefined,
+          className: `ag-edge ag-edge-${relationship.type.toLowerCase()}`,
+        }
+      }),
+    [visibleRelationships],
   )
 
   const onNodesChange = useCallback(
@@ -180,7 +218,6 @@ export default function Editor({ api, workspace, model, metamodel, profiles }: E
     [nodes, setPosition],
   )
 
-  /** Called by React Flow while dragging; refusing here stops an invalid edge being dropped at all. */
   const isValidConnection = useCallback(
     (connection: Connection | Edge) => {
       const source = byKey[connection.source]
@@ -229,36 +266,64 @@ export default function Editor({ api, workspace, model, metamodel, profiles }: E
     [byKey, apply],
   )
 
-  const deleteSelection = useCallback(() => {
-    if (selected.length === 0) {
-      return
-    }
-    const commands: Command[] = selected.map((key) => ({ op: 'delete-element', key }))
-    const affected = relationships.filter(
-      (relationship) => selected.includes(relationship.source) || selected.includes(relationship.target),
-    )
-    const names = selected.map((key) => byKey[key]?.name ?? key).join(', ')
-    // "Delete from the model" is not "remove from a view", and the difference has to be visible
-    // before the click, not after (ADR-0003).
-    const confirmed = window.confirm(
-      `Delete ${names} from the model?\n\n` +
-        (affected.length > 0
-          ? `${affected.length} relationship(s) will be deleted with it.\n\n`
-          : 'No relationships reference it.\n\n') +
-        'This changes the model itself, not just this diagram.',
-    )
-    if (confirmed) {
-      apply.mutate({ commands, label: `Delete ${names}` })
-    }
-  }, [selected, relationships, byKey, apply])
+  /**
+   * Takes elements off this diagram. Not a model change, so no command and no commit — the
+   * element keeps existing, keeps its relationships, and can be put back from the panel.
+   */
+  const removeFromView = useCallback(
+    (keys: string[]) => {
+      if (keys.length === 0) {
+        return
+      }
+      hide(keys)
+      setSelected((current) => current.filter((key) => !keys.includes(key)))
+      setContext(null)
+      const names = keys.map((key) => byKey[key]?.name ?? key).join(', ')
+      setMessage({ kind: 'info', text: `${names} removed from this view. Still in the model.` })
+    },
+    [hide, byKey],
+  )
+
+  /** Deletes from the model itself: permanent, everywhere, and it takes the relationships with it. */
+  const deleteFromModel = useCallback(
+    (keys: string[]) => {
+      if (keys.length === 0) {
+        return
+      }
+      const affected = relationships.filter(
+        (relationship) => keys.includes(relationship.source) || keys.includes(relationship.target),
+      )
+      const names = keys.map((key) => byKey[key]?.name ?? key).join(', ')
+      const confirmed = window.confirm(
+        `Delete ${names} from the model?\n\n` +
+          (affected.length > 0
+            ? `${affected.length} relationship(s) will be deleted with it:\n` +
+              affected
+                .slice(0, 8)
+                .map((relationship) => `  • ${relationship.type}: ${relationship.source} → ${relationship.target}`)
+                .join('\n') +
+              (affected.length > 8 ? `\n  …and ${affected.length - 8} more` : '') +
+              '\n\n'
+            : 'Nothing else references it.\n\n') +
+          'This removes it from the model everywhere, not just from this view.',
+      )
+      setContext(null)
+      if (confirmed) {
+        apply.mutate({
+          commands: keys.map((key) => ({ op: 'delete-element', key })),
+          label: `Delete ${names}`,
+        })
+      }
+    },
+    [relationships, byKey, apply],
+  )
 
   const undo = useCallback(async () => {
     const entry = history.popUndo()
     if (!entry) {
       return
     }
-    const ok = await applySilently(entry.inverse, `Undo: ${entry.label}`)
-    if (ok) {
+    if (await applySilently(entry.inverse, `Undo: ${entry.label}`)) {
       history.pushRedo(entry)
     }
   }, [history, applySilently])
@@ -268,15 +333,51 @@ export default function Editor({ api, workspace, model, metamodel, profiles }: E
     if (!entry) {
       return
     }
-    const ok = await applySilently(entry.forward, `Redo: ${entry.label}`)
-    if (ok) {
+    if (await applySilently(entry.forward, `Redo: ${entry.label}`)) {
       history.push(entry)
     }
   }, [history, applySilently])
 
+  // Ctrl/Cmd+Z, Ctrl+Shift+Z, Ctrl+Y, and Delete for taking things off the diagram. Delete is
+  // deliberately the non-destructive one: the key that is easiest to hit by accident must not
+  // be the one that changes the model.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null
+      if (
+        target &&
+        (target.isContentEditable ||
+          ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+      ) {
+        return
+      }
+      const mod = event.ctrlKey || event.metaKey
+      const key = event.key.toLowerCase()
+
+      if (mod && key === 'z' && !event.shiftKey) {
+        event.preventDefault()
+        void undo()
+      } else if (mod && ((key === 'z' && event.shiftKey) || key === 'y')) {
+        event.preventDefault()
+        void redo()
+      } else if ((event.key === 'Delete' || event.key === 'Backspace') && selected.length > 0) {
+        event.preventDefault()
+        removeFromView(selected)
+      } else if (event.key === 'Escape') {
+        setContext(null)
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [undo, redo, selected, removeFromView])
+
   const relayout = useCallback(() => {
-    void autoLayout(elements, relationships).then(setPositions)
-  }, [elements, relationships, setPositions])
+    void autoLayout(visibleElements, visibleRelationships).then((laid) => {
+      setPositions(laid)
+      window.requestAnimationFrame(() => flow.current?.fitView({ padding: 0.2, duration: 300 }))
+    })
+  }, [visibleElements, visibleRelationships, setPositions])
 
   if (snapshot.isPending) {
     return <div className="ag-editor-loading">Loading model…</div>
@@ -287,15 +388,39 @@ export default function Editor({ api, workspace, model, metamodel, profiles }: E
 
   return (
     <div className="ag-editor">
-      <Palette
-        metamodel={metamodel}
-        viewpoint={viewpoint}
-        onViewpointChange={setViewpoint}
-        onCreate={(type: ElementType) => createElement(type.concept, type.name)}
-        profiles={profiles}
-        onCreateProfiled={(name) => createElement(name, name)}
-        busy={apply.isPending}
-      />
+      <MarkerDefs />
+
+      <div className="ag-sidebar">
+        <Palette
+          metamodel={metamodel}
+          viewpoint={viewpoint}
+          onViewpointChange={setViewpoint}
+          onCreate={(type: ElementType) => createElement(type.concept, type.name)}
+          profiles={profiles}
+          onCreateProfiled={(name) => createElement(name, name)}
+          busy={apply.isPending}
+        />
+
+        {hiddenElements.length > 0 && (
+          <section className="ag-hidden-panel">
+            <h3>
+              Not on this view ({hiddenElements.length})
+              <button type="button" className="ag-link" onClick={showAll}>
+                show all
+              </button>
+            </h3>
+            <ul>
+              {hiddenElements.map((element) => (
+                <li key={element.key}>
+                  <button type="button" className="ag-link" onClick={() => show(element.key)}>
+                    {element.name}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+      </div>
 
       <div className="ag-canvas-area">
         <div className="ag-toolbar">
@@ -312,18 +437,42 @@ export default function Editor({ api, workspace, model, metamodel, profiles }: E
           <button type="button" onClick={relayout}>
             Auto-layout
           </button>
-          <button type="button" onClick={() => void undo()} disabled={history.undoStack.length === 0}>
+          <button
+            type="button"
+            onClick={() => void undo()}
+            disabled={history.undoStack.length === 0}
+            title="Ctrl+Z"
+          >
             Undo
           </button>
-          <button type="button" onClick={() => void redo()} disabled={history.redoStack.length === 0}>
+          <button
+            type="button"
+            onClick={() => void redo()}
+            disabled={history.redoStack.length === 0}
+            title="Ctrl+Shift+Z or Ctrl+Y"
+          >
             Redo
           </button>
-          <button type="button" className="ag-danger" onClick={deleteSelection} disabled={selected.length === 0}>
+          <button
+            type="button"
+            onClick={() => removeFromView(selected)}
+            disabled={selected.length === 0}
+            title="Delete — takes it off this diagram only"
+          >
+            Remove from view
+          </button>
+          <button
+            type="button"
+            className="ag-danger"
+            onClick={() => deleteFromModel(selected)}
+            disabled={selected.length === 0}
+            title="Permanent, everywhere"
+          >
             Delete from model
           </button>
           <span className="ag-toolbar-spacer" />
           <span className="ag-muted">
-            {elements.length} elements · {relationships.length} relationships
+            {visibleElements.length} of {elements.length} elements · {visibleRelationships.length} relationships
           </span>
         </div>
 
@@ -339,15 +488,44 @@ export default function Editor({ api, workspace, model, metamodel, profiles }: E
             isValidConnection={isValidConnection}
             onConnectStart={(_event, params) => setConnectingFrom(params.nodeId ?? null)}
             onConnectEnd={() => setConnectingFrom(null)}
+            onNodeContextMenu={(event, node) => {
+              event.preventDefault()
+              setContext({ elementKey: node.id, x: event.clientX, y: event.clientY })
+            }}
+            onPaneClick={() => setContext(null)}
+            // React Flow's own delete would remove nodes from the canvas without going through
+            // a command, so the diagram would disagree with the model until the next reload.
+            deleteKeyCode={null}
+            onInit={(instance) => {
+              flow.current = instance
+            }}
             fitView
-            proOptions={{ hideAttribution: false }}
           >
             <Background gap={16} />
             <Controls />
-            <MiniMap pannable zoomable />
+            <MiniMap
+              pannable
+              zoomable
+              nodeColor={(node) => LAYER_COLORS[(node.data as { layer?: keyof typeof LAYER_COLORS }).layer ?? 'other']}
+              nodeStrokeColor="#6b7280"
+              nodeStrokeWidth={2}
+            />
           </ReactFlow>
         </div>
       </div>
+
+      {context && byKey[context.elementKey] && (
+        <ContextMenu
+          target={context}
+          element={byKey[context.elementKey]}
+          relationships={relationships}
+          elementsByKey={byKey}
+          metamodel={metamodel}
+          onClose={() => setContext(null)}
+          onRemoveFromView={() => removeFromView([context.elementKey])}
+          onDeleteFromModel={() => deleteFromModel([context.elementKey])}
+        />
+      )}
     </div>
   )
 }
@@ -356,8 +534,7 @@ export default function Editor({ api, workspace, model, metamodel, profiles }: E
  * How a node should look while a connection is being dragged out of another one.
  *
  * This is the feature that makes the product something other than a drawing tool: the
- * metamodel answers "may this exist" before the user lets go of the mouse, so the notation is
- * taught by using it rather than by reading a manual.
+ * metamodel answers "may this exist" before the user lets go of the mouse.
  */
 function connectionState(
   element: ModelElement,

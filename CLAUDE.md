@@ -248,8 +248,25 @@ Non-obvious breakages already hit and fixed — do not re-introduce:
   `AuthenticationException` or `ErrorResponseException`.** They must reach Spring Security's
   filter and Spring's status resolver, otherwise every 403 and 404 is reported as 500. This
   already happened once; `ApiExceptionHandler` rethrows them and tests pin both statuses.
+- **React Flow wraps `markerEnd`/`markerStart` in `url(#…)` itself** — pass the bare marker id.
+  Wrapping it yourself yields `url(#url(#id))`, the arrowhead silently does not render, and the
+  line still draws so nothing looks broken enough to notice without opening the DOM.
+- React Flow needs explicit `width`/`height` on nodes for the minimap to draw them, and
+  `deleteKeyCode={null}` so its built-in delete cannot remove nodes without going through a
+  command.
+- `fitView` runs at mount, before async auto-layout has produced positions. Refit once the
+  first real positions land or the model opens zoomed into a corner.
 - Java compiles with `-Werror` and a curated `-Xlint` set; TypeScript runs with
   `erasableSyntaxOnly`, so constructor parameter properties are rejected.
+
+## Verifying UI changes
+
+Type-checking and unit tests do not catch "the arrows are missing". `playwright` is a
+devDependency in `web/` with Chromium under `node_modules` — run node scripts with
+`PLAYWRIGHT_BROWSERS_PATH=0`. Bring up the compose stack, `bootRun`, and `npm run dev`, then
+drive the app: sign in through Keycloak as `architect`/`architect`, open a model, and **look at
+the screenshot**. Three real defects — double-wrapped markers, an empty minimap, and a context
+menu falling off the screen edge — were invisible to every other check.
 - Integration tests are skipped when Docker is absent (`dev.archgrid.support.Docker`) so the
   build stays usable without it. A "skipped" IT locally is not a passing IT.
 

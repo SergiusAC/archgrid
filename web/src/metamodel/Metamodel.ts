@@ -117,6 +117,24 @@ export function layerOrder(layer: Layer): number {
   return index === -1 ? LAYER_ORDER.length : index
 }
 
+/**
+ * Layer colours, duplicated from the CSS custom properties.
+ *
+ * Needed in JavaScript because the minimap paints to a canvas and cannot resolve a CSS
+ * variable. Kept next to the labels so the two stay visibly coupled; if these drift from
+ * index.css the minimap stops matching the diagram.
+ */
+export const LAYER_COLORS: Record<Layer, string> = {
+  strategy: '#f5deaa',
+  business: '#fffbb4',
+  application: '#b5ffff',
+  technology: '#c9ffc9',
+  physical: '#c9ffc9',
+  motivation: '#ccccff',
+  'implementation-migration': '#ffe0e0',
+  other: '#eef0f3',
+}
+
 export const LAYER_LABELS: Record<Layer, string> = {
   strategy: 'Strategy',
   business: 'Business',

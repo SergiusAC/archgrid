@@ -28,14 +28,37 @@ export interface Position {
  */
 interface LayoutState {
   positions: Record<string, Position>
+  /**
+   * Elements hidden from the current diagram but still present in the model.
+   *
+   * This is view membership, which ADR-0003 makes a separate layer from the model: removing an
+   * element from a diagram is not a model change and must never look like one. Real view
+   * definitions are versioned server-side in phase 4; until then membership lives here, next to
+   * the coordinates, because both are view concerns and both are lost on reload harmlessly.
+   */
+  hidden: Record<string, true>
   setPosition: (key: string, position: Position) => void
   setPositions: (positions: Record<string, Position>) => void
+  hide: (keys: string[]) => void
+  show: (key: string) => void
+  showAll: () => void
 }
 
 export const useLayoutStore = create<LayoutState>()((set) => ({
   positions: {},
+  hidden: {},
   setPosition: (key, position) => set((state) => ({ positions: { ...state.positions, [key]: position } })),
   setPositions: (positions) => set((state) => ({ positions: { ...state.positions, ...positions } })),
+  hide: (keys) =>
+    set((state) => ({
+      hidden: { ...state.hidden, ...Object.fromEntries(keys.map((key) => [key, true as const])) },
+    })),
+  show: (key) =>
+    set((state) => {
+      const { [key]: _removed, ...rest } = state.hidden
+      return { hidden: rest }
+    }),
+  showAll: () => set({ hidden: {} }),
 }))
 
 /**
