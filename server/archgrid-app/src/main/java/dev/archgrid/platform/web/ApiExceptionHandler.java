@@ -5,6 +5,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
+import org.springframework.web.ErrorResponseException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -23,6 +26,25 @@ class ApiExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
     private static final URI INVALID_REQUEST = URI.create("https://archgrid.dev/problems/invalid-request");
     private static final URI INTERNAL_ERROR = URI.create("https://archgrid.dev/problems/internal-error");
+
+    /**
+     * Hands security and status-carrying exceptions back to the machinery that knows how to
+     * translate them.
+     *
+     * <p>Without this, the catch-all below swallows them. {@link AccessDeniedException} has to
+     * reach Spring Security's {@code ExceptionTranslationFilter} to become a 403, and
+     * {@link ErrorResponseException} — which {@code ResponseStatusException} extends — already
+     * carries its own status and problem document. Catching either turns a correct 403 or 404
+     * into "Internal error", which is both wrong and, for the authorisation case, alarming in a
+     * security review.
+     *
+     * <p>Declared before the catch-all deliberately: handler selection prefers the most specific
+     * match, and these must win.
+     */
+    @ExceptionHandler({AccessDeniedException.class, AuthenticationException.class, ErrorResponseException.class})
+    void rethrowForFrameworkTranslation(Exception ex) throws Exception {
+        throw ex;
+    }
 
     /**
      * Domain value objects reject malformed input by throwing. Surfacing that as 400 keeps

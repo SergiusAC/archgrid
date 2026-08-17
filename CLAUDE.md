@@ -100,9 +100,21 @@ Retrofitting versioning later would mean rewriting every query.
 ### Persistence
 
 PostgreSQL is the only stateful component, and there is no ORM — explicit SQL over
-`JdbcClient`. Graph traversal is recursive CTEs plus an in-memory index rebuilt per model
-version. Neo4j was rejected (ADR-0001) on licensing, scale and on-premise operational cost;
-OpenSearch was rejected in favour of `pgvector` and Postgres FTS.
+`JdbcClient`. Neo4j was rejected (ADR-0001) on licensing, scale and on-premise operational
+cost; OpenSearch was rejected in favour of `pgvector` and Postgres FTS.
+
+**Versioning uses validity ranges, not materialised current-state tables** — the sketch in
+`docs/02-architecture.md` §4.2 was superseded. Every version row carries
+`[from_seq, to_seq)` over a per-model commit sequence; `to_seq is null` means current. HEAD
+and any historical state are each one indexed scan, with no second table to keep consistent.
+The sequence is allocated under a row lock on `model`, which also serialises concurrent
+commits — the optimistic check on `baseCommitId` only means something if two writers cannot
+interleave between checking and writing. This works because history is linear; branching
+would need the ancestry walk the original sketch implied.
+
+Commands reference elements by **slug, not UUID**. Slugs are stable across renames, so they
+are as safe as identifiers, and they keep the command log readable, the DSL diffable and
+AI-proposed changes producible. A command stream full of UUIDs is correct and useless.
 
 Every table carries `workspace_id`. Every addressable object carries both a UUID (stable
 across renames, what the system references) and a slug (what humans, URLs and the future
@@ -219,6 +231,16 @@ Non-obvious breakages already hit and fixed — do not re-introduce:
   (`org.testcontainers.postgresql.PostgreSQLContainer`, non-generic).
 - **PostgreSQL 18+ images** must mount `/var/lib/postgresql`, not `/var/lib/postgresql/data`.
 - The dev database is on **5433**, not 5432, because 5432 is usually already taken.
+- **Spring Boot 4 uses Jackson 3** (`tools.jackson.databind.ObjectMapper`). Jackson 2 is on the
+  classpath transitively; importing `com.fasterxml.jackson.databind` gets you an unmanaged
+  second mapper.
+- Spring Framework 7 renamed 422 per RFC 9110: `HttpStatus.UNPROCESSABLE_CONTENT` and
+  `status().isUnprocessableContent()`. The old spellings are deprecated, and `-Werror` fails
+  the build on them.
+- **Never let a catch-all `@ExceptionHandler(Exception.class)` swallow `AccessDeniedException`,
+  `AuthenticationException` or `ErrorResponseException`.** They must reach Spring Security's
+  filter and Spring's status resolver, otherwise every 403 and 404 is reported as 500. This
+  already happened once; `ApiExceptionHandler` rethrows them and tests pin both statuses.
 - Java compiles with `-Werror` and a curated `-Xlint` set; TypeScript runs with
   `erasableSyntaxOnly`, so constructor parameter properties are rejected.
 - Integration tests are skipped when Docker is absent (`dev.archgrid.support.Docker`) so the

@@ -10,7 +10,7 @@
 |---|---|---|---|
 | 0 | Фундамент ✅ | 2 | 2 |
 | 1 | Метамодель как данные | 3 | 5 |
-| 2 | Ядро модели и API | 3 | 8 |
+| 2 | Ядро модели и API ✅ | 3 | 8 |
 | 3 | Редактор | 5 | 13 |
 | 4 | Представления и авто-layout | 3 | **16 → M1: демонстрируемый MVP** |
 | 5 | Версионирование, DSL, документация | 5 | **21 → M2: готов к design partners** |
@@ -69,16 +69,25 @@
 
 ---
 
-## Фаза 2 — Ядро модели и API (3 недели)
+## Фаза 2 — Ядро модели и API ✅ выполнено
 
-- Схема БД: `element`, `element_version`, `relationship`, `relationship_version`, `commit`, `*_current`.
-- Доменные команды: `CreateElement`, `RenameElement`, `SetProperty`, `AddRelationship`, `DeleteRelationship`, `DeleteElement`, `MoveElement` (вложенность).
-- Обработчик команд: authz → optimistic check → apply → validate → commit → invalidate.
-- Порт `GraphRepository` + Postgres-адаптер (рекурсивные CTE) + in-memory граф-индекс с инвалидацией по версии.
-- REST + OpenAPI: модель, элементы, связи, команды.
-- Ответ 422 с человекочитаемым объяснением нарушенного правила.
+- [x] Схема БД (`V3__model_graph.sql`): `model_commit`, `element`, `element_version`, `relationship`, `relationship_version`. **Диапазоны валидности вместо `*_current`** — обоснование в `docs/02-architecture.md` §4.2.
+- [x] Доменные команды: `CreateElement`, `RenameElement`, `SetElementDocumentation`, `SetElementProperty`, `MoveElement`, `DeleteElement`, `AddRelationship`, `DeleteRelationship`. Ссылаются на объекты по slug, а не по UUID — это делает лог команд читаемым, диффы DSL осмысленными, а предложения AI выполнимыми.
+- [x] Конвейер: authz → optimistic check по `baseCommitId` → применение к снимку в памяти → валидация по метамодели → транзакционный коммит.
+- [x] REST: создание модели, применение команд, чтение элементов, связей и истории.
+- [x] Ответ 422 с перечнем всех нарушений и объяснением каждого; 409 с обоими id коммитов при расхождении версий.
 
-**Готово, когда:** через API можно построить `Payment Service → Kafka → Notification Service`, недопустимая связь отвергается с объяснением, история коммитов пишется.
+**Проверено сквозным тестом:** через API строится `Payment Service → Kafka → Notification Service`; `Serving` из Application Component в Data Object отвергается с объяснением и списком допустимых альтернатив; отвергнутый батч не меняет ничего; история пишется с автором и сообщением; профиль модели используется как тип элемента. 43 теста зелёные.
+
+### Найдено и исправлено по ходу
+
+Catch-all `@ExceptionHandler(Exception.class)`, написанный в фазе 0, перехватывал `AccessDeniedException` до фильтра Spring Security и `ResponseStatusException` до резолвера статусов. Следствие: **любой отказ в доступе возвращался как 500 «Internal error»**, и 404 тоже. Дефект относится к безопасности и был бы замечанием на техаудите. Исправлено явным пробросом; закреплено тестами на 403 и 404.
+
+### Отложено осознанно
+
+- Порт `GraphRepository` и in-memory граф-индекс для обхода: `ModelGraph` уже загружается целиком в память, отдельный индекс нужен только под impact analysis (фаза 4).
+- Связи, нацеленные на другие связи (ArchiMate это допускает): вторая пара nullable-колонок эндпойнтов, когда появится сценарий.
+- Проекция метамодели в БД: остаётся ненужной, метамодель загружается из файла при старте.
 
 ---
 

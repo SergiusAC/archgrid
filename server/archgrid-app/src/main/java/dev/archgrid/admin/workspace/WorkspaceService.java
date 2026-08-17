@@ -7,8 +7,12 @@ import java.util.Optional;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * Public because other feature slices need to resolve a workspace, and the architecture rules
+ * require them to come through a slice's service rather than reach into its tables.
+ */
 @Service
-class WorkspaceService {
+public class WorkspaceService {
 
     private final WorkspaceRepository repository;
 
@@ -22,7 +26,7 @@ class WorkspaceService {
     }
 
     @Transactional(readOnly = true)
-    Optional<Workspace> findByKey(Slug key) {
+    public Optional<Workspace> findByKey(Slug key) {
         return repository.findByKey(key);
     }
 }

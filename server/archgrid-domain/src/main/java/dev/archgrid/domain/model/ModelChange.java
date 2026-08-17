@@ -1,0 +1,312 @@
+package dev.archgrid.domain.model;
+
+import dev.archgrid.domain.metamodel.Metamodel;
+import dev.archgrid.domain.metamodel.RelationshipVerdict;
+import dev.archgrid.domain.profile.ProfileCatalog;
+import dev.archgrid.domain.shared.Slug;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+
+/**
+ * Applies commands to a snapshot and validates the result.
+ *
+ * <p>The middle of the pipeline in ADR-0004: authorisation and the optimistic check happen
+ * before it, persistence after, and neither belongs here — this class has no idea a database
+ * exists, which is why the rules that decide whether a model is correct can be tested without
+ * one.
+ *
+ * <p>Commands are applied to a copy. A command that cannot apply records a violation and is
+ * skipped rather than aborting the batch, so the caller learns everything wrong with their
+ * change at once instead of one problem per round trip.
+ */
+public final class ModelChange {
+
+    private ModelChange() {}
+
+    /**
+     * @param graph the candidate state. Meaningful only when {@link #isSuccess()}; a rejected
+     *     change must be discarded whole, never partially applied.
+     */
+    public record Result(ModelGraph graph, List<Violation> violations) {
+
+        public Result {
+            Objects.requireNonNull(graph, "graph must not be null");
+            violations = List.copyOf(violations);
+        }
+
+        public boolean isSuccess() {
+            return violations.isEmpty();
+        }
+    }
+
+    public static Result apply(
+            ModelGraph base, List<ModelCommand> commands, Metamodel metamodel, ProfileCatalog profiles) {
+        Objects.requireNonNull(base, "base must not be null");
+        Objects.requireNonNull(commands, "commands must not be null");
+        Objects.requireNonNull(metamodel, "metamodel must not be null");
+        Objects.requireNonNull(profiles, "profiles must not be null");
+
+        ModelGraph candidate = base.copy();
+        List<Violation> violations = new ArrayList<>();
+
+        for (ModelCommand command : commands) {
+            applyOne(candidate, command, metamodel, profiles, violations);
+        }
+        validate(candidate, metamodel, violations);
+
+        return new Result(candidate, violations);
+    }
+
+    // ------------------------------------------------------------------ command application
+
+    private static void applyOne(
+            ModelGraph graph,
+            ModelCommand command,
+            Metamodel metamodel,
+            ProfileCatalog profiles,
+            List<Violation> violations) {
+        switch (command) {
+            case ModelCommand.CreateElement create -> createElement(graph, create, profiles, violations);
+            case ModelCommand.RenameElement rename -> mutateElement(
+                    graph, rename.key(), violations, element -> element.withName(rename.name()));
+            case ModelCommand.SetElementDocumentation document -> mutateElement(
+                    graph, document.key(), violations, element -> element.withDocumentation(document.documentation()));
+            case ModelCommand.SetElementProperty property -> mutateElement(
+                    graph,
+                    property.key(),
+                    violations,
+                    element -> element.withProperty(property.property(), property.value()));
+            case ModelCommand.MoveElement move -> moveElement(graph, move, violations);
+            case ModelCommand.DeleteElement delete -> deleteElement(graph, delete, violations);
+            case ModelCommand.AddRelationship add -> addRelationship(graph, add, metamodel, violations);
+            case ModelCommand.DeleteRelationship delete -> {
+                if (!graph.containsRelationship(delete.key())) {
+                    violations.add(Violation.of(
+                            Violation.Code.UNKNOWN_SUBJECT,
+                            delete.key(),
+                            "There is no relationship '" + delete.key() + "' in this model."));
+                } else {
+                    graph.removeRelationship(delete.key());
+                }
+            }
+        }
+    }
+
+    private static void createElement(
+            ModelGraph graph, ModelCommand.CreateElement create, ProfileCatalog profiles, List<Violation> violations) {
+        if (graph.containsElement(create.key())) {
+            violations.add(Violation.of(
+                    Violation.Code.DUPLICATE_KEY,
+                    create.key(),
+                    "An element with key '" + create.key() + "' already exists in this model."));
+            return;
+        }
+        Optional<ProfileCatalog.ResolvedType> resolved = profiles.resolve(create.type());
+        if (resolved.isEmpty()) {
+            violations.add(Violation.of(
+                    Violation.Code.UNKNOWN_TYPE,
+                    create.key(),
+                    "'" + create.type() + "' is neither an ArchiMate element type nor a profile defined in this model."));
+            return;
+        }
+        if (create.parent() != null && !graph.containsElement(create.parent())) {
+            violations.add(Violation.of(
+                    Violation.Code.UNKNOWN_SUBJECT,
+                    create.key(),
+                    "Cannot place '" + create.key() + "' inside '" + create.parent() + "', which does not exist."));
+            return;
+        }
+
+        ProfileCatalog.ResolvedType type = resolved.get();
+        graph.put(new Element(
+                create.key(),
+                type.base().concept(),
+                type.profile().map(profile -> profile.name()).orElse(null),
+                create.name(),
+                create.documentation(),
+                java.util.Map.of(),
+                create.parent()));
+    }
+
+    private static void mutateElement(
+            ModelGraph graph,
+            Slug key,
+            List<Violation> violations,
+            java.util.function.UnaryOperator<Element> mutation) {
+        Optional<Element> element = graph.element(key);
+        if (element.isEmpty()) {
+            violations.add(Violation.of(
+                    Violation.Code.UNKNOWN_SUBJECT, key, "There is no element '" + key + "' in this model."));
+            return;
+        }
+        try {
+            graph.put(mutation.apply(element.get()));
+        } catch (IllegalArgumentException ex) {
+            violations.add(Violation.of(Violation.Code.NOT_APPLICABLE, key, ex.getMessage()));
+        }
+    }
+
+    private static void moveElement(ModelGraph graph, ModelCommand.MoveElement move, List<Violation> violations) {
+        if (!graph.containsElement(move.key())) {
+            violations.add(Violation.of(
+                    Violation.Code.UNKNOWN_SUBJECT,
+                    move.key(),
+                    "There is no element '" + move.key() + "' in this model."));
+            return;
+        }
+        if (move.parent() != null && !graph.containsElement(move.parent())) {
+            violations.add(Violation.of(
+                    Violation.Code.UNKNOWN_SUBJECT,
+                    move.key(),
+                    "Cannot place '" + move.key() + "' inside '" + move.parent() + "', which does not exist."));
+            return;
+        }
+        mutateElement(graph, move.key(), violations, element -> element.withParent(move.parent()));
+    }
+
+    /**
+     * Deletes an element and every relationship touching it.
+     *
+     * <p>Refuses while the element still contains others. Silently removing a subtree is the
+     * kind of "helpful" behaviour that costs a user a morning's work; the caller is expected to
+     * show what is inside and let the user decide. Relationships, by contrast, cannot survive
+     * the loss of an endpoint and go without asking.
+     */
+    private static void deleteElement(
+            ModelGraph graph, ModelCommand.DeleteElement delete, List<Violation> violations) {
+        if (!graph.containsElement(delete.key())) {
+            violations.add(Violation.of(
+                    Violation.Code.UNKNOWN_SUBJECT,
+                    delete.key(),
+                    "There is no element '" + delete.key() + "' in this model."));
+            return;
+        }
+        List<Element> children = graph.childrenOf(delete.key());
+        if (!children.isEmpty()) {
+            violations.add(Violation.of(
+                    Violation.Code.NOT_APPLICABLE,
+                    delete.key(),
+                    "'" + delete.key() + "' still contains " + children.size()
+                            + " element(s): " + children.stream().map(child -> child.key().value()).toList()
+                            + ". Move or delete them first."));
+            return;
+        }
+        graph.relationshipsTouching(delete.key())
+                .forEach(relationship -> graph.removeRelationship(relationship.key()));
+        graph.removeElement(delete.key());
+    }
+
+    private static void addRelationship(
+            ModelGraph graph, ModelCommand.AddRelationship add, Metamodel metamodel, List<Violation> violations) {
+        if (graph.containsRelationship(add.key())) {
+            violations.add(Violation.of(
+                    Violation.Code.DUPLICATE_KEY,
+                    add.key(),
+                    "A relationship with key '" + add.key() + "' already exists in this model."));
+            return;
+        }
+        if (metamodel.relationshipType(add.type()).isEmpty()) {
+            violations.add(Violation.of(
+                    Violation.Code.UNKNOWN_TYPE,
+                    add.key(),
+                    "'" + add.type() + "' is not an ArchiMate relationship type."));
+            return;
+        }
+        for (Slug endpoint : List.of(add.source(), add.target())) {
+            if (!graph.containsElement(endpoint)) {
+                violations.add(Violation.of(
+                        Violation.Code.DANGLING_ENDPOINT,
+                        add.key(),
+                        "Relationship '" + add.key() + "' refers to element '" + endpoint
+                                + "', which does not exist in this model."));
+                return;
+            }
+        }
+        graph.put(new Relationship(
+                add.key(), add.type(), add.source(), add.target(), add.name(), java.util.Map.of()));
+    }
+
+    // ------------------------------------------------------------------ whole-graph validation
+
+    /**
+     * Checks the invariants that no single command can guarantee on its own.
+     *
+     * <p>Run over the finished candidate rather than after each command, because a batch is
+     * allowed to pass through intermediate states that would not be valid on their own — moving
+     * two elements past each other, for instance.
+     */
+    private static void validate(ModelGraph graph, Metamodel metamodel, List<Violation> violations) {
+        for (Element element : graph.elements()) {
+            element.parentKey().ifPresent(parent -> {
+                if (!graph.containsElement(parent)) {
+                    violations.add(Violation.of(
+                            Violation.Code.DANGLING_ENDPOINT,
+                            element.key(),
+                            "'" + element.key() + "' is contained by '" + parent + "', which does not exist."));
+                }
+            });
+        }
+
+        detectContainmentCycles(graph, violations);
+
+        for (Relationship relationship : graph.relationships()) {
+            Optional<Element> source = graph.element(relationship.source());
+            Optional<Element> target = graph.element(relationship.target());
+            if (source.isEmpty() || target.isEmpty()) {
+                violations.add(Violation.of(
+                        Violation.Code.DANGLING_ENDPOINT,
+                        relationship.key(),
+                        "Relationship '" + relationship.key() + "' has an endpoint that is not in the model."));
+                continue;
+            }
+            RelationshipVerdict verdict = metamodel.check(
+                    source.get().conceptType(), target.get().conceptType(), relationship.conceptType());
+            if (!verdict.isPermitted()) {
+                violations.add(Violation.of(
+                        Violation.Code.RELATIONSHIP_NOT_PERMITTED, relationship.key(), explain(verdict, source.get(), target.get())));
+            }
+        }
+    }
+
+    /**
+     * Adds the element names to the metamodel's explanation.
+     *
+     * <p>The metamodel can only talk about types. "Serving is not permitted from Application
+     * Component to Data Object" is true but abstract; naming the two elements the architect
+     * just connected is what makes it actionable.
+     */
+    private static String explain(RelationshipVerdict verdict, Element source, Element target) {
+        return verdict.explain() + " Attempted between '" + source.name() + "' and '" + target.name() + "'.";
+    }
+
+    private static void detectContainmentCycles(ModelGraph graph, List<Violation> violations) {
+        Set<Slug> reported = new LinkedHashSet<>();
+        for (Element element : graph.elements()) {
+            Set<Slug> seen = new LinkedHashSet<>();
+            seen.add(element.key());
+            Optional<Slug> current = element.parentKey();
+            while (current.isPresent()) {
+                Slug parent = current.get();
+                if (!seen.add(parent)) {
+                    if (reported.add(element.key())) {
+                        violations.add(Violation.of(
+                                Violation.Code.CONTAINMENT_CYCLE,
+                                element.key(),
+                                "Containment forms a cycle through '" + parent + "'; an element cannot contain itself, "
+                                        + "directly or indirectly."));
+                    }
+                    break;
+                }
+                Optional<Element> next = graph.element(parent);
+                if (next.isEmpty()) {
+                    break;
+                }
+                current = next.get().parentKey();
+            }
+        }
+    }
+}
