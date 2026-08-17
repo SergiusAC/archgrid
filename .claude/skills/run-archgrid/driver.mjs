@@ -581,6 +581,28 @@ async function interactions(page) {
   await page.keyboard.press('Escape')
   await page.screenshot({ path: `${outDir}/33-magic.png` })
 
+  // --- alignment guides: drag until it lines up, and it sticks ---
+  // Ledger is dragged towards the axis the new element sits on. Within tolerance the guide shows
+  // and the position snaps exactly, which is what stops a diagram drifting a pixel at a time.
+  const target = await nodeAt(madeKey).locator('.ag-body').boundingBox()
+  const ledgerBox = await nodeAt(ledgerKey).locator('.ag-body').boundingBox()
+  await page.mouse.move(ledgerBox.x + ledgerBox.width / 2, ledgerBox.y + ledgerBox.height / 2)
+  await page.mouse.down()
+  // Four pixels off the target's left edge: inside the tolerance, so it should be pulled in.
+  await page.mouse.move(target.x + ledgerBox.width / 2 + 4, ledgerBox.y + ledgerBox.height / 2 - 140, { steps: 14 })
+  await page.waitForTimeout(250)
+  check('a guide appears when edges line up', (await page.locator('.ag-guide').count()) > 0)
+  await page.screenshot({ path: `${outDir}/35-guides.png` })
+  await page.mouse.up()
+  await page.waitForTimeout(1200)
+  check('guides clear once the drag ends', (await page.locator('.ag-guide').count()) === 0)
+  const snapped = await nodeAt(ledgerKey).locator('.ag-body').boundingBox()
+  check(
+    'the element snaps flush rather than nearly',
+    Math.abs(snapped.x - target.x) < 1.5,
+    `left edges ${Math.round(snapped.x)} vs ${Math.round(target.x)}`,
+  )
+
   // --- notation: the shape says what it is before any word is read ---
   const shapes = await page.evaluate(() =>
     [...document.querySelectorAll('.ag-paper .ag-node')].map((node) => ({

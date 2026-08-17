@@ -1026,3 +1026,15 @@ body.ag-resizing {
   stroke-linejoin: round;
   pointer-events: none;
 }
+
+/* Alignment guides: shown only while dragging, so they read as feedback rather than decoration. */
+.ag-guides {
+  pointer-events: none;
+}
+
+.ag-guide {
+  stroke: var(--error);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}

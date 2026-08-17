@@ -83,6 +83,19 @@ const MIN_WIDTH = 120
 const MIN_HEIGHT = 60
 const GRID = 10
 
+/** How near counts as aligned, in model units. */
+const GUIDE_TOLERANCE = 6
+
+/** The six lines of a box worth lining up with, and how to read each one. */
+const GUIDE_AXES = [
+  { vertical: true, of: (b: joint.g.Rect) => b.x, centre: (b: joint.g.Rect) => b.x + b.width / 2 },
+  { vertical: true, of: (b: joint.g.Rect) => b.x + b.width / 2, centre: (b: joint.g.Rect) => b.x + b.width / 2 },
+  { vertical: true, of: (b: joint.g.Rect) => b.x + b.width, centre: (b: joint.g.Rect) => b.x + b.width / 2 },
+  { vertical: false, of: (b: joint.g.Rect) => b.y, centre: (b: joint.g.Rect) => b.y + b.height / 2 },
+  { vertical: false, of: (b: joint.g.Rect) => b.y + b.height / 2, centre: (b: joint.g.Rect) => b.y + b.height / 2 },
+  { vertical: false, of: (b: joint.g.Rect) => b.y + b.height, centre: (b: joint.g.Rect) => b.y + b.height / 2 },
+] as const
+
 /**
  * The strip at the top of a container that its own name occupies, so children start below it.
  *
@@ -383,6 +396,66 @@ export default function Canvas(props: CanvasProps) {
         })
       }
     })
+
+    // -------------------------------------------------------------- alignment guides
+    /*
+     * The thing JointJS keeps behind its paid tier, and the thing that makes a diagram look
+     * drafted rather than dropped. On every drag, compare the six interesting lines of the moved
+     * element — left, centre, right, top, middle, bottom — against the same six of every other,
+     * snap when within tolerance, and show the line that was matched.
+     *
+     * Drawn into the front layer rather than into the SVG root, because that layer carries the
+     * pan and zoom transform: a guide drawn outside it stays put while the diagram moves under it.
+     */
+    const guides = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+    guides.setAttribute('class', 'ag-guides')
+    ;(element.querySelector('.joint-front-layer') ?? view.svg).appendChild(guides)
+    const clearGuides = () => guides.replaceChildren()
+
+    view.on('element:pointermove', (elementView: joint.dia.ElementView) => {
+      clearGuides()
+      const moved = elementView.model
+      const box = moved.getBBox()
+      const others = model
+        .getElements()
+        .filter((other) => other !== moved && !moved.isEmbeddedIn(other) && !other.isEmbeddedIn(moved))
+        .map((other) => other.getBBox())
+      if (others.length === 0) {
+        return
+      }
+      const span = model.getBBox() ?? box
+
+      let shift: { x?: number; y?: number } = {}
+      for (const axis of GUIDE_AXES) {
+        const mine = axis.of(box)
+        for (const other of others) {
+          // Against the other's matching line and against its centre: an element lines up with a
+          // neighbour's edge as readily as with its middle, and both look deliberate.
+          for (const theirs of [axis.of(other), axis.centre(other)]) {
+            if (Math.abs(mine - theirs) > GUIDE_TOLERANCE) {
+              continue
+            }
+            shift = axis.vertical
+              ? { ...shift, x: box.x + (theirs - mine) }
+              : { ...shift, y: box.y + (theirs - mine) }
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line')
+            const from = axis.vertical ? span.y - 200 : span.x - 200
+            const to = axis.vertical ? span.y + span.height + 200 : span.x + span.width + 200
+            line.setAttribute('x1', String(axis.vertical ? theirs : from))
+            line.setAttribute('y1', String(axis.vertical ? from : theirs))
+            line.setAttribute('x2', String(axis.vertical ? theirs : to))
+            line.setAttribute('y2', String(axis.vertical ? to : theirs))
+            line.setAttribute('class', 'ag-guide')
+            guides.appendChild(line)
+            break
+          }
+        }
+      }
+      if (shift.x !== undefined || shift.y !== undefined) {
+        moved.position(shift.x ?? box.x, shift.y ?? box.y)
+      }
+    })
+    view.on('element:pointerup blank:pointerdown', clearGuides)
 
     // -------------------------------------------------------------- routing a line by hand
     // Bendpoints appear on hover and belong to the line, not to the selection: the architect drew
