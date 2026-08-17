@@ -813,3 +813,71 @@ code {
   max-width: 32rem;
   padding: 3rem;
 }
+
+/* ---------------------------------------------------------------- relationship picker */
+
+.ag-picker {
+  position: fixed;
+  z-index: 41;
+  width: 17rem;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.22);
+  padding: 0.6rem;
+  font-size: 0.85rem;
+}
+
+.ag-picker header {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+
+.ag-picker header p {
+  margin: 0.2rem 0 0;
+  font-size: 0.75rem;
+}
+
+.ag-picker ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.ag-picker button {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  text-align: left;
+}
+
+.ag-picker button small {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.ag-picker-empty {
+  margin: 0.3rem 0 0;
+  font-size: 0.8rem;
+}
+
+/* Naming an element where it sits, straight after creation. */
+.ag-node-name-input {
+  width: 100%;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.85rem;
+  padding: 0.1rem 0.2rem;
+  border: 1px solid var(--accent);
+  border-radius: 0.2rem;
+  background: var(--bg);
+  color: var(--fg);
+}

@@ -7,74 +7,42 @@ import type { Command, ModelElement, ModelRelationship } from '../api/types.ts'
  *
  * The semantic model is server state: the server owns it, validates it and versions it, and
  * TanStack Query already caches and invalidates it. Mirroring it into a second store would
- * create exactly the "two sources of truth that drift" problem ADR-0003 exists to avoid — one
- * of them would go stale after a rejected command and nobody would notice until a diagram
- * disagreed with the database.
+ * create exactly the "two sources of truth that drift" problem ADR-0003 exists to avoid.
  *
- * What lives below is client state only: where the boxes are, and what the user did. Neither
- * of those is the server's business, and both are lost on reload without consequence.
+ * What lives here is client state only: what the user did, so it can be undone.
  */
+
 export interface Position {
   x: number
   y: number
 }
 
 /**
- * Layout state: coordinates, nothing else.
+ * One undoable action, of either kind.
  *
- * Client-only for now. Persisting layout needs the view tables, which arrive with views in
- * phase 4; until then a reload re-runs auto-layout. Deliberately not smuggled into the model
- * to avoid that, because doing so would put box positions into the commit log.
+ * Two kinds and one stack, deliberately. Model changes are commands and produce commits;
+ * moving a box is layout and produces none (ADR-0003). But the user does not think in layers —
+ * they think "undo what I just did". A stack that only knew about commands answered Ctrl+Z
+ * after a drag by undoing a rename from five minutes earlier, which is how people learn to
+ * stop trusting undo altogether.
  */
-interface LayoutState {
-  positions: Record<string, Position>
-  /**
-   * Elements hidden from the current diagram but still present in the model.
-   *
-   * This is view membership, which ADR-0003 makes a separate layer from the model: removing an
-   * element from a diagram is not a model change and must never look like one. Real view
-   * definitions are versioned server-side in phase 4; until then membership lives here, next to
-   * the coordinates, because both are view concerns and both are lost on reload harmlessly.
-   */
-  hidden: Record<string, true>
-  setPosition: (key: string, position: Position) => void
-  setPositions: (positions: Record<string, Position>) => void
-  hide: (keys: string[]) => void
-  show: (key: string) => void
-  showAll: () => void
-}
+export type UndoEntry =
+  | { kind: 'commands'; forward: Command[]; inverse: Command[]; label: string }
+  | {
+      kind: 'layout'
+      view: string
+      before: Record<string, Position>
+      after: Record<string, Position>
+      label: string
+    }
 
-export const useLayoutStore = create<LayoutState>()((set) => ({
-  positions: {},
-  hidden: {},
-  setPosition: (key, position) => set((state) => ({ positions: { ...state.positions, [key]: position } })),
-  setPositions: (positions) => set((state) => ({ positions: { ...state.positions, ...positions } })),
-  hide: (keys) =>
-    set((state) => ({
-      hidden: { ...state.hidden, ...Object.fromEntries(keys.map((key) => [key, true as const])) },
-    })),
-  show: (key) =>
-    set((state) => {
-      const { [key]: _removed, ...rest } = state.hidden
-      return { hidden: rest }
-    }),
-  showAll: () => set({ hidden: {} }),
-}))
-
-/**
- * Undo/redo as a stack of command batches, not of state snapshots.
- *
- * Undo applies the inverse commands and therefore produces a new commit rather than rewriting
- * history. That is the honest behaviour for a versioned model — history is a record of what
- * happened, and "I changed my mind" is something that happened.
- */
 interface HistoryState {
-  undoStack: { forward: Command[]; inverse: Command[]; label: string }[]
-  redoStack: { forward: Command[]; inverse: Command[]; label: string }[]
-  push: (entry: { forward: Command[]; inverse: Command[]; label: string }) => void
-  popUndo: () => { forward: Command[]; inverse: Command[]; label: string } | undefined
-  popRedo: () => { forward: Command[]; inverse: Command[]; label: string } | undefined
-  pushRedo: (entry: { forward: Command[]; inverse: Command[]; label: string }) => void
+  undoStack: UndoEntry[]
+  redoStack: UndoEntry[]
+  push: (entry: UndoEntry) => void
+  popUndo: () => UndoEntry | undefined
+  popRedo: () => UndoEntry | undefined
+  pushRedo: (entry: UndoEntry) => void
   clear: () => void
 }
 
@@ -102,6 +70,11 @@ export const useHistoryStore = create<HistoryState>()((set, get) => ({
   pushRedo: (entry) => set((state) => ({ redoStack: [...state.redoStack, entry] })),
   clear: () => set({ undoStack: [], redoStack: [] }),
 }))
+
+/** A short description of what Ctrl+Z would undo, so the button can say so. */
+export function describeEntry(entry: UndoEntry | undefined): string {
+  return entry ? entry.label : ''
+}
 
 /**
  * Builds the commands that undo a batch, using the state as it was before the batch ran.
@@ -208,11 +181,11 @@ export function invert(
       case 'remove-from-view':
         inverse.push({ op: 'add-to-view', key: command.key, element: command.element })
         break
-      // rename-view, set-viewpoint and delete-view need the view's previous state, which this
-      // snapshot does not carry. Undo for them arrives with the history UI in phase 5, where a
-      // commit diff supplies it; producing a wrong inverse here would be worse than none.
       case 'rename-view':
       case 'set-viewpoint':
+        // Needs the view's previous state, which this snapshot does not carry. Arrives with the
+        // commit diff in phase 5; a wrong inverse would be worse than none.
+        break
       case 'delete-view':
         break
     }

@@ -23,9 +23,10 @@ import FolderTree, { type TreeItem } from './FolderTree.tsx'
 import MarkerDefs from './MarkerDefs.tsx'
 import Palette from './Palette.tsx'
 import Properties from './Properties.tsx'
+import RelationshipPicker from './RelationshipPicker.tsx'
 import { NODE_HEIGHT, NODE_WIDTH, autoLayout, nextFreePosition } from './layout.ts'
 import { marker, notationFor } from './notation.ts'
-import { invert, useHistoryStore } from './store.ts'
+import { invert, useHistoryStore, type Position } from './store.ts'
 
 import '@xyflow/react/dist/style.css'
 
@@ -51,6 +52,17 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   const [selected, setSelected] = useState<string[]>([])
   const [context, setContext] = useState<ContextTarget | null>(null)
   const [sidebar, setSidebar] = useState<'views' | 'palette' | 'repository'>('views')
+  // The element whose name is being typed in place, straight after creation.
+  const [editingKey, setEditingKey] = useState<string | null>(null)
+  const [picker, setPicker] = useState<{
+    x: number
+    y: number
+    source: string
+    target: string
+    reason: string
+  } | null>(null)
+  // Positions as they were when a drag began, so the move can be undone as one action.
+  const dragOrigin = useRef<Record<string, Position> | null>(null)
   const flow = useRef<ReactFlowInstance<ArchimateNode, Edge> | null>(null)
   // State, not just the ref: the refit effect must re-run once React Flow initialises, and a ref
   // never triggers a re-render, so the effect saw a null instance and never fired again.
@@ -129,7 +141,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       return { inverse, commands, label }
     },
     onSuccess: async ({ inverse, commands, label }) => {
-      history.push({ forward: commands, inverse, label })
+      history.push({ kind: 'commands', forward: commands, inverse, label })
       setMessage(null)
       await refresh()
     },
@@ -239,10 +251,16 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
             layer: type?.layer ?? 'other',
             specialised: element.profile != null,
             connectState: connectionState(element, connectingFrom, byKey, metamodel, relationshipType),
+            editing: editingKey === element.key,
+            onCommitName: (key: string, name: string) => {
+              setEditingKey(null)
+              apply.mutate({ commands: [{ op: 'rename-element', key, name }], label: `Rename to ${name}` })
+            },
+            onCancelEdit: () => setEditingKey(null),
           },
         }
       }),
-    [onView, positions, selected, metamodel, connectingFrom, byKey, relationshipType],
+    [onView, positions, selected, metamodel, connectingFrom, byKey, relationshipType, editingKey, apply],
   )
 
   const edges: Edge[] = useMemo(
@@ -285,13 +303,57 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     [nodes, positions, scheduleLayoutSave],
   )
 
+  /**
+   * A drag becomes one undoable action, recorded on release rather than per frame.
+   *
+   * Moving a box is not a model change and produces no commit (ADR-0003), but it is very much
+   * something the user just did, so it belongs on the same stack as everything else.
+   */
+  const onNodeDragStart = useCallback(() => {
+    dragOrigin.current = positions
+  }, [positions])
+
+  const onNodeDragStop = useCallback(() => {
+    const before = dragOrigin.current
+    dragOrigin.current = null
+    if (!before || !viewKey) {
+      return
+    }
+    const changed = Object.keys(positions).some(
+      (key) => before[key]?.x !== positions[key]?.x || before[key]?.y !== positions[key]?.y,
+    )
+    if (changed) {
+      history.push({ kind: 'layout', view: viewKey, before, after: positions, label: 'Move', })
+    }
+  }, [positions, viewKey, history])
+
+  /**
+   * Whether a connection may be dropped at all.
+   *
+   * Deliberately looser than "the type on the toolbar is permitted": if anything at all can
+   * connect these two, the drop is allowed and the picker sorts out which. Refusing the drop
+   * would throw away the user's gesture in order to make them change a dropdown first.
+   */
   const isValidConnection = useCallback(
     (connection: Connection | Edge) => {
       const source = byKey[connection.source]
       const target = byKey[connection.target]
-      return Boolean(source && target && metamodel.permits(source.conceptType, target.conceptType, relationshipType))
+      return Boolean(source && target && metamodel.permittedBetween(source.conceptType, target.conceptType).length > 0)
     },
-    [byKey, metamodel, relationshipType],
+    [byKey, metamodel],
+  )
+
+  const connect = useCallback(
+    (sourceKey: string, targetKey: string, type: string) => {
+      const source = byKey[sourceKey]
+      const target = byKey[targetKey]
+      const key = uniqueKey(`${sourceKey}-${type.toLowerCase()}-${targetKey}`, relationshipsByKey)
+      apply.mutate({
+        commands: [{ op: 'add-relationship', key, type, source: sourceKey, target: targetKey }],
+        label: `Connect ${source?.name ?? sourceKey} to ${target?.name ?? targetKey}`,
+      })
+    },
+    [byKey, relationshipsByKey, apply],
   )
 
   const onConnect = useCallback(
@@ -301,20 +363,24 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       if (!source || !target) {
         return
       }
-      if (!metamodel.permits(source.conceptType, target.conceptType, relationshipType)) {
-        setMessage({
-          kind: 'error',
-          text: metamodel.explain(source.conceptType, target.conceptType, relationshipType),
-        })
+      if (metamodel.permits(source.conceptType, target.conceptType, relationshipType)) {
+        connect(source.key, target.key, relationshipType)
         return
       }
-      const key = uniqueKey(`${source.key}-${relationshipType.toLowerCase()}-${target.key}`, relationshipsByKey)
-      apply.mutate({
-        commands: [{ op: 'add-relationship', key, type: relationshipType, source: source.key, target: target.key }],
-        label: `Connect ${source.name} to ${target.name}`,
+      // The metamodel knows what *would* work here, so offer that instead of only refusing.
+      // This is the difference between a tool that prevents mistakes and one that teaches the
+      // notation.
+      const node = document.querySelector(`.react-flow__node[data-id="${CSS.escape(target.key)}"]`)
+      const box = node?.getBoundingClientRect()
+      setPicker({
+        x: box ? box.right + 8 : window.innerWidth / 2,
+        y: box ? box.top : window.innerHeight / 2,
+        source: source.key,
+        target: target.key,
+        reason: metamodel.explain(source.conceptType, target.conceptType, relationshipType),
       })
     },
-    [byKey, metamodel, relationshipType, relationshipsByKey, apply],
+    [byKey, metamodel, relationshipType, connect],
   )
 
   /** New elements join the repository and land on the current view in one commit. */
@@ -326,6 +392,9 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         commands.push({ op: 'add-to-view', key: viewKey, element: key })
       }
       apply.mutate({ commands, label: `Add ${displayName}` })
+      // It is named after its type until the user says otherwise, so put the cursor there now
+      // rather than sending them to a side panel for every element they create.
+      setEditingKey(key)
     },
     [byKey, viewKey, apply],
   )
@@ -400,19 +469,52 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     }
   }, [views.data, applySilently])
 
+  /**
+   * Restores a set of coordinates and persists them. Undoing a move is itself not a commit.
+   */
+  const restoreLayout = useCallback(
+    (positionsToRestore: Record<string, Position>) => {
+      setPositions(positionsToRestore)
+      scheduleLayoutSave(positionsToRestore)
+      return true
+    },
+    [scheduleLayoutSave],
+  )
+
+  /**
+   * Undoes the last thing the user did, of either kind.
+   *
+   * The two kinds travel by different routes — commands to the server, coordinates to the
+   * layout endpoint — but they share one stack, because "undo what I just did" is not a
+   * question about which architectural layer the action belonged to.
+   */
   const undo = useCallback(async () => {
     const entry = history.popUndo()
-    if (entry && (await applySilently(entry.inverse, `Undo: ${entry.label}`))) {
+    if (!entry) {
+      return
+    }
+    const ok =
+      entry.kind === 'commands'
+        ? await applySilently(entry.inverse, `Undo: ${entry.label}`)
+        : restoreLayout(entry.before)
+    if (ok) {
       history.pushRedo(entry)
     }
-  }, [history, applySilently])
+  }, [history, applySilently, restoreLayout])
 
   const redo = useCallback(async () => {
     const entry = history.popRedo()
-    if (entry && (await applySilently(entry.forward, `Redo: ${entry.label}`))) {
+    if (!entry) {
+      return
+    }
+    const ok =
+      entry.kind === 'commands'
+        ? await applySilently(entry.forward, `Redo: ${entry.label}`)
+        : restoreLayout(entry.after)
+    if (ok) {
       history.push(entry)
     }
-  }, [history, applySilently])
+  }, [history, applySilently, restoreLayout])
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -612,6 +714,8 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
               edges={edges}
               nodeTypes={nodeTypes}
               onNodesChange={onNodesChange}
+              onNodeDragStart={onNodeDragStart}
+              onNodeDragStop={onNodeDragStop}
               onConnect={onConnect}
               isValidConnection={isValidConnection}
               onConnectStart={(_event, params) => setConnectingFrom(params.nodeId ?? null)}
@@ -682,6 +786,26 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         }
         onSelect={(key) => setSelected([key])}
       />
+
+      {picker && (
+        <RelationshipPicker
+          x={picker.x}
+          y={picker.y}
+          sourceName={byKey[picker.source]?.name ?? picker.source}
+          targetName={byKey[picker.target]?.name ?? picker.target}
+          reason={picker.reason}
+          permitted={metamodel.permittedBetween(
+            byKey[picker.source]?.conceptType ?? '',
+            byKey[picker.target]?.conceptType ?? '',
+          )}
+          onPick={(type) => {
+            const { source, target } = picker
+            setPicker(null)
+            connect(source, target, type)
+          }}
+          onCancel={() => setPicker(null)}
+        />
+      )}
 
       {context && byKey[context.elementKey] && (
         <ContextMenu
