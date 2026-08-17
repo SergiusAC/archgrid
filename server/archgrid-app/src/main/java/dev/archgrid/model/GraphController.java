@@ -2,7 +2,9 @@ package dev.archgrid.model;
 
 import dev.archgrid.admin.workspace.WorkspaceService;
 import dev.archgrid.domain.model.ModelCommand;
+import dev.archgrid.domain.metamodel.Metamodel;
 import dev.archgrid.domain.model.ModelGraph;
+import dev.archgrid.domain.model.RelationshipDerivation;
 import dev.archgrid.domain.model.View;
 import dev.archgrid.domain.shared.Slug;
 import dev.archgrid.domain.workspace.Workspace;
@@ -42,18 +44,21 @@ class GraphController {
     private final ModelCommandService commands;
     private final FolderService folders;
     private final ViewLayoutService layout;
+    private final Metamodel metamodel;
 
     GraphController(
             WorkspaceService workspaces,
             GraphService graphs,
             ModelCommandService commands,
             FolderService folders,
-            ViewLayoutService layout) {
+            ViewLayoutService layout,
+            Metamodel metamodel) {
         this.workspaces = workspaces;
         this.graphs = graphs;
         this.commands = commands;
         this.folders = folders;
         this.layout = layout;
+        this.metamodel = metamodel;
     }
 
     @GetMapping
@@ -122,6 +127,30 @@ class GraphController {
                 .toList();
     }
 
+    /**
+     * Everywhere an element is used: its relationships and the views that show it.
+     *
+     * <p>The views half matters most before a deletion. "It will disappear from 4 diagrams,
+     * these ones" is a decision the architect can make; "it will disappear from everywhere" is
+     * one they can only accept.
+     */
+    @GetMapping("/elements/{elementKey}/usage")
+    ModelApiDtos.UsageResponse usage(@PathVariable String workspaceKey, @PathVariable String elementKey) {
+        ModelGraph graph = commands.current(graphId(workspaceKey));
+        Slug key = Slug.of(elementKey);
+        if (graph.element(key).isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No element '" + elementKey + "'.");
+        }
+        return new ModelApiDtos.UsageResponse(
+                graph.relationshipsTouching(key).stream()
+                        .map(ModelApiDtos.RelationshipResponse::from)
+                        .toList(),
+                graph.viewsShowing(key).stream()
+                        .map(view -> new ModelApiDtos.ViewRefResponse(
+                                view.key().value(), view.name()))
+                        .toList());
+    }
+
     // ------------------------------------------------------------------ views
 
     @GetMapping("/views")
@@ -153,6 +182,21 @@ class GraphController {
                         .toList(),
                 graph.relationshipsOn(view).stream()
                         .map(ModelApiDtos.RelationshipResponse::from)
+                        .toList(),
+                // Computed, never stored: what the model implies between the elements on this
+                // view through elements it does not show. A context diagram that omitted these
+                // would be lying by omission.
+                RelationshipDerivation.derive(graph, view.elements(), metamodel).stream()
+                        .map(derived -> new ModelApiDtos.DerivedRelationshipResponse(
+                                derived.key(),
+                                derived.type().concept(),
+                                derived.source().value(),
+                                derived.target().value(),
+                                derived.via().stream()
+                                        .map(hidden -> graph.element(hidden)
+                                                .map(dev.archgrid.domain.model.Element::name)
+                                                .orElseGet(hidden::value))
+                                        .toList()))
                         .toList(),
                 layout.load(graphId, viewKey).stream()
                         .map(node -> new ModelApiDtos.LayoutNodeResponse(

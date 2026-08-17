@@ -881,3 +881,14 @@ code {
   background: var(--bg);
   color: var(--fg);
 }
+
+/* Derived lines: the model implies them, nobody drew them. Faint on purpose. */
+.react-flow__edge.ag-edge-derived .react-flow__edge-path {
+  stroke: var(--muted);
+  stroke-width: 1.1;
+}
+
+.react-flow__edge.ag-edge-derived .react-flow__edge-text {
+  font-style: italic;
+  font-size: 9px;
+}

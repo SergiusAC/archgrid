@@ -134,6 +134,19 @@ Confusing them gives a product where filing something elsewhere changes what a d
 Two separate trees, `elements` and `views`. Deleting a folder moves its contents up rather
 than deleting them.
 
+### Derived relationships (phase 4)
+
+Computed by `RelationshipDerivation`, **never stored**: storing them would make the history
+unreadable and go stale the moment anything on the path changed. A view gets them as a separate
+list, each carrying the path it came through so a diagram can answer "why is this line here".
+
+Two rules, along a path whose intermediate elements are all hidden: a structural chain derives
+the weakest link; a structural chain ending in one dependency or dynamic relationship derives
+that. Nothing derives past a dependency.
+
+**Containment counts as composition.** `element.parent` is ArchiMate composition written as a
+field, and derivation that ignored it would miss the case context views exist for.
+
 ### Persistence
 
 PostgreSQL is the only stateful component, and there is no ORM — explicit SQL over

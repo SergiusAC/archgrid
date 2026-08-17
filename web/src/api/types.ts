@@ -105,6 +105,20 @@ export interface LayoutNode {
   height: number | null
 }
 
+/**
+ * A relationship the model implies but nobody drew.
+ *
+ * Drawn differently from explicit ones on purpose: an architect has to be able to tell what
+ * the model says from what merely follows from it. `via` answers "why is this line here".
+ */
+export interface DerivedRelationship {
+  key: string
+  type: string
+  source: string
+  target: string
+  via: string[]
+}
+
 export interface ViewDetail {
   key: string
   name: string
@@ -113,6 +127,8 @@ export interface ViewDetail {
   elements: ModelElement[]
   /** Computed: those with both endpoints on the view. Never stored as membership. */
   relationships: ModelRelationship[]
+  /** Implied by chains through elements this view does not show. Also never stored. */
+  derived: DerivedRelationship[]
   layout: LayoutNode[]
 }
 

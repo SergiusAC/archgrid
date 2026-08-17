@@ -263,23 +263,41 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     [onView, positions, selected, metamodel, connectingFrom, byKey, relationshipType, editingKey, apply],
   )
 
-  const edges: Edge[] = useMemo(
-    () =>
-      (view.data?.relationships ?? []).map((relationship) => {
-        const notation = notationFor(relationship.type)
-        return {
-          id: relationship.key,
-          source: relationship.source,
-          target: relationship.target,
-          label: relationship.name ?? relationship.type,
-          markerEnd: marker(notation.markerEnd),
-          markerStart: marker(notation.markerStart),
-          animated: notation.animated ?? false,
-          style: notation.dash ? { strokeDasharray: notation.dash } : undefined,
-        }
-      }),
-    [view.data],
-  )
+  const edges: Edge[] = useMemo(() => {
+    const explicit: Edge[] = (view.data?.relationships ?? []).map((relationship) => {
+      const notation = notationFor(relationship.type)
+      return {
+        id: relationship.key,
+        source: relationship.source,
+        target: relationship.target,
+        label: relationship.name ?? relationship.type,
+        markerEnd: marker(notation.markerEnd),
+        markerStart: marker(notation.markerStart),
+        animated: notation.animated ?? false,
+        style: notation.dash ? { strokeDasharray: notation.dash } : undefined,
+      }
+    })
+
+    // Derived lines keep the notation of the relationship they stand for but are drawn faintly
+    // and labelled with their path. An architect must be able to see at a glance which lines
+    // the model actually asserts and which merely follow from it.
+    const derived: Edge[] = (view.data?.derived ?? []).map((relationship) => {
+      const notation = notationFor(relationship.type)
+      return {
+        id: relationship.key,
+        source: relationship.source,
+        target: relationship.target,
+        label: `${relationship.type} (derived)`,
+        markerEnd: marker(notation.markerEnd),
+        markerStart: marker(notation.markerStart),
+        className: 'ag-edge-derived',
+        style: { strokeDasharray: '3 5', opacity: 0.6 },
+        data: { via: relationship.via },
+      }
+    })
+
+    return [...explicit, ...derived]
+  }, [view.data])
 
   const onNodesChange = useCallback(
     (changes: NodeChange<ArchimateNode>[]) => {

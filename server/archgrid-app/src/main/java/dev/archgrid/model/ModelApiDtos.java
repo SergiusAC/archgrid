@@ -149,6 +149,11 @@ final class ModelApiDtos {
         }
     }
 
+    /** Where an element is used: relationships and the views showing it. */
+    record UsageResponse(List<RelationshipResponse> relationships, List<ViewRefResponse> views) {}
+
+    record ViewRefResponse(String key, String name) {}
+
     /** A view in the list: enough to draw the tree, without its contents. */
     record ViewSummaryResponse(String key, String name, String viewpoint, String folder, int elements) {
 
@@ -170,7 +175,16 @@ final class ModelApiDtos {
             String folder,
             List<ElementResponse> elements,
             List<RelationshipResponse> relationships,
+            List<DerivedRelationshipResponse> derived,
             List<LayoutNodeResponse> layout) {}
+
+    /**
+     * A relationship the model implies but nobody drew.
+     *
+     * <p>Marked apart from explicit ones on purpose: an architect must be able to tell what the
+     * model says from what follows from it, and `via` answers "why is this line here".
+     */
+    record DerivedRelationshipResponse(String key, String type, String source, String target, List<String> via) {}
 
     record LayoutNodeResponse(String element, double x, double y, Double width, Double height) {}
 
