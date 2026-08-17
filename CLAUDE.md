@@ -128,6 +128,13 @@ claim paths are configuration (`archgrid.security.role-claim-paths`) so a custom
 it at whatever their IdP emits. Health probes are deliberately reachable without a token:
 otherwise an IdP outage makes an orchestrator kill healthy pods.
 
+**Role names are upper-cased when mapped to authorities.** Spring's `hasRole('OWNER')`
+compares authority strings exactly, while an IdP emits whatever casing the customer typed —
+Keycloak realm roles are conventionally lower case. Without normalising, every mutation
+returns 403 at an installation whose roles are not already upper case. This shipped broken
+once because every test injected authorities directly and none exercised a real token; when
+testing authorisation, cover the converter too.
+
 ## The ArchiMate metamodel rule (phase 1) — read before touching `metamodel/`
 
 The metamodel is **data**, not code: element types, relationship types, structural-strength

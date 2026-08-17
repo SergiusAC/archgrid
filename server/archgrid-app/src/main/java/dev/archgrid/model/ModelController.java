@@ -99,6 +99,19 @@ class ModelController {
                 .toList();
     }
 
+    /**
+     * The specialisations defined in this model.
+     *
+     * <p>Model-scoped rather than part of the metamodel, because profiles are customer content
+     * (ADR-0002). The editor merges them into the palette above the base concepts.
+     */
+    @GetMapping("/{modelKey}/profiles")
+    List<ModelApiDtos.ProfileResponse> profiles(@PathVariable String workspaceKey, @PathVariable String modelKey) {
+        return commands.profiles(model(workspaceKey, modelKey).id()).all().stream()
+                .map(ModelApiDtos.ProfileResponse::from)
+                .toList();
+    }
+
     @GetMapping("/{modelKey}/commits")
     List<ModelApiDtos.CommitResponseItem> commits(
             @PathVariable String workspaceKey,

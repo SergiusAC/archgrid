@@ -1,25 +1,48 @@
 :root {
   --bg: #ffffff;
+  --surface: #f7f8fa;
   --fg: #16181d;
   --muted: #6b7280;
   --line: #e4e7ec;
   --accent: #2f5bd7;
   --error: #b42318;
+  --ok: #067647;
+
+  /* ArchiMate's conventional layer colours, muted enough to read as a UI rather than a poster. */
+  --layer-strategy: #f5deaa;
+  --layer-business: #fffbb4;
+  --layer-application: #b5ffff;
+  --layer-technology: #c9ffc9;
+  --layer-physical: #c9ffc9;
+  --layer-motivation: #ccccff;
+  --layer-implementation-migration: #ffe0e0;
+  --layer-other: #eef0f3;
 
   color-scheme: light dark;
   font-family: ui-sans-serif, system-ui, 'Segoe UI', Roboto, sans-serif;
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1.5;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #14161a;
+    --surface: #1b1e24;
     --fg: #e8eaed;
     --muted: #9aa3af;
     --line: #2a2e36;
     --accent: #7d9bff;
     --error: #f97066;
+    --ok: #4ade80;
+
+    --layer-strategy: #5b4c22;
+    --layer-business: #565324;
+    --layer-application: #1e4a4d;
+    --layer-technology: #22492a;
+    --layer-physical: #22492a;
+    --layer-motivation: #33336b;
+    --layer-implementation-migration: #5a2f2f;
+    --layer-other: #262a31;
   }
 }
 
@@ -33,34 +56,45 @@ body {
   color: var(--fg);
 }
 
-.shell {
-  max-width: 56rem;
-  margin: 0 auto;
-  padding: 2.5rem 1.5rem;
+button {
+  font: inherit;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.375rem;
+  background: var(--surface);
+  color: var(--fg);
+  cursor: pointer;
 }
 
-.bar {
-  display: flex;
-  align-items: baseline;
-  gap: 1rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid var(--line);
+button:hover:not(:disabled) {
+  border-color: var(--accent);
 }
 
-.bar h1 {
-  margin: 0;
-  font-size: 1.25rem;
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
-.bar button {
-  margin-left: auto;
+input,
+select {
+  font: inherit;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.375rem;
+  background: var(--bg);
+  color: var(--fg);
 }
 
-h2 {
-  font-size: 1rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+code {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.85em;
   color: var(--muted);
+}
+
+.shell {
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
 }
 
 .muted {
@@ -71,32 +105,235 @@ h2 {
   color: var(--error);
 }
 
-button {
-  font: inherit;
+/* ---------------------------------------------------------------- app frame */
+
+.ag-app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.ag-appbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
   padding: 0.5rem 1rem;
-  border: 1px solid var(--line);
-  border-radius: 0.375rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.ag-toolbar-spacer {
+  margin-left: auto;
+}
+
+.ag-breadcrumb {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: baseline;
+  color: var(--muted);
+}
+
+.ag-link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.ag-chiprow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.ag-chip-active {
+  border-color: var(--accent);
   background: var(--accent);
   color: #fff;
-  cursor: pointer;
 }
 
-button:hover {
-  filter: brightness(1.08);
+.ag-newmodel {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
 }
 
-ul {
-  list-style: none;
-  padding: 0;
+/* ---------------------------------------------------------------- editor */
+
+.ag-editor {
+  display: grid;
+  grid-template-columns: 15rem 1fr;
+  flex: 1;
+  min-height: 0;
 }
 
-li {
-  padding: 0.625rem 0;
+.ag-editor-loading {
+  padding: 2rem;
+  color: var(--muted);
+}
+
+.ag-panel {
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+  overflow-y: auto;
+  padding: 0.75rem;
+}
+
+.ag-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.ag-field.ag-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.ag-palette-group h3 {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 1rem 0 0.4rem;
+}
+
+.ag-palette-items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.ag-palette-item {
+  text-align: left;
+  font-size: 0.82rem;
+  padding: 0.3rem 0.5rem;
+}
+
+.ag-palette-item.ag-profiled {
+  font-style: italic;
+}
+
+.ag-canvas-area {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ag-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
   border-bottom: 1px solid var(--line);
 }
 
-code {
-  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
-  font-size: 0.875em;
-  color: var(--muted);
+.ag-danger {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.ag-banner {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.88rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.ag-banner-error {
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+  color: var(--error);
+}
+
+.ag-banner-info {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.ag-canvas {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---------------------------------------------------------------- nodes */
+
+.ag-node {
+  width: 180px;
+  height: 80px;
+  padding: 0.5rem;
+  border: 1px solid #6b7280;
+  border-radius: 3px;
+  background: var(--layer-other);
+  color: #16181d;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  overflow: hidden;
+  transition:
+    opacity 120ms ease,
+    box-shadow 120ms ease;
+}
+
+@media (prefers-color-scheme: dark) {
+  .ag-node {
+    color: var(--fg);
+  }
+}
+
+.ag-layer-strategy { background: var(--layer-strategy); }
+.ag-layer-business { background: var(--layer-business); }
+.ag-layer-application { background: var(--layer-application); }
+.ag-layer-technology { background: var(--layer-technology); }
+.ag-layer-physical { background: var(--layer-physical); }
+.ag-layer-motivation { background: var(--layer-motivation); }
+.ag-layer-implementation-migration { background: var(--layer-implementation-migration); }
+.ag-layer-other { background: var(--layer-other); }
+
+.ag-node-type {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+}
+
+.ag-stereotype {
+  text-transform: none;
+  letter-spacing: 0;
+  font-style: italic;
+}
+
+.ag-node-label {
+  font-weight: 600;
+  font-size: 0.85rem;
+  line-height: 1.25;
+}
+
+.ag-node-selected {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+/*
+ * The permissibility hint. While a connection is being dragged, targets the metamodel forbids
+ * fade out and legal ones are ringed — the notation is taught by using it.
+ */
+.ag-connect-valid {
+  box-shadow: 0 0 0 2px var(--ok);
+}
+
+.ag-connect-invalid {
+  opacity: 0.25;
+}
+
+.ag-connect-source {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.ag-handle {
+  width: 8px;
+  height: 8px;
+  background: var(--accent);
+  border: none;
 }

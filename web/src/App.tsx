@@ -1,20 +1,32 @@
 import { useQuery } from '@tanstack/react-query'
+import { useMemo, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 
-import { api } from './api.ts'
+import { createApi } from './api/client.ts'
+import Editor from './editor/Editor.tsx'
+import { Metamodel } from './metamodel/Metamodel.ts'
+import ModelPicker from './ModelPicker.tsx'
 
-/**
- * Phase 0 shell: prove the whole chain end to end — identity provider, bearer token,
- * resource server, database — with as little UI as possible. The editor arrives in
- * phase 3 and replaces everything below.
- */
 export default function App() {
   const auth = useAuth()
+  const [workspace, setWorkspace] = useState<string | null>(null)
+  const [model, setModel] = useState<string | null>(null)
 
-  const workspaces = useQuery({
-    queryKey: ['workspaces'],
-    enabled: auth.isAuthenticated && Boolean(auth.user?.access_token),
-    queryFn: () => api.listWorkspaces(auth.user!.access_token),
+  const token = auth.user?.access_token
+  const api = useMemo(() => (token ? createApi(token) : null), [token])
+
+  const metamodelQuery = useQuery({
+    queryKey: ['metamodel'],
+    enabled: api != null,
+    // The language does not change between releases, so there is no reason to refetch it.
+    staleTime: Infinity,
+    queryFn: async () => new Metamodel(await api!.metamodel()),
+  })
+
+  const profilesQuery = useQuery({
+    queryKey: ['profiles', workspace, model],
+    enabled: api != null && workspace != null && model != null,
+    queryFn: () => api!.profiles(workspace!, model!),
   })
 
   if (auth.isLoading) {
@@ -31,7 +43,7 @@ export default function App() {
     )
   }
 
-  if (!auth.isAuthenticated) {
+  if (!auth.isAuthenticated || !api) {
     return (
       <main className="shell">
         <h1>ArchGrid</h1>
@@ -42,28 +54,54 @@ export default function App() {
   }
 
   return (
-    <main className="shell">
-      <header className="bar">
-        <h1>ArchGrid</h1>
-        <span className="muted">{auth.user?.profile.preferred_username ?? auth.user?.profile.sub}</span>
-        <button onClick={() => void auth.signoutRedirect()}>Sign out</button>
+    <div className="ag-app">
+      <header className="ag-appbar">
+        <strong>ArchGrid</strong>
+        {metamodelQuery.data && (
+          <span className="ag-muted">ArchiMate {metamodelQuery.data.version} compatible</span>
+        )}
+        {workspace && model && (
+          <span className="ag-breadcrumb">
+            {workspace} / {model}
+            <button type="button" className="ag-link" onClick={() => setModel(null)}>
+              change
+            </button>
+          </span>
+        )}
+        <span className="ag-toolbar-spacer" />
+        <span className="ag-muted">{auth.user?.profile.preferred_username ?? auth.user?.profile.sub}</span>
+        <button type="button" onClick={() => void auth.signoutRedirect()}>
+          Sign out
+        </button>
       </header>
 
-      <section>
-        <h2>Workspaces</h2>
-        {workspaces.isPending && <p className="muted">Loading…</p>}
-        {workspaces.isError && <p className="error">{workspaces.error.message}</p>}
-        {workspaces.data?.length === 0 && (
-          <p className="muted">No workspaces yet. The workspace API becomes writable in phase 2.</p>
-        )}
-        <ul>
-          {workspaces.data?.map((workspace) => (
-            <li key={workspace.id}>
-              <strong>{workspace.name}</strong> <code>{workspace.key}</code>
-            </li>
-          ))}
-        </ul>
-      </section>
-    </main>
+      {!metamodelQuery.data ? (
+        <main className="shell">
+          {metamodelQuery.isError ? (
+            <p className="error">Could not load the metamodel: {String(metamodelQuery.error)}</p>
+          ) : (
+            <p className="muted">Loading the metamodel…</p>
+          )}
+        </main>
+      ) : workspace && model ? (
+        <Editor
+          api={api}
+          workspace={workspace}
+          model={model}
+          metamodel={metamodelQuery.data}
+          profiles={profilesQuery.data ?? []}
+        />
+      ) : (
+        <ModelPicker
+          api={api}
+          workspace={workspace}
+          onWorkspace={setWorkspace}
+          onModel={(workspaceKey, modelKey) => {
+            setWorkspace(workspaceKey)
+            setModel(modelKey)
+          }}
+        />
+      )}
+    </div>
   )
 }

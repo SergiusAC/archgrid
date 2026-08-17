@@ -141,6 +141,21 @@ final class ModelApiDtos {
         }
     }
 
+    record ProfileResponse(String name, String conceptType, List<AttributeResponse> attributes) {
+
+        static ProfileResponse from(dev.archgrid.domain.profile.Profile profile) {
+            return new ProfileResponse(
+                    profile.name(),
+                    profile.conceptType(),
+                    profile.attributes().stream()
+                            .map(attribute -> new AttributeResponse(
+                                    attribute.key().value(), attribute.name(), attribute.type().code()))
+                            .toList());
+        }
+    }
+
+    record AttributeResponse(String key, String name, String type) {}
+
     record CommitResponseItem(UUID id, long seq, String author, String message, Instant createdAt) {
 
         static CommitResponseItem from(ModelGraphRepository.CommitRow row) {

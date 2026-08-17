@@ -3,6 +3,7 @@ package dev.archgrid.platform.security;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -41,7 +42,14 @@ class RealmRoleGrantedAuthoritiesConverter implements Converter<Jwt, Collection<
         Set<GrantedAuthority> authorities = new LinkedHashSet<>();
         for (String path : properties.roleClaimPaths()) {
             for (String role : readClaimPath(jwt, path)) {
-                authorities.add(new SimpleGrantedAuthority(properties.authorityPrefix() + role));
+                // Upper-cased deliberately. Spring's hasRole('OWNER') compares authority strings
+                // exactly, while an identity provider emits whatever casing the customer typed --
+                // Keycloak realm roles are conventionally lower case. Without normalising here,
+                // every installation whose roles are not already upper case gets 403 on every
+                // mutation, which is a long afternoon to diagnose. Two roles differing only in
+                // case collapse into one, which is the desirable reading of that situation.
+                authorities.add(new SimpleGrantedAuthority(
+                        properties.authorityPrefix() + role.toUpperCase(Locale.ROOT)));
             }
         }
         return authorities;
