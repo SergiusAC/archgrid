@@ -431,113 +431,183 @@ code {
   min-height: 0;
 }
 
-/* ---------------------------------------------------------------- nodes */
+/* ---------------------------------------------------------------- canvas (ADR-0010) */
 
-.ag-node {
-  width: 180px;
-  height: 80px;
-  padding: 0.5rem;
-  border: 1px solid #6b7280;
-  border-radius: 3px;
-  background: var(--layer-other);
-  color: #16181d;
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
+.ag-paper-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
   overflow: hidden;
-  transition:
-    opacity 120ms ease,
-    box-shadow 120ms ease;
 }
 
-@media (prefers-color-scheme: dark) {
-  .ag-node {
-    color: var(--fg);
-  }
+.ag-paper {
+  width: 100%;
+  height: 100%;
+}
+
+.ag-paper .joint-paper > svg {
+  display: block;
+}
+
+/* ---------------------------------------------------------------- nodes */
+
+/*
+ * The canvas is SVG, so colour is set on `fill` and `stroke` rather than `background` and
+ * `border`. Keeping it in CSS rather than passing colours from JavaScript is what lets the dark
+ * theme keep working: the shape asks for var(--layer), and the theme decides what that is.
+ */
+.ag-node .ag-body {
+  fill: var(--layer, var(--layer-other));
+  stroke: #6b7280;
+  stroke-width: 1;
 }
 
 /* Each layer publishes its colour as --layer so a variant can thin it out without losing it. */
-.ag-layer-strategy { --layer: var(--layer-strategy); background: var(--layer); }
-.ag-layer-business { --layer: var(--layer-business); background: var(--layer); }
-.ag-layer-application { --layer: var(--layer-application); background: var(--layer); }
-.ag-layer-technology { --layer: var(--layer-technology); background: var(--layer); }
-.ag-layer-physical { --layer: var(--layer-physical); background: var(--layer); }
-.ag-layer-motivation { --layer: var(--layer-motivation); background: var(--layer); }
-.ag-layer-implementation-migration {
-  --layer: var(--layer-implementation-migration);
-  background: var(--layer);
-}
-.ag-layer-other { --layer: var(--layer-other); background: var(--layer); }
-
-.ag-node-type {
-  font-size: 0.65rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  opacity: 0.7;
-}
-
-.ag-stereotype {
-  text-transform: none;
-  letter-spacing: 0;
-  font-style: italic;
-}
-
-.ag-node-label {
-  font-weight: 600;
-  font-size: 0.85rem;
-  line-height: 1.25;
-}
-
-.ag-node-selected {
-  box-shadow: 0 0 0 2px var(--accent);
-}
+.ag-layer-strategy { --layer: var(--layer-strategy); }
+.ag-layer-business { --layer: var(--layer-business); }
+.ag-layer-application { --layer: var(--layer-application); }
+.ag-layer-technology { --layer: var(--layer-technology); }
+.ag-layer-physical { --layer: var(--layer-physical); }
+.ag-layer-motivation { --layer: var(--layer-motivation); }
+.ag-layer-implementation-migration { --layer: var(--layer-implementation-migration); }
+.ag-layer-other { --layer: var(--layer-other); }
 
 /*
- * The permissibility hint. While a connection is being dragged, targets the metamodel forbids
- * fade out and legal ones are ringed — the notation is taught by using it.
+ * A container is drawn as a frame so its children read as being inside it, not on top of it —
+ * but it keeps its own layer colour, thinned. A grey frame would say the system belongs to no
+ * layer, which is the one thing the colour is there to tell you.
  */
-.ag-connect-valid {
-  box-shadow: 0 0 0 2px var(--ok);
+.ag-node-container .ag-body {
+  fill: color-mix(in srgb, var(--layer, var(--layer-other)) 35%, var(--surface));
+  stroke-width: 2;
 }
 
-.ag-connect-invalid {
-  opacity: 0.25;
-}
-
-.ag-connect-source {
-  box-shadow: 0 0 0 2px var(--accent);
-}
-
-.ag-handle {
-  width: 8px;
-  height: 8px;
-  background: var(--accent);
-  border: none;
-}
-
-/* ---------------------------------------------------------------- edges */
-
-.ag-marker-defs {
-  position: absolute;
-  width: 0;
-  height: 0;
-  overflow: hidden;
-}
-
-.react-flow__edge-path {
-  stroke: var(--muted);
-  stroke-width: 1.4;
-}
-
-.react-flow__edge.selected .react-flow__edge-path,
-.react-flow__edge:hover .react-flow__edge-path {
+.ag-node-selected .ag-body {
   stroke: var(--accent);
   stroke-width: 2;
 }
 
-.react-flow__edge-text {
+.ag-node-type {
+  fill: #5a6678;
+}
+
+.ag-node-label {
+  fill: #16181d;
+}
+
+@media (prefers-color-scheme: dark) {
+  .ag-node-label {
+    fill: var(--fg);
+  }
+}
+
+/* Four connection points, invisible until the node is worth connecting to. */
+.ag-handle {
+  fill: var(--accent);
+  stroke: var(--bg);
+  stroke-width: 2;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.ag-node:hover .ag-handle,
+.ag-node-selected .ag-handle {
+  opacity: 1;
+}
+
+/*
+ * The permissibility hint, now JointJS's own: while a connection is being dragged it marks the
+ * elements that may receive it, using the same rule the drop itself is validated by.
+ */
+.joint-highlight-stroke {
+  stroke: var(--ok);
+  stroke-width: 2;
+}
+
+.ag-resize-handle {
+  fill: var(--accent);
+  stroke: var(--bg);
+  stroke-width: 1;
+}
+
+/* ---------------------------------------------------------------- edges */
+
+.ag-link {
+  color: var(--muted);
+}
+
+.ag-link:hover,
+.ag-link.joint-selected {
+  color: var(--accent);
+}
+
+/* Markers carry geometry and a class; the colour follows the line they belong to. */
+.ag-marker-filled {
+  fill: currentColor;
+  stroke: none;
+}
+
+.ag-marker-open {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+}
+
+.ag-marker-hollow {
+  fill: var(--surface);
+  stroke: currentColor;
+  stroke-width: 1.4;
+}
+
+.ag-link-label {
   font-size: 10px;
   fill: var(--muted);
+}
+
+.ag-link-label-plate {
+  fill: var(--bg);
+  stroke: none;
+}
+
+/* Drawn faintly: an architect must see which lines the model asserts and which merely follow. */
+.ag-link-derived {
+  opacity: 0.6;
+}
+
+.ag-link-derived .ag-link-label {
+  font-style: italic;
+}
+
+/* ---------------------------------------------------------------- canvas furniture */
+
+.ag-controls {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ag-controls button {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.ag-minimap {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 200px;
+  height: 140px;
+  border: 1px solid var(--line);
+  border-radius: 0.25rem;
+  background: var(--surface);
+  overflow: hidden;
+  pointer-events: none;
 }
 
 /* ---------------------------------------------------------------- sidebar */
@@ -873,28 +943,24 @@ code {
   font-size: 0.8rem;
 }
 
-/* Naming an element where it sits, straight after creation. */
+/*
+ * Naming an element where it sits, straight after creation.
+ *
+ * An HTML input floated over the SVG at the element's own coordinates. SVG has no text input,
+ * and foreignObject brings more trouble than an absolutely positioned overlay.
+ */
 .ag-node-name-input {
-  width: 100%;
+  position: absolute;
+  z-index: 4;
   font: inherit;
   font-weight: 600;
   font-size: 0.85rem;
+  text-align: center;
   padding: 0.1rem 0.2rem;
   border: 1px solid var(--accent);
   border-radius: 0.2rem;
   background: var(--bg);
   color: var(--fg);
-}
-
-/* Derived lines: the model implies them, nobody drew them. Faint on purpose. */
-.react-flow__edge.ag-edge-derived .react-flow__edge-path {
-  stroke: var(--muted);
-  stroke-width: 1.1;
-}
-
-.react-flow__edge.ag-edge-derived .react-flow__edge-text {
-  font-style: italic;
-  font-size: 9px;
 }
 
 /* ---------------------------------------------------------------- splitters */
@@ -945,54 +1011,3 @@ body.ag-resizing {
   opacity: 1;
 }
 
-/* ---------------------------------------------------------------- nodes: sizing and nesting */
-
-.ag-node {
-  width: 100%;
-  height: 100%;
-}
-
-/*
- * A container is drawn as a frame so its children read as being inside it, not on top of it —
- * but it keeps its own layer colour, thinned. A grey frame would say the system belongs to no
- * layer, which is the one thing the colour is there to tell you.
- */
-.ag-node-container {
-  background: color-mix(in srgb, var(--layer, var(--layer-other)) 35%, var(--surface));
-  border-style: solid;
-  border-width: 2px;
-}
-
-.ag-node-container .ag-node-label {
-  /* The name belongs at the top edge; the middle is where the children go. */
-  align-self: flex-start;
-}
-
-.ag-resize-line {
-  border-color: var(--accent);
-}
-
-.ag-resize-handle {
-  background: var(--accent);
-  border: 1px solid var(--bg);
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-}
-
-/* Four connection points, invisible until the node is worth connecting. */
-.ag-handle {
-  width: 10px;
-  height: 10px;
-  background: var(--accent);
-  border: 2px solid var(--bg);
-  opacity: 0;
-  transition: opacity 120ms ease;
-}
-
-.react-flow__node:hover .ag-handle,
-.react-flow__node.selected .ag-handle,
-.ag-connect-valid .ag-handle,
-.ag-connect-source .ag-handle {
-  opacity: 1;
-}

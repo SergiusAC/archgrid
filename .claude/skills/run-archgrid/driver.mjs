@@ -140,7 +140,7 @@ async function smoke(page) {
   mkdirSync(outDir, { recursive: true })
   const shot = (name) => page.screenshot({ path: `${outDir}/${name}.png` })
 
-  let nodes = await page.locator('.ag-node').count()
+  let nodes = await page.locator('.ag-paper .ag-node').count()
   if (nodes === 0) {
     log('view is empty, adding two elements so there is something to look at')
     await page.getByRole('tab', { name: /^Palette/ }).click()
@@ -148,45 +148,48 @@ async function smoke(page) {
       await page.locator('.ag-palette-item', { hasText: new RegExp(`^${label}$`) }).first().click()
       await page.waitForTimeout(2000)
     }
-    nodes = await page.locator('.ag-node').count()
+    nodes = await page.locator('.ag-paper .ag-node').count()
   }
-  const edges = await page.locator('.react-flow__edge').count()
+  const edges = await page.locator('.ag-paper .ag-link').count()
   await shot('01-canvas')
   check('canvas renders nodes', nodes > 0, `${nodes} nodes, ${edges} edges`)
 
   // --- relationship notation ---
   const markers = await page.evaluate(() => {
-    const defined = new Set([...document.querySelectorAll('.ag-marker-defs marker')].map((m) => m.id))
-    const used = [...document.querySelectorAll('.react-flow__edge-path')].map((p) => ({
+    // JointJS mints its own marker ids into <defs> and references them from the line, so the
+    // reference still has to resolve. Nothing in our code writes the url() any more, which is
+    // what made url(#url(#id)) possible before.
+    const defined = new Set([...document.querySelectorAll('marker')].map((m) => m.id))
+    const used = [...document.querySelectorAll('.ag-paper .ag-link .ag-link-line')].map((p) => ({
       start: p.getAttribute('marker-start'),
       end: p.getAttribute('marker-end'),
       dash: getComputedStyle(p).strokeDasharray,
     }))
     const ids = used
       .flatMap((u) => [u.start, u.end])
-      .filter(Boolean)
+      .filter((v) => v && v !== 'none')
       .map((v) => v.replace(/^url\(['"]?#/, '').replace(/['"]?\)$/, ''))
     return { defined: [...defined], used, unresolved: ids.filter((id) => !defined.has(id)) }
   })
   if (edges > 0) {
-    const withMarker = markers.used.filter((u) => u.start || u.end).length
+    const isMarker = (v) => Boolean(v) && v !== 'none'
+    const withMarker = markers.used.filter((u) => isMarker(u.start) || isMarker(u.end)).length
     check('edges carry arrowheads', withMarker === edges, `${withMarker}/${edges}`)
-    // The failure mode worth guarding: React Flow wraps a marker id in url(#…) itself, so
-    // passing url(#id) yields url(#url(#id)), which resolves to nothing while the line still
-    // draws. Nothing looks broken until you read the DOM.
+    // The failure mode worth guarding: a marker reference that points at nothing still draws the
+    // line, so the diagram looks merely plain rather than broken. It cost a release once.
     check('every marker reference resolves', markers.unresolved.length === 0, markers.unresolved.join(', '))
   } else {
     log('SKIP notation checks - the repository has no relationships')
   }
 
   // --- minimap ---
-  const minimapNodes = await page.locator('.react-flow__minimap-node').count()
+  const minimapNodes = await page.locator('.ag-minimap .ag-node').count()
   check('minimap draws nodes', minimapNodes === nodes, `${minimapNodes} of ${nodes}`)
 
   // --- fit ---
   const offscreen = await page.evaluate(() => {
     const pane = document.querySelector('.ag-canvas').getBoundingClientRect()
-    return [...document.querySelectorAll('.ag-node')].filter((n) => {
+    return [...document.querySelectorAll('.ag-paper .ag-node')].filter((n) => {
       const r = n.getBoundingClientRect()
       return r.right < pane.left || r.left > pane.right || r.bottom < pane.top || r.top > pane.bottom
     }).length
@@ -198,7 +201,7 @@ async function smoke(page) {
   // have its children drawn on top of it, so a box fully inside a container frame is not a
   // collision.
   const overlaps = await page.evaluate(() => {
-    const nodes = [...document.querySelectorAll('.ag-node')].map((n) => ({
+    const nodes = [...document.querySelectorAll('.ag-paper .ag-node')].map((n) => ({
       box: n.getBoundingClientRect(),
       container: n.classList.contains('ag-node-container'),
     }))
@@ -224,7 +227,7 @@ async function smoke(page) {
   check('no two nodes overlap', overlaps === 0, `${overlaps} overlapping pairs`)
 
   // --- right-click inspector ---
-  await page.locator('.ag-node').first().click({ button: 'right' })
+  await page.locator('.ag-paper .ag-node').first().click({ button: 'right' })
   await page.waitForSelector('.ag-context', { timeout: 5000 })
   const menu = await page.evaluate(() => {
     const el = document.querySelector('.ag-context')
@@ -243,29 +246,33 @@ async function smoke(page) {
   await page.keyboard.press('Escape')
 
   // --- undo / redo through the keyboard ---
-  const before = await page.locator('.ag-node').count()
+  const before = await page.locator('.ag-paper .ag-node').count()
   // The palette lives behind its own tab now that views have one too.
   await page.getByRole('tab', { name: /^Palette/ }).click()
   await page.locator('.ag-palette-item', { hasText: /^Application Service$/ }).first().click()
   await page.waitForTimeout(2500)
-  const created = await page.locator('.ag-node').count()
-  await page.locator('.ag-canvas').click({ position: { x: 700, y: 520 } })
+  const created = await page.locator('.ag-paper .ag-node').count()
+  // Escape, not a click at a fixed spot: a new element opens its name editor over itself, and
+  // the canvas now centres its content, so a fixed point lands *in that input* — where Ctrl+Z
+  // rightly undoes the typing rather than the creation.
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
   await page.keyboard.press('Control+z')
   await page.waitForTimeout(2500)
-  const undone = await page.locator('.ag-node').count()
+  const undone = await page.locator('.ag-paper .ag-node').count()
   check('Ctrl+Z undoes a creation', created === before + 1 && undone === before, `${before} → ${created} → ${undone}`)
 
   await page.keyboard.press('Control+Shift+z')
   await page.waitForTimeout(2500)
-  const redone = await page.locator('.ag-node').count()
+  const redone = await page.locator('.ag-paper .ag-node').count()
   check('Ctrl+Shift+Z redoes it', redone === created, `${undone} → ${redone}`)
 
   // --- remove from view must not be a model change ---
   const inRepositoryBefore = await repositoryCount(page)
-  await page.locator('.ag-node').first().click()
+  await page.locator('.ag-paper .ag-node').first().click()
   await page.keyboard.press('Delete')
   await page.waitForTimeout(2500)
-  const onCanvas = await page.locator('.ag-node').count()
+  const onCanvas = await page.locator('.ag-paper .ag-node').count()
   const inRepositoryAfter = await repositoryCount(page)
   await shot('03-removed-from-view')
   check(
@@ -275,7 +282,7 @@ async function smoke(page) {
   )
 
   // --- properties panel: renaming is the one edit with no other route in the UI ---
-  await page.locator('.ag-node').first().click()
+  await page.locator('.ag-paper .ag-node').first().click()
   await page.waitForSelector('.ag-properties input', { timeout: 5000 })
   const renamed = `Renamed ${Date.now() % 100000}`
   const nameField = page.locator('.ag-properties .ag-field input').first()
@@ -356,23 +363,26 @@ async function interactions(page) {
   await addElement('Application Component', 'Payment API')
 
   // --- connection points ---
-  const handles = await page.locator('.ag-node').first().locator('.react-flow__handle').count()
+  const handles = await page.locator('.ag-paper .ag-node').first().locator('.ag-handle').count()
   check('a node offers a connection point on every side', handles === 4, `${handles} handles`)
 
   // --- resize, and its survival across a reload ---
-  await page.locator('.ag-node').first().click()
+  await page.locator('.ag-paper .ag-node').first().click()
   await page.waitForTimeout(400)
   check('selecting an element shows resize handles', (await page.locator('.ag-resize-handle').count()) > 0)
 
   // Flow units, not screen pixels: fitView changes the zoom, and DOM order is parents-first, so
   // the node has to be addressed by id to still be the same node after a reload.
-  const resizedId = await page.locator('.react-flow__node').first().getAttribute('data-id')
+  const resizedId = await page.locator('.ag-paper .ag-node').first().getAttribute('data-key')
   const flowWidth = (id) =>
     page.evaluate(
-      (key) => parseFloat(document.querySelector(`.react-flow__node[data-id="${key}"]`).style.width),
+      (key) =>
+        parseFloat(
+          document.querySelector(`.ag-paper .ag-node[data-key="${key}"] .ag-body`).getAttribute('width'),
+        ),
       id,
     )
-  const box = await page.locator('.ag-node').first().boundingBox()
+  const box = await page.locator('.ag-paper .ag-node').first().boundingBox()
   await page.mouse.move(box.x + box.width - 2, box.y + box.height - 2)
   await page.mouse.down()
   await page.mouse.move(box.x + box.width + 140, box.y + box.height + 90, { steps: 12 })
@@ -417,7 +427,7 @@ async function interactions(page) {
   // --- nesting ---
   await page.locator('.ag-splitter-left .ag-splitter-toggle').click()
   await page.waitForTimeout(300)
-  const nodes = page.locator('.ag-node')
+  const nodes = page.locator('.ag-paper .ag-node')
   const container = await nodes.first().boundingBox()
   const child = await nodes.nth(1).boundingBox()
   await page.mouse.move(child.x + child.width / 2, child.y + 12)
@@ -425,11 +435,12 @@ async function interactions(page) {
   await page.mouse.move(container.x + container.width / 2, container.y + container.height / 2, { steps: 16 })
   await page.mouse.up()
   await page.waitForTimeout(3000)
-  check('dropping one element on another nests it', (await page.locator('.ag-node-container').count()) > 0)
+  check('dropping one element on another nests it', (await page.locator('.ag-paper .ag-node-container').count()) > 0)
 
-  // React Flow renders nodes as a flat list, so the child is a sibling in the DOM, not a descendant.
-  const frame = await page.locator('.react-flow__node:has(.ag-node-container)').first().boundingBox()
-  const inner = await page.locator('.react-flow__node:not(:has(.ag-node-container))').first().boundingBox()
+  // Nodes are a flat list in the DOM, so a nested child is a sibling of its container, not a
+  // descendant of it — comparing rendered boxes is the only way to know it really sits inside.
+  const frame = await page.locator('.ag-paper .ag-node-container').first().boundingBox()
+  const inner = await page.locator('.ag-paper .ag-node:not(.ag-node-container)').first().boundingBox()
   check(
     'the container frame encloses its child',
     inner.x >= frame.x - 1 && inner.y >= frame.y - 1 &&
@@ -447,8 +458,8 @@ async function interactions(page) {
   await page.waitForTimeout(500)
   // A new element must not land on top of an existing one — least of all on its connection
   // points, which made the element impossible to link to anything.
-  const ledger = await page.locator('.react-flow__node', { hasText: 'Ledger' }).first().boundingBox()
-  const grownFrame = await page.locator('.react-flow__node:has(.ag-node-container)').first().boundingBox()
+  const ledger = await page.locator('.ag-paper .ag-node', { hasText: 'Ledger' }).first().boundingBox()
+  const grownFrame = await page.locator('.ag-paper .ag-node-container').first().boundingBox()
   const overlapsContainer =
     ledger.x < grownFrame.x + grownFrame.width && grownFrame.x < ledger.x + ledger.width &&
     ledger.y < grownFrame.y + grownFrame.height && grownFrame.y < ledger.y + ledger.height
@@ -457,9 +468,9 @@ async function interactions(page) {
   // Access is not permitted between two Application Components, which is the teaching path.
   await page.locator('select').first().selectOption({ label: 'Access' })
   await page.waitForTimeout(300)
-  const edgesBefore = await page.locator('.react-flow__edge').count()
+  const edgesBefore = await page.locator('.ag-paper .ag-link').count()
   const handle = await page
-    .locator('.react-flow__node:has(.ag-node-container) .ag-handle-right')
+    .locator('.ag-paper .ag-node-container [joint-selector="handle-right"]')
     .first()
     .boundingBox()
   await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2)
@@ -476,7 +487,7 @@ async function interactions(page) {
     await page.waitForTimeout(2500)
   }
   await page.screenshot({ path: `${outDir}/32-relationship.png` })
-  const edgesAfter = await page.locator('.react-flow__edge').count()
+  const edgesAfter = await page.locator('.ag-paper .ag-link').count()
   check('the relationship is drawn', edgesAfter > edgesBefore, `${edgesBefore} -> ${edgesAfter}`)
 
   report()

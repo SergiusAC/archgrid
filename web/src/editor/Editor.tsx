@@ -1,45 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import {
-  Background,
-  Controls,
-  MiniMap,
-  ConnectionMode,
-  ReactFlow,
-  applyNodeChanges,
-  type Connection,
-  type Edge,
-  type NodeChange,
-  type ReactFlowInstance,
-} from '@xyflow/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { Api } from '../api/client.ts'
 import { ApiError } from '../api/client.ts'
 import type { Command, ElementType, ModelElement, ModelRelationship, Profile } from '../api/types.ts'
-import { LAYER_COLORS, Metamodel } from '../metamodel/Metamodel.ts'
-import ArchimateNodeView, { type ArchimateNode } from './ArchimateNode.tsx'
+import { Metamodel } from '../metamodel/Metamodel.ts'
+import Canvas, { type CanvasElement, type CanvasLink, type Geometry } from './Canvas.tsx'
 import ContextMenu, { type ContextTarget } from './ContextMenu.tsx'
 import Explorer from './Explorer.tsx'
 import FolderTree, { type TreeItem } from './FolderTree.tsx'
-import MarkerDefs from './MarkerDefs.tsx'
 import Palette from './Palette.tsx'
 import Properties from './Properties.tsx'
 import Splitter from './Splitter.tsx'
 import RelationshipPicker from './RelationshipPicker.tsx'
-import {
-  NEST_HEADER,
-  NEST_PADDING,
-  NODE_HEIGHT,
-  NODE_WIDTH,
-  autoLayout,
-  nextFreePosition,
-} from './layout.ts'
-import { marker, notationFor } from './notation.ts'
+import { NODE_HEIGHT, NODE_WIDTH, autoLayout, nextFreePosition } from './layout.ts'
 import { invert, useHistoryStore, type Position } from './store.ts'
-
-import '@xyflow/react/dist/style.css'
-
-const nodeTypes = { archimate: ArchimateNodeView }
 
 interface EditorProps {
   api: Api
@@ -48,16 +23,7 @@ interface EditorProps {
   profiles: Profile[]
 }
 
-interface Size {
-  width: number
-  height: number
-}
-
-/** Everything the layout endpoint stores, moved around as one value (ADR-0003). */
-interface Geometry {
-  positions: Record<string, Position>
-  sizes: Record<string, Size>
-}
+type Size = { width: number; height: number }
 
 /**
  * The editor is view-centric: the canvas draws one view, and the repository is browsed beside
@@ -67,7 +33,6 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   const queryClient = useQueryClient()
   const [viewKey, setViewKey] = useState<string | null>(null)
   const [relationshipType, setRelationshipType] = useState('Serving')
-  const [connectingFrom, setConnectingFrom] = useState<string | null>(null)
   const [message, setMessage] = useState<{ kind: 'error' | 'info'; text: string } | null>(null)
   const [selected, setSelected] = useState<string[]>([])
   const [context, setContext] = useState<ContextTarget | null>(null)
@@ -83,10 +48,11 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   } | null>(null)
   // Positions as they were when a drag began, so the move can be undone as one action.
   const dragOrigin = useRef<Record<string, Position> | null>(null)
-  const flow = useRef<ReactFlowInstance<ArchimateNode, Edge> | null>(null)
-  // State, not just the ref: the refit effect must re-run once React Flow initialises, and a ref
-  // never triggers a re-render, so the effect saw a null instance and never fired again.
-  const [canvasReady, setCanvasReady] = useState(false)
+  // Changing this asks the canvas to refit; it changes when a view is opened or auto-laid out.
+  const [fitToken, setFitToken] = useState<string | null>(null)
+  // Bumped whenever geometry changes for a reason the canvas cannot know: a view opening,
+  // auto-layout, or an undone move. Otherwise the canvas keeps what the user dragged.
+  const [geometryVersion, setGeometryVersion] = useState(0)
   const fittedFor = useRef<string | null>(null)
   const history = useHistoryStore()
 
@@ -155,6 +121,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     }
     setPositions(stored)
     setSizes(storedSizes)
+    setGeometryVersion((version) => version + 1)
   }, [view.data])
 
   const refresh = useCallback(async () => {
@@ -262,15 +229,17 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     }
   }, [view.data, onView, positions, sizes, scheduleLayoutSave])
 
+  // Fitting waits for real coordinates. Auto-layout resolves through ELK after the canvas mounts,
+  // and refitting before that opens the view zoomed into an empty corner.
   useEffect(() => {
-    if (!viewKey || !canvasReady || fittedFor.current === viewKey || onView.length === 0) {
+    if (!viewKey || fittedFor.current === viewKey || onView.length === 0) {
       return
     }
     if (onView.every((element) => positions[element.key])) {
       fittedFor.current = viewKey
-      window.requestAnimationFrame(() => flow.current?.fitView({ padding: 0.2, duration: 300 }))
+      setFitToken(`${viewKey}:${onView.length}`)
     }
-  }, [viewKey, canvasReady, onView, positions])
+  }, [viewKey, onView, positions])
 
   /** Which elements on this view contain others that are also on it. */
   const containers = useMemo(() => {
@@ -283,220 +252,64 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     return withChildren
   }, [onView, onViewKeys])
 
-  const nodes: ArchimateNode[] = useMemo(() => {
-    const built = onView.map((element) => {
-      const type = metamodel.elementType(element.conceptType)
-      // React Flow nests through parentId and expects the child's position relative to its
-      // parent. Layout is stored absolutely, because a stored relative position becomes wrong
-      // the moment containment changes.
-      const nested = element.parent && onViewKeys.has(element.parent) ? element.parent : undefined
-      const absolute = positions[element.key] ?? { x: 0, y: 0 }
-      const parentAt = nested ? (positions[nested] ?? { x: 0, y: 0 }) : { x: 0, y: 0 }
-      const size = sizes[element.key]
-
-      return {
-        id: element.key,
-        type: 'archimate' as const,
-        position: nested ? { x: absolute.x - parentAt.x, y: absolute.y - parentAt.y } : absolute,
-        parentId: nested,
-        extent: nested ? ('parent' as const) : undefined,
-        width: size?.width ?? (containers.has(element.key) ? 320 : NODE_WIDTH),
-        height: size?.height ?? (containers.has(element.key) ? 200 : NODE_HEIGHT),
-        selected: selected.includes(element.key),
-        data: {
-          elementKey: element.key,
-          label: element.name,
+  const canvasElements: CanvasElement[] = useMemo(
+    () =>
+      onView.map((element) => {
+        const type = metamodel.elementType(element.conceptType)
+        const at = positions[element.key] ?? { x: 0, y: 0 }
+        const size = sizes[element.key]
+        const container = containers.has(element.key)
+        return {
+          key: element.key,
+          name: element.name,
           typeLabel: element.profile ?? type?.name ?? element.conceptType,
           layer: type?.layer ?? 'other',
           specialised: element.profile != null,
-          connectState: connectionState(element, connectingFrom, byKey, metamodel, relationshipType),
-          editing: editingKey === element.key,
-          container: containers.has(element.key),
-          onCommitName: (key: string, name: string) => {
-            setEditingKey(null)
-            apply.mutate({ commands: [{ op: 'rename-element', key, name }], label: `Rename to ${name}` })
-          },
-          onCancelEdit: () => setEditingKey(null),
-        },
-      }
-    })
+          // Only a container that is itself on the view: nesting is a drawing of containment,
+          // and a parent nobody can see is not one.
+          parent: element.parent && onViewKeys.has(element.parent) ? element.parent : null,
+          x: at.x,
+          y: at.y,
+          width: size?.width ?? (container ? 320 : NODE_WIDTH),
+          height: size?.height ?? (container ? 200 : NODE_HEIGHT),
+        }
+      }),
+    [onView, onViewKeys, positions, sizes, containers, metamodel],
+  )
 
-    // React Flow requires a parent to appear before its children, or the child renders detached.
-    return built.sort((a, b) => (a.parentId ? 1 : 0) - (b.parentId ? 1 : 0))
-  }, [
-    onView,
-    onViewKeys,
-    positions,
-    sizes,
-    containers,
-    selected,
-    metamodel,
-    connectingFrom,
-    byKey,
-    relationshipType,
-    editingKey,
-    apply,
-  ])
-
-  const edges: Edge[] = useMemo(() => {
-    const explicit: Edge[] = (view.data?.relationships ?? []).map((relationship) => {
-      const notation = notationFor(relationship.type)
-      return {
-        id: relationship.key,
-        source: relationship.source,
-        target: relationship.target,
-        label: relationship.name ?? relationship.type,
-        markerEnd: marker(notation.markerEnd),
-        markerStart: marker(notation.markerStart),
-        animated: notation.animated ?? false,
-        style: notation.dash ? { strokeDasharray: notation.dash } : undefined,
-      }
-    })
+  const canvasLinks: CanvasLink[] = useMemo(() => {
+    const explicit = (view.data?.relationships ?? []).map((relationship) => ({
+      key: relationship.key,
+      source: relationship.source,
+      target: relationship.target,
+      label: relationship.name ?? relationship.type,
+      type: relationship.type,
+      derived: false,
+    }))
 
     // Derived lines keep the notation of the relationship they stand for but are drawn faintly
-    // and labelled with their path. An architect must be able to see at a glance which lines
-    // the model actually asserts and which merely follow from it.
-    const derived: Edge[] = (view.data?.derived ?? []).map((relationship) => {
-      const notation = notationFor(relationship.type)
-      return {
-        id: relationship.key,
-        source: relationship.source,
-        target: relationship.target,
-        label: `${relationship.type} (derived)`,
-        markerEnd: marker(notation.markerEnd),
-        markerStart: marker(notation.markerStart),
-        className: 'ag-edge-derived',
-        style: { strokeDasharray: '3 5', opacity: 0.6 },
-        data: { via: relationship.via },
-      }
-    })
+    // and labelled as such. An architect must be able to see at a glance which lines the model
+    // actually asserts and which merely follow from it.
+    const derived = (view.data?.derived ?? []).map((relationship) => ({
+      key: relationship.key,
+      source: relationship.source,
+      target: relationship.target,
+      label: `${relationship.type} (derived)`,
+      type: relationship.type,
+      derived: true,
+    }))
 
     return [...explicit, ...derived]
   }, [view.data])
 
-  const onNodesChange = useCallback(
-    (changes: NodeChange<ArchimateNode>[]) => {
-      const moved = applyNodeChanges(changes, nodes)
-      let next = positions
-      let nextSizes = sizes
-      let dragged = false
-      let resized = false
-
-      for (const change of changes) {
-        if (change.type === 'position' && change.position) {
-          // Children report positions relative to their container; layout is stored absolutely
-          // so that re-parenting never silently moves anything.
-          const node = nodes.find((candidate) => candidate.id === change.id)
-          const parentAt = node?.parentId ? (positions[node.parentId] ?? { x: 0, y: 0 }) : { x: 0, y: 0 }
-          next = {
-            ...next,
-            [change.id]: { x: change.position.x + parentAt.x, y: change.position.y + parentAt.y },
-          }
-          dragged = true
-        }
-        if (change.type === 'dimensions' && change.dimensions && change.resizing) {
-          nextSizes = { ...nextSizes, [change.id]: change.dimensions }
-          resized = true
-        }
-        if (change.type === 'select') {
-          setSelected(moved.filter((node) => node.selected).map((node) => node.id))
-        }
-      }
-
-      if (dragged) {
-        setPositions(next)
-      }
-      if (resized) {
-        setSizes(nextSizes)
-      }
-      if (dragged || resized) {
-        scheduleLayoutSave(next, nextSizes)
-      }
+  /** Live geometry from a drag or resize. The save is debounced; the state is not. */
+  const onGeometry = useCallback(
+    (next: Geometry) => {
+      setPositions(next.positions)
+      setSizes(next.sizes)
+      scheduleLayoutSave(next.positions, next.sizes)
     },
-    [nodes, positions, sizes, scheduleLayoutSave],
-  )
-
-  /**
-   * Puts a newly nested child inside its container's frame, widening the frame if it must.
-   *
-   * Nesting leaves both boxes where the user dropped them, which is right, but a child dropped
-   * across an edge then hangs out of the container that supposedly holds it, and the picture
-   * contradicts the model. Geometry only — this produces no commit; the containment that does
-   * travels separately as {@code MoveElement}.
-   */
-  const nestInside = useCallback(
-    (parentKey: string, childKey: string): Geometry | null => {
-      const parentAt = positions[parentKey]
-      const childAt = positions[childKey]
-      if (!parentAt || !childAt) {
-        return null
-      }
-      const parentSize = sizes[parentKey] ?? { width: NODE_WIDTH, height: NODE_HEIGHT }
-      const childSize = sizes[childKey] ?? { width: NODE_WIDTH, height: NODE_HEIGHT }
-      // Below the container's own name, which occupies the top of the frame.
-      const x = Math.max(childAt.x, parentAt.x + NEST_PADDING)
-      const y = Math.max(childAt.y, parentAt.y + NEST_HEADER)
-      const geometry = {
-        positions: { ...positions, [childKey]: { x, y } },
-        sizes: {
-          ...sizes,
-          [parentKey]: {
-            width: Math.max(parentSize.width, x - parentAt.x + childSize.width + NEST_PADDING),
-            height: Math.max(parentSize.height, y - parentAt.y + childSize.height + NEST_PADDING),
-          },
-        },
-      }
-      setPositions(geometry.positions)
-      setSizes(geometry.sizes)
-      return geometry
-    },
-    [positions, sizes],
-  )
-
-  /**
-   * Dropping a node onto another puts it inside — the gesture people already expect.
-   *
-   * Containment is a model change, so it goes through {@code MoveElement} and produces a commit,
-   * unlike the coordinates that arrived with the same drag. The two travel separately on purpose
-   * (ADR-0003), and this is the one gesture that does both at once.
-   */
-  const renestFromDrag = useCallback(
-    async (draggedKey: string) => {
-      const dragged = byKey[draggedKey]
-      if (!dragged || !flow.current) {
-        return
-      }
-      const node = flow.current.getNodes().find((candidate) => candidate.id === draggedKey)
-      if (!node) {
-        return
-      }
-      const overlapping = flow.current
-        .getIntersectingNodes(node)
-        // Never nest into own descendants, and prefer the smallest container under the cursor.
-        .filter((candidate) => candidate.id !== draggedKey && !isDescendantOf(candidate.id, draggedKey, byKey))
-        .sort((a, b) => (a.width ?? 0) * (a.height ?? 0) - (b.width ?? 0) * (b.height ?? 0))
-
-      const newParent = overlapping[0]?.id ?? null
-      const currentParent = dragged.parent ?? null
-      if (newParent === currentParent) {
-        return
-      }
-      if (newParent) {
-        // Awaited before the command: the commit refetches the view, and a debounced save still
-        // in flight would be answered with the geometry the server had before the drop.
-        const geometry = nestInside(newParent, draggedKey)
-        if (geometry) {
-          await saveLayout.mutateAsync(geometry)
-        }
-      }
-      apply.mutate({
-        commands: [{ op: 'move-element', key: draggedKey, parent: newParent ?? undefined }],
-        label: newParent
-          ? `Put ${dragged.name} inside ${byKey[newParent]?.name ?? newParent}`
-          : `Take ${dragged.name} out of its container`,
-      })
-    },
-    [byKey, apply, nestInside, saveLayout],
+    [scheduleLayoutSave],
   )
 
   /**
@@ -505,23 +318,58 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    * Moving a box is not a model change and produces no commit (ADR-0003), but it is very much
    * something the user just did, so it belongs on the same stack as everything else.
    */
-  const onNodeDragStart = useCallback(() => {
+  const onGeometryStart = useCallback(() => {
     dragOrigin.current = positions
   }, [positions])
 
-  const onNodeDragStop = useCallback(() => {
-    const before = dragOrigin.current
-    dragOrigin.current = null
-    if (!before || !viewKey) {
-      return
-    }
-    const changed = Object.keys(positions).some(
-      (key) => before[key]?.x !== positions[key]?.x || before[key]?.y !== positions[key]?.y,
-    )
-    if (changed) {
-      history.push({ kind: 'layout', view: viewKey, before, after: positions, label: 'Move' })
-    }
-  }, [positions, viewKey, history])
+  const onGeometryEnd = useCallback(
+    (next: Geometry) => {
+      const before = dragOrigin.current
+      dragOrigin.current = null
+      setPositions(next.positions)
+      setSizes(next.sizes)
+      scheduleLayoutSave(next.positions, next.sizes)
+      if (!before || !viewKey) {
+        return
+      }
+      const changed = Object.keys(next.positions).some(
+        (key) => before[key]?.x !== next.positions[key]?.x || before[key]?.y !== next.positions[key]?.y,
+      )
+      if (changed) {
+        history.push({ kind: 'layout', view: viewKey, before, after: next.positions, label: 'Move' })
+      }
+    },
+    [viewKey, history, scheduleLayoutSave],
+  )
+
+  /**
+   * Dropping a node onto another puts it inside — the gesture people already expect.
+   *
+   * Containment is a model change, so it goes through {@code MoveElement} and produces a commit,
+   * unlike the coordinates that arrived with the same drag. The two travel separately on purpose
+   * (ADR-0003), and this is the one gesture that does both at once. The canvas has already
+   * decided *what* contains what and grown the frame to fit; only the command belongs here.
+   */
+  const onNest = useCallback(
+    async (key: string, parent: string | null, next: Geometry) => {
+      const dragged = byKey[key]
+      if (!dragged || (dragged.parent ?? null) === parent) {
+        return
+      }
+      setPositions(next.positions)
+      setSizes(next.sizes)
+      // Awaited before the command, which refetches the view: a debounced save still in flight
+      // would be answered with the geometry the server held before the drop.
+      await saveLayout.mutateAsync(next)
+      apply.mutate({
+        commands: [{ op: 'move-element', key, parent: parent ?? undefined }],
+        label: parent
+          ? `Put ${dragged.name} inside ${byKey[parent]?.name ?? parent}`
+          : `Take ${dragged.name} out of its container`,
+      })
+    },
+    [byKey, apply, saveLayout],
+  )
 
   /**
    * Whether a connection may be dropped at all.
@@ -530,10 +378,10 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    * connect these two, the drop is allowed and the picker sorts out which. Refusing the drop
    * would throw away the user's gesture in order to make them change a dropdown first.
    */
-  const isValidConnection = useCallback(
-    (connection: Connection | Edge) => {
-      const source = byKey[connection.source]
-      const target = byKey[connection.target]
+  const canConnect = useCallback(
+    (sourceKey: string, targetKey: string) => {
+      const source = byKey[sourceKey]
+      const target = byKey[targetKey]
       return Boolean(source && target && metamodel.permittedBetween(source.conceptType, target.conceptType).length > 0)
     },
     [byKey, metamodel],
@@ -553,9 +401,9 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   )
 
   const onConnect = useCallback(
-    (connection: Connection) => {
-      const source = byKey[connection.source]
-      const target = byKey[connection.target]
+    (sourceKey: string, targetKey: string) => {
+      const source = byKey[sourceKey]
+      const target = byKey[targetKey]
       if (!source || !target) {
         return
       }
@@ -577,7 +425,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         })
         return
       }
-      const node = document.querySelector(`.react-flow__node[data-id="${CSS.escape(target.key)}"]`)
+      const node = document.querySelector(`.ag-node[data-key="${CSS.escape(target.key)}"]`)
       const box = node?.getBoundingClientRect()
       setPicker({
         x: box ? box.right + 8 : window.innerWidth / 2,
@@ -807,8 +655,6 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           .join(' '),
       }}
     >
-      <MarkerDefs />
-
       {/*
         Unmounted rather than hidden. `.ag-sidebar` sets `display: flex`, which beats the `hidden`
         attribute's user-agent `display: none`, so the panel stayed on screen and spilled over a
@@ -910,7 +756,8 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
               void autoLayout(onView, view.data.relationships).then((laid) => {
                 setPositions(laid)
                 scheduleLayoutSave(laid)
-                window.requestAnimationFrame(() => flow.current?.fitView({ padding: 0.2, duration: 300 }))
+                setGeometryVersion((version) => version + 1)
+                setFitToken(`auto:${Date.now()}`)
               })
             }
             disabled={!viewKey}
@@ -949,51 +796,30 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
 
         <div className="ag-canvas">
           {viewKey ? (
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
-              nodeTypes={nodeTypes}
-              onNodesChange={onNodesChange}
-              onNodeDragStart={onNodeDragStart}
-              onNodeDragStop={(_event, node) => {
-                onNodeDragStop()
-                void renestFromDrag(node.id)
-              }}
+            <Canvas
+              elements={canvasElements}
+              links={canvasLinks}
+              selected={selected}
+              editingKey={editingKey}
+              onSelect={setSelected}
+              onGeometry={onGeometry}
+              onGeometryStart={onGeometryStart}
+              onGeometryEnd={onGeometryEnd}
+              onNest={(key, parent, next) => void onNest(key, parent, next)}
               onConnect={onConnect}
-              isValidConnection={isValidConnection}
-              onConnectStart={(_event, params) => setConnectingFrom(params.nodeId ?? null)}
-              onConnectEnd={() => setConnectingFrom(null)}
-              onNodeContextMenu={(event, node) => {
-                event.preventDefault()
-                setContext({ elementKey: node.id, x: event.clientX, y: event.clientY })
-              }}
-              onPaneClick={() => setContext(null)}
-              // Any handle both starts and receives a connection, so a line leaves from
-              // whichever edge faces where it is going.
-              connectionMode={ConnectionMode.Loose}
-              // Release anywhere over the target, not on a 10px dot. Wider than half a default
-              // node, so dropping on the middle of a box snaps to whichever of its sides the line
-              // is coming from — the aim is the element, and the editor can work out the edge.
-              connectionRadius={150}
-              deleteKeyCode={null}
-              onInit={(instance) => {
-                flow.current = instance
-                setCanvasReady(true)
-              }}
-              fitView
-            >
-              <Background gap={16} />
-              <Controls />
-              <MiniMap
-                pannable
-                zoomable
-                nodeColor={(node) =>
-                  LAYER_COLORS[(node.data as { layer?: keyof typeof LAYER_COLORS }).layer ?? 'other']
+              canConnect={canConnect}
+              onContextMenu={(elementKey, x, y) => setContext({ elementKey, x, y })}
+              onBlankClick={() => setContext(null)}
+              onCommitName={(key, name) => {
+                setEditingKey(null)
+                if (name) {
+                  apply.mutate({ commands: [{ op: 'rename-element', key, name }], label: `Rename to ${name}` })
                 }
-                nodeStrokeColor="#6b7280"
-                nodeStrokeWidth={2}
-              />
-            </ReactFlow>
+              }}
+              onCancelEdit={() => setEditingKey(null)}
+              fitToken={fitToken}
+              geometryVersion={geometryVersion}
+            />
           ) : (
             <div className="ag-empty-canvas">
               <p>Open a view, or create one.</p>
@@ -1084,40 +910,6 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       )}
     </div>
   )
-}
-
-function connectionState(
-  element: ModelElement,
-  connectingFrom: string | null,
-  byKey: Record<string, ModelElement>,
-  metamodel: Metamodel,
-  relationshipType: string,
-): 'idle' | 'source' | 'valid' | 'invalid' {
-  if (!connectingFrom) {
-    return 'idle'
-  }
-  if (connectingFrom === element.key) {
-    return 'source'
-  }
-  const source = byKey[connectingFrom]
-  if (!source) {
-    return 'idle'
-  }
-  return metamodel.permits(source.conceptType, element.conceptType, relationshipType) ? 'valid' : 'invalid'
-}
-
-/** Guards against nesting a container into something it already contains. */
-function isDescendantOf(candidate: string, ancestor: string, byKey: Record<string, ModelElement>): boolean {
-  let current: string | null | undefined = byKey[candidate]?.parent
-  const seen = new Set<string>()
-  while (current && !seen.has(current)) {
-    if (current === ancestor) {
-      return true
-    }
-    seen.add(current)
-    current = byKey[current]?.parent
-  }
-  return false
 }
 
 function slugify(value: string): string {

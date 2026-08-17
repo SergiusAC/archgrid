@@ -10,50 +10,52 @@
  * been checked against the specification's figures. They are presentation rather than a
  * correctness claim, so the consequence of an error here is a diagram that reads oddly, not a
  * model that is wrong.
+ *
+ * Markers carry geometry and a class, never a colour. Colour comes from CSS so that the dark
+ * theme keeps working and a selected line can tint its own arrowhead.
  */
+
+/** A JointJS marker: an SVG element name plus its attributes. */
+export type Marker = Record<string, string | number>
+
 export interface RelationshipNotation {
   /** Marker at the target end. */
-  markerEnd?: string
+  markerEnd?: Marker
   /** Marker at the source end — composition and aggregation put their diamond at the whole. */
-  markerStart?: string
+  markerStart?: Marker
   /** SVG stroke-dasharray. */
   dash?: string
-  /** Moving dashes, reserved for the dynamic relationships where flow direction is the point. */
-  animated?: boolean
 }
+
+const filledArrow: Marker = { type: 'path', d: 'M 12 -5 0 0 12 5 z', class: 'ag-marker-filled' }
+const openArrow: Marker = { type: 'path', d: 'M 12 -6 0 0 12 6', class: 'ag-marker-open' }
+const openArrowSmall: Marker = { type: 'path', d: 'M 9 -4 0 0 9 4', class: 'ag-marker-open' }
+const hollowTriangle: Marker = { type: 'path', d: 'M 14 -7 0 0 14 7 z', class: 'ag-marker-hollow' }
+const filledDiamond: Marker = { type: 'path', d: 'M 0 0 9 -6 18 0 9 6 z', class: 'ag-marker-filled' }
+const hollowDiamond: Marker = { type: 'path', d: 'M 0 0 9 -6 18 0 9 6 z', class: 'ag-marker-hollow' }
+const ball: Marker = { type: 'circle', r: 4, cx: 4, cy: 0, class: 'ag-marker-filled' }
 
 export const NOTATION: Record<string, RelationshipNotation> = {
   // Structural: the diamond sits at the whole, which is the source of the relationship.
-  Composition: { markerStart: 'ag-diamond-filled' },
-  Aggregation: { markerStart: 'ag-diamond-hollow' },
-  Assignment: { markerStart: 'ag-ball', markerEnd: 'ag-arrow-filled' },
-  Realization: { markerEnd: 'ag-triangle-hollow', dash: '2 4' },
+  Composition: { markerStart: filledDiamond },
+  Aggregation: { markerStart: hollowDiamond },
+  Assignment: { markerStart: ball, markerEnd: filledArrow },
+  Realization: { markerEnd: hollowTriangle, dash: '3 5' },
 
   // Dependency.
-  Serving: { markerEnd: 'ag-arrow-open' },
-  Access: { markerEnd: 'ag-arrow-open-small', dash: '2 3' },
-  Influence: { markerEnd: 'ag-arrow-open', dash: '6 4' },
+  Serving: { markerEnd: openArrow },
+  Access: { markerEnd: openArrowSmall, dash: '2 3' },
+  Influence: { markerEnd: openArrow, dash: '6 4' },
 
   // Dynamic.
-  Triggering: { markerEnd: 'ag-arrow-filled' },
-  Flow: { markerEnd: 'ag-arrow-filled', dash: '6 4', animated: true },
+  Triggering: { markerEnd: filledArrow },
+  Flow: { markerEnd: filledArrow, dash: '6 4' },
 
   // Other. Association is the one relationship that carries no arrowhead by default.
-  Specialization: { markerEnd: 'ag-triangle-hollow' },
+  Specialization: { markerEnd: hollowTriangle },
   Association: {},
 }
 
 export function notationFor(relationshipType: string): RelationshipNotation {
   return NOTATION[relationshipType] ?? {}
-}
-
-/**
- * React Flow takes the bare marker id and wraps it in `url(#…)` itself.
- *
- * Wrapping it here as well produces `url(#url(#ag-arrow-open))`, which is not a valid
- * reference, so the arrowhead silently does not render — the line still draws, so nothing
- * looks broken enough to notice without opening the DOM.
- */
-export function marker(id: string | undefined): string | undefined {
-  return id
 }
