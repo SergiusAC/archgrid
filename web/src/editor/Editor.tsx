@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { Api } from '../api/client.ts'
 import { ApiError } from '../api/client.ts'
-import type { Command, ElementType, ModelElement, ModelRelationship, Profile } from '../api/types.ts'
+import type { Command, ElementType, Graph, ModelElement, ModelRelationship, Profile } from '../api/types.ts'
 import { Metamodel } from '../metamodel/Metamodel.ts'
 import Canvas, { type CanvasElement, type CanvasLink, type Geometry } from './Canvas.tsx'
 import ContextMenu, { type ContextTarget } from './ContextMenu.tsx'
@@ -144,24 +144,65 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     ])
   }, [queryClient, workspace])
 
+  /**
+   * The commit the next command builds on.
+   *
+   * Read from the cache at the moment of sending, never from the render that scheduled it. The
+   * optimistic check refuses a command whose base is not the current head (ADR-0004), and a value
+   * captured in a closure goes stale the instant the previous command lands — which is a normal
+   * thing to do, since the editor commits on almost every gesture. Working alone in an empty
+   * repository, the user was told someone else had changed it.
+   */
+  const currentHead = useCallback(
+    () => queryClient.getQueryData<Graph>(['graph', workspace])?.headCommitId ?? headCommitId,
+    [queryClient, workspace, headCommitId],
+  )
+
+  /** The server tells us the new head; believing it beats waiting for the graph to be refetched. */
+  const advanceHead = useCallback(
+    (commitId: string) =>
+      queryClient.setQueryData<Graph>(['graph', workspace], (previous) =>
+        previous ? { ...previous, headCommitId: commitId } : previous,
+      ),
+    [queryClient, workspace],
+  )
+
   const apply = useMutation({
     mutationFn: async ({ commands, label }: { commands: Command[]; label: string }) => {
       const inverse = invert(commands, { elements: byKey, relationships: relationshipsByKey })
-      await api.applyCommands(workspace, { baseCommitId: headCommitId, message: label, commands })
-      return { inverse, commands, label }
+      const result = await api.applyCommands(workspace, {
+        baseCommitId: currentHead(),
+        message: label,
+        commands,
+      })
+      return { inverse, commands, label, result }
     },
-    onSuccess: async ({ inverse, commands, label }) => {
+    onSuccess: async ({ inverse, commands, label, result }) => {
+      advanceHead(result.commitId)
       history.push({ kind: 'commands', forward: commands, inverse, label })
       setMessage(null)
       await refresh()
     },
-    onError: (error: unknown) => setMessage({ kind: 'error', text: describe(error) }),
+    onError: (error: unknown) => {
+      setMessage({ kind: 'error', text: describe(error) })
+      // A rejected base means what we hold is out of date, so fetch what is current rather than
+      // leaving the user to press things until it works. The command is not retried: the check
+      // exists precisely so a change is never replayed onto a model that moved underneath it.
+      if (error instanceof ApiError && error.isStaleBase) {
+        void refresh()
+      }
+    },
   })
 
   const applySilently = useCallback(
     async (commands: Command[], label: string) => {
       try {
-        await api.applyCommands(workspace, { baseCommitId: headCommitId, message: label, commands })
+        const result = await api.applyCommands(workspace, {
+          baseCommitId: currentHead(),
+          message: label,
+          commands,
+        })
+        advanceHead(result.commitId)
         setMessage(null)
         await refresh()
         return true
@@ -170,7 +211,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         return false
       }
     },
-    [api, workspace, headCommitId, refresh],
+    [api, workspace, currentHead, advanceHead, refresh],
   )
 
   /**
@@ -1007,7 +1048,10 @@ function describe(error: unknown): string {
       return violations.map((violation) => violation.detail).join(' ')
     }
     if (error.isStaleBase) {
-      return 'Someone else changed this repository. Reload to get their changes before continuing.'
+      // Not "someone else": the commonest cause is this browser holding a stale head — another
+      // tab of your own, or a change that landed while this one was thinking. Say what happened
+      // and what to do, and do not accuse a colleague who may not exist.
+      return 'This repository moved on since your last change. The latest has just been fetched — try again.'
     }
     return error.message
   }

@@ -581,6 +581,29 @@ async function interactions(page) {
   await page.keyboard.press('Escape')
   await page.screenshot({ path: `${outDir}/33-magic.png` })
 
+  /*
+   * --- editing quickly must not look like someone else editing ---
+   *
+   * The optimistic check refuses a command whose base is not the current head. Nothing waits for
+   * a refetch between two gestures, so a base taken from the render that scheduled the command is
+   * stale the moment the previous one lands, and a lone user in their own repository was told
+   * "someone else changed this repository". Four commands with no pause between them.
+   */
+  await page.locator('.ag-splitter-left .ag-splitter-toggle').click()
+  await page.waitForTimeout(400)
+  await page.getByRole('tab', { name: /^Palette/ }).click()
+  for (const label of ['Business Actor', 'Business Process', 'Business Object', 'Application Function']) {
+    await page.locator('.ag-palette-item', { hasText: new RegExp(`^${label}$`) }).first().click()
+    await page.waitForTimeout(250)
+    await page.keyboard.press('Escape')
+  }
+  await page.waitForTimeout(3000)
+  const conflict = await page.locator('.ag-banner-error').count()
+  const banner = conflict ? await page.locator('.ag-banner-error').first().textContent() : ''
+  check('four edits in a row do not collide with each other', conflict === 0, banner)
+  await page.locator('.ag-splitter-left .ag-splitter-toggle').click()
+  await page.waitForTimeout(400)
+
   // --- alignment guides: drag until it lines up, and it sticks ---
   // Ledger is dragged towards the axis the new element sits on. Within tolerance the guide shows
   // and the position snaps exactly, which is what stops a diagram drifting a pixel at a time.
