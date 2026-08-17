@@ -75,8 +75,14 @@ const MIN_WIDTH = 120
 const MIN_HEIGHT = 60
 const GRID = 10
 
-/** The strip at the top of a container that its own name occupies, so children start below it. */
-const CONTAINER_INSET = { top: 46, left: NEST_PADDING, right: NEST_PADDING, bottom: NEST_PADDING }
+/**
+ * The strip at the top of a container that its own name occupies, so children start below it.
+ *
+ * Wide enough to clear the name, which is drawn from y=38 at 12px: at 46 the first child sat on
+ * top of the container's own label, and a system whose name is hidden by its own contents is a
+ * worse diagram than one that never nested at all.
+ */
+const CONTAINER_INSET = { top: 60, left: NEST_PADDING, right: NEST_PADDING, bottom: NEST_PADDING }
 
 /**
  * Every side is a connection point, so a line can leave from whichever edge faces where it is
@@ -185,6 +191,8 @@ export default function Canvas(props: CanvasProps) {
   // The geometryVersion last written into the graph, so a rerender for any other reason does not
   // overwrite where the user has just put things.
   const appliedGeometry = useRef(-1)
+  // Which element currently carries the resize grip, so it is not rebuilt on every render.
+  const toolsOn = useRef<string | null>(null)
   const [ready, setReady] = useState(false)
   const [editorBox, setEditorBox] = useState<{ x: number; y: number; width: number } | null>(null)
 
@@ -322,6 +330,18 @@ export default function Canvas(props: CanvasProps) {
         latest.current.onConnect(String(source.id), String(target.id))
       }
     })
+
+    // -------------------------------------------------------------- routing a line by hand
+    // Bendpoints appear on hover and belong to the line, not to the selection: the architect drew
+    // it, so the architect routes it. Wired once — re-registering per render stacked the handlers.
+    view.on('link:mouseenter', (linkView: joint.dia.LinkView) => {
+      linkView.addTools(
+        new joint.dia.ToolsView({
+          tools: [new joint.linkTools.Vertices(), new joint.linkTools.Segments()],
+        }),
+      )
+    })
+    view.on('link:mouseleave', (linkView: joint.dia.LinkView) => linkView.removeTools())
 
     // -------------------------------------------------------------- pan and zoom
     let panning: { x: number; y: number; tx: number; ty: number } | null = null
@@ -570,35 +590,32 @@ export default function Canvas(props: CanvasProps) {
     })
   }, [props.elements, props.links, ready])
 
-  // ------------------------------------------------------------------ tools on the selection
+  /**
+   * The resize grip, attached to the one selected element and to nothing else.
+   *
+   * Only when the selection actually changes. Re-adding the tool on every render replaced the
+   * grip mid-gesture, and since a resize emits geometry on every frame, the very first frame
+   * destroyed the drag: the element grew by a few pixels and then stopped following the pointer.
+   */
   useEffect(() => {
     const view = paper.current
     const model = graph.current
     if (!view || !model || !ready) {
       return
     }
-    for (const element of model.getElements()) {
-      const elementView = element.findView(view) as joint.dia.ElementView | undefined
-      if (!elementView) {
-        continue
-      }
-      if (props.selected.includes(String(element.id))) {
-        elementView.addTools(new joint.dia.ToolsView({ tools: [new ResizeControl()] }))
-      } else {
-        elementView.removeTools()
-      }
+    const only = props.selected.length === 1 ? props.selected[0] : null
+    if (toolsOn.current === only) {
+      return
     }
-    // Bendpoints on a selected line: the architect drew it, the architect routes it.
-    for (const link of model.getLinks()) {
-      const linkView = link.findView(view) as joint.dia.LinkView | undefined
-      linkView?.addTools(
-        new joint.dia.ToolsView({ tools: [new joint.linkTools.Vertices(), new joint.linkTools.Segments()] }),
-      )
-      linkView?.hideTools()
+    if (toolsOn.current) {
+      ;(model.getCell(toolsOn.current)?.findView(view) as joint.dia.ElementView | undefined)?.removeTools()
     }
-    view.on('link:mouseenter', (linkView: joint.dia.LinkView) => linkView.showTools())
-    view.on('link:mouseleave', (linkView: joint.dia.LinkView) => linkView.hideTools())
-  }, [props.selected, props.links, props.elements, ready])
+    if (only) {
+      const elementView = model.getCell(only)?.findView(view) as joint.dia.ElementView | undefined
+      elementView?.addTools(new joint.dia.ToolsView({ tools: [new ResizeControl()] }))
+    }
+    toolsOn.current = only
+  }, [props.selected, ready])
 
   // ------------------------------------------------------------------ fit
   useEffect(() => {

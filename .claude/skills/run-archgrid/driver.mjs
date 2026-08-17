@@ -362,18 +362,37 @@ async function interactions(page) {
   await addElement('Application Component', 'Payment System')
   await addElement('Application Component', 'Payment API')
 
+  /*
+   * Elements are addressed by their key, never by index.
+   *
+   * The canvas brings a dragged element to the front, which reorders the DOM, so `.first()` and
+   * `.nth(1)` stop meaning the same element the moment a gesture starts. That cost most of a day:
+   * dragging and nesting both worked, and every index-based assertion said they did not.
+   */
+  const keyOf = (label) =>
+    page.evaluate(
+      (text) =>
+        [...document.querySelectorAll('.ag-paper .ag-node')]
+          .find((node) => node.querySelector('.ag-node-label')?.textContent?.trim() === text)
+          ?.getAttribute('data-key') ?? null,
+      label,
+    )
+  const nodeAt = (key) => page.locator(`.ag-paper .ag-node[data-key="${key}"]`)
+  const system = await keyOf('Payment System')
+  const api = await keyOf('Payment API')
+
   // --- connection points ---
-  const handles = await page.locator('.ag-paper .ag-node').first().locator('.ag-handle').count()
+  const handles = await nodeAt(system).locator('.ag-handle').count()
   check('a node offers a connection point on every side', handles === 4, `${handles} handles`)
 
   // --- resize, and its survival across a reload ---
-  await page.locator('.ag-paper .ag-node').first().click()
+  await nodeAt(system).click()
   await page.waitForTimeout(400)
   check('selecting an element shows resize handles', (await page.locator('.ag-resize-handle').count()) > 0)
 
-  // Flow units, not screen pixels: fitView changes the zoom, and DOM order is parents-first, so
-  // the node has to be addressed by id to still be the same node after a reload.
-  const resizedId = await page.locator('.ag-paper .ag-node').first().getAttribute('data-key')
+  // Model units, not screen pixels: the fit picks a zoom to suit the content, so the same element
+  // measures differently after a reload.
+  const resizedId = system
   const flowWidth = (id) =>
     page.evaluate(
       (key) =>
@@ -382,10 +401,11 @@ async function interactions(page) {
         ),
       id,
     )
-  const box = await page.locator('.ag-paper .ag-node').first().boundingBox()
-  await page.mouse.move(box.x + box.width - 2, box.y + box.height - 2)
+  // The grip itself, rather than a guess at where the corner is.
+  const grip = await page.locator('.ag-resize-handle').first().boundingBox()
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
   await page.mouse.down()
-  await page.mouse.move(box.x + box.width + 140, box.y + box.height + 90, { steps: 12 })
+  await page.mouse.move(grip.x + 220, grip.y + 140, { steps: 12 })
   await page.mouse.up()
   await page.waitForTimeout(1500)
   const grown = await flowWidth(resizedId)
@@ -427,26 +447,32 @@ async function interactions(page) {
   // --- nesting ---
   await page.locator('.ag-splitter-left .ag-splitter-toggle').click()
   await page.waitForTimeout(300)
-  const nodes = page.locator('.ag-paper .ag-node')
-  const container = await nodes.first().boundingBox()
-  const child = await nodes.nth(1).boundingBox()
-  await page.mouse.move(child.x + child.width / 2, child.y + 12)
+  const container = await nodeAt(system).boundingBox()
+  const child = await nodeAt(api).boundingBox()
+  await page.mouse.move(child.x + child.width / 2, child.y + child.height / 2)
   await page.mouse.down()
-  await page.mouse.move(container.x + container.width / 2, container.y + container.height / 2, { steps: 16 })
+  await page.mouse.move(container.x + container.width / 2, container.y + container.height / 2, { steps: 20 })
   await page.mouse.up()
-  await page.waitForTimeout(3000)
+  await page.waitForTimeout(3500)
   check('dropping one element on another nests it', (await page.locator('.ag-paper .ag-node-container').count()) > 0)
 
   // Nodes are a flat list in the DOM, so a nested child is a sibling of its container, not a
   // descendant of it — comparing rendered boxes is the only way to know it really sits inside.
-  const frame = await page.locator('.ag-paper .ag-node-container').first().boundingBox()
-  const inner = await page.locator('.ag-paper .ag-node:not(.ag-node-container)').first().boundingBox()
+  const frame = await nodeAt(system).boundingBox()
+  const inner = await nodeAt(api).boundingBox()
   check(
     'the container frame encloses its child',
     inner.x >= frame.x - 1 && inner.y >= frame.y - 1 &&
       inner.x + inner.width <= frame.x + frame.width + 1 &&
       inner.y + inner.height <= frame.y + frame.height + 1,
     `child ${Math.round(inner.width)}x${Math.round(inner.height)} in frame ${Math.round(frame.width)}x${Math.round(frame.height)}`,
+  )
+  // A container whose own name is covered by its first child reads worse than no nesting at all.
+  const label = await nodeAt(system).locator('.ag-node-label').boundingBox()
+  check(
+    "the container's own name stays clear of its children",
+    label.y + label.height <= inner.y + 1,
+    `label ends at ${Math.round(label.y + label.height)}, child starts at ${Math.round(inner.y)}`,
   )
   await page.screenshot({ path: `${outDir}/31-nested.png` })
 
@@ -458,8 +484,9 @@ async function interactions(page) {
   await page.waitForTimeout(500)
   // A new element must not land on top of an existing one — least of all on its connection
   // points, which made the element impossible to link to anything.
-  const ledger = await page.locator('.ag-paper .ag-node', { hasText: 'Ledger' }).first().boundingBox()
-  const grownFrame = await page.locator('.ag-paper .ag-node-container').first().boundingBox()
+  const ledgerKey = await keyOf('Ledger')
+  const ledger = await nodeAt(ledgerKey).boundingBox()
+  const grownFrame = await nodeAt(system).boundingBox()
   const overlapsContainer =
     ledger.x < grownFrame.x + grownFrame.width && grownFrame.x < ledger.x + ledger.width &&
     ledger.y < grownFrame.y + grownFrame.height && grownFrame.y < ledger.y + ledger.height
@@ -469,10 +496,7 @@ async function interactions(page) {
   await page.locator('select').first().selectOption({ label: 'Access' })
   await page.waitForTimeout(300)
   const edgesBefore = await page.locator('.ag-paper .ag-link').count()
-  const handle = await page
-    .locator('.ag-paper .ag-node-container [joint-selector="handle-right"]')
-    .first()
-    .boundingBox()
+  const handle = await nodeAt(system).locator('[joint-selector="handle-right"]').boundingBox()
   await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2)
   await page.mouse.down()
   // Released over the middle of the target, not on its 10px dot: aiming at the element is enough.
