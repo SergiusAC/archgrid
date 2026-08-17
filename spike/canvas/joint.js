@@ -22,10 +22,54 @@ const paper = new joint.dia.Paper({
 })
 
 // ---------------------------------------------------------------- elements
+/**
+ * An ArchiMate box: the type in small caps at the top, the name below it, both inside the shape.
+ *
+ * Two text nodes rather than one label with a newline in it. They are two different things — the
+ * type is fixed vocabulary, the name is the user's — and they are positioned by different rules:
+ * the type always sits at the top, while the name is centred in a leaf and top-aligned in a
+ * container, whose middle belongs to its children.
+ *
+ * Geometry uses JointJS's calc() expressions, so the text follows a resize without a listener.
+ */
+const define = (tag) =>
+  joint.dia.Element.define(
+    `archgrid.${tag}`,
+    {
+      attrs: {
+        body: { width: 'calc(w)', height: 'calc(h)', x: 0, y: 0, cx: 'calc(0.5*w)', cy: 'calc(0.5*h)', rx: 'calc(0.5*w)', ry: 'calc(0.5*h)' },
+        type: {
+          x: 'calc(0.5*w)',
+          y: 12,
+          textAnchor: 'middle',
+          textVerticalAnchor: 'top',
+          fontSize: 9,
+          letterSpacing: 0.4,
+          fill: '#5a6678',
+        },
+        name: {
+          x: 'calc(0.5*w)',
+          textAnchor: 'middle',
+          fontSize: 12,
+          fontWeight: 600,
+          fill: '#1a202c',
+        },
+      },
+    },
+    {
+      markup: [
+        { tagName: tag, selector: 'body' },
+        { tagName: 'text', selector: 'type' },
+        { tagName: 'text', selector: 'name' },
+      ],
+    },
+  )
+const ArchimateRect = define('rect')
+const ArchimateOval = define('ellipse')
+
 const cells = {}
 for (const element of ELEMENTS) {
-  const shape =
-    element.shape === 'oval' ? new joint.shapes.standard.Ellipse() : new joint.shapes.standard.Rectangle()
+  const shape = element.shape === 'oval' ? new ArchimateOval() : new ArchimateRect()
   shape.position(element.x, element.y)
   shape.resize(element.w, element.h)
   shape.attr({
@@ -33,15 +77,21 @@ for (const element of ELEMENTS) {
       fill: element.container ? '#e8fbfb' : LAYER[element.type],
       stroke: '#4a5568',
       strokeWidth: element.container ? 2 : 1,
-      rx: element.shape === 'oval' ? undefined : 4,
+      ...(element.shape === 'oval' ? {} : { rx: 4, ry: 4 }),
     },
-    label: {
-      text: `${element.type.toUpperCase()}\n${element.name}`,
-      fontSize: 11,
-      fill: '#1a202c',
-      // A container's name belongs at the top; the middle is where its children go.
-      refY: element.container ? 18 : undefined,
-      yAlignment: element.container ? 'top' : 'middle',
+    type: { text: element.type.toUpperCase() },
+    name: {
+      text: element.name,
+      // A container's name belongs under its type at the top; the middle is where children go.
+      y: element.container ? 34 : 'calc(0.5*h+4)',
+      textVerticalAnchor: element.container ? 'top' : 'middle',
+      // An ArchiMate name is as long as the system is called, and an oval has less room than its
+      // bounding box suggests. Wrapping keeps it inside the shape instead of across the diagram.
+      textWrap: {
+        width: element.shape === 'oval' ? 'calc(w-56)' : 'calc(w-20)',
+        height: element.container ? 40 : 'calc(h-30)',
+        ellipsis: true,
+      },
     },
   })
   shape.addTo(graph)
@@ -81,7 +131,17 @@ for (const link of LINKS) {
       position: 0.5,
       attrs: {
         text: { text: link.label, fontSize: 10, fill: '#4a5568' },
-        rect: { fill: '#fff' },
+        // A plate under the text. Two links crossing put their labels in the same place, and
+        // without it the two words are printed on top of each other and neither is readable.
+        rect: {
+          ref: 'text',
+          fill: '#fff',
+          stroke: 'none',
+          x: 'calc(x-4)',
+          y: 'calc(y-2)',
+          width: 'calc(w+8)',
+          height: 'calc(h+4)',
+        },
       },
     },
   ])
@@ -174,6 +234,30 @@ record('straight line, horizontal when the elements line up', Boolean(horizontal
 // and hops over with a cubic. A line that crosses nothing stays a single "M … L …".
 const withJumps = paths.filter((d) => /[CcAa]/.test(d) || (d.match(/L/g) ?? []).length > 1)
 record('line jumps at crossings, out of the box', withJumps.length > 0, `${withJumps.length} of ${paths.length} paths carry arcs`)
+
+// Text that leaves its own box is the thing the eye notices first and no attribute check catches.
+const escaping = []
+for (const [key, cell] of Object.entries(cells)) {
+  const view = cell.findView(paper)
+  const box = view.el.querySelector('[joint-selector="body"]').getBoundingClientRect()
+  for (const selector of ['type', 'name']) {
+    const text = view.el.querySelector(`[joint-selector="${selector}"]`)?.getBoundingClientRect()
+    if (!text || text.width === 0) {
+      continue
+    }
+    const outside =
+      text.left < box.left - 0.5 ||
+      text.top < box.top - 0.5 ||
+      text.right > box.right + 0.5 ||
+      text.bottom > box.bottom + 0.5
+    if (outside) {
+      escaping.push(`${key}.${selector}`)
+    }
+  }
+}
+record('no label escapes its element', escaping.length === 0, escaping.join(', ') || 'all inside')
+
+record('a long name wraps inside the shape', cells['billing'].findView(paper).el.querySelectorAll('[joint-selector="name"] tspan').length > 1, `${cells['billing'].findView(paper).el.querySelectorAll('[joint-selector="name"] tspan').length} lines`)
 
 record('nesting (embedding) with children moving with the parent', graph.getCell(cells['payment-system'].id).getEmbeddedCells().length === 1)
 

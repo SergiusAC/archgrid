@@ -11,7 +11,9 @@ export const ELEMENTS = [
   { key: 'ledger', name: 'Ledger', type: 'Application Component', x: 560, y: 140, w: 200, h: 80 },
   { key: 'notification', name: 'Notification', type: 'Application Component', x: 560, y: 380, w: 200, h: 80 },
   { key: 'broker', name: 'Message Broker', type: 'System Software', x: 100, y: 380, w: 200, h: 80 },
-  { key: 'billing', name: 'Billing Service', type: 'Application Service', x: 330, y: 530, w: 200, h: 70, shape: 'oval' },
+  // Deliberately long: a name that does not fit is the normal case in a real landscape, and the
+  // question is whether it wraps inside the box or spills across the diagram.
+  { key: 'billing', name: 'Billing and Settlement Service', type: 'Application Service', x: 330, y: 530, w: 200, h: 80, shape: 'oval' },
 ]
 
 export const LINKS = [
