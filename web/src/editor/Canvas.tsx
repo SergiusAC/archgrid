@@ -159,6 +159,32 @@ const ArchimateShape = joint.dia.Element.define(
   },
 )
 
+/**
+ * Settles a newly nested child inside its container, disturbing the drawing as little as possible.
+ *
+ * Deliberately not `fitEmbeds`, which resizes the container to its contents exactly — that also
+ * *shrinks* it, and a container the architect had sized and placed on purpose would snap to a
+ * different shape the moment anything was dropped into it. The whole diagram's spacing went with
+ * it.
+ *
+ * So: the container never moves and never shrinks. The child is nudged inside the frame if it
+ * landed across an edge, and only then does the container grow, and only far enough.
+ */
+function tuckIn(child: joint.dia.Element, parent: joint.dia.Element) {
+  const frame = parent.getBBox()
+  const box = child.getBBox()
+  const x = Math.max(box.x, frame.x + CONTAINER_INSET.left)
+  const y = Math.max(box.y, frame.y + CONTAINER_INSET.top)
+  if (x !== box.x || y !== box.y) {
+    child.position(x, y)
+  }
+  const width = Math.max(frame.width, x - frame.x + box.width + CONTAINER_INSET.right)
+  const height = Math.max(frame.height, y - frame.y + box.height + CONTAINER_INSET.bottom)
+  if (width !== frame.width || height !== frame.height) {
+    parent.resize(width, height)
+  }
+}
+
 /** A corner grip that resizes the element. JointJS keeps free transform in its paid tier. */
 const ResizeControl = joint.elementTools.Control.extend({
   children: [
@@ -319,8 +345,7 @@ export default function Canvas(props: CanvasProps) {
       }
       const parent = cell.getParentCell()
       if (parent) {
-        // Grow the container so the child sits inside its frame rather than across it.
-        ;(parent as joint.dia.Element).fitEmbeds({ padding: CONTAINER_INSET })
+        tuckIn(cell as joint.dia.Element, parent as joint.dia.Element)
       }
       latest.current.onNest(String(cell.id), parent ? String(parent.id) : null, geometry())
     })
@@ -504,11 +529,16 @@ export default function Canvas(props: CanvasProps) {
         type: { text: element.specialised ? `«${element.typeLabel}»` : element.typeLabel.toUpperCase() },
         name: {
           text: element.name,
-          y: container ? 38 : 'calc(0.5*h+4)',
-          textVerticalAnchor: container ? 'top' : 'middle',
+          // Inside, at the top, under its type — for every element and not only for containers.
+          // ArchiMate reads top-down: what it is, then what it is called. Centring the name meant
+          // two elements of different heights put their names on different lines, and a column of
+          // boxes stopped scanning as a column.
+          y: 30,
+          textVerticalAnchor: 'top',
           // A name is as long as the system is called; wrapping keeps it inside the box rather
           // than across the diagram.
-          textWrap: { width: 'calc(w-20)', height: container ? 34 : 'calc(h-30)', ellipsis: true },
+          // A container's name is capped so long names cannot eat the room its children need.
+          textWrap: { width: 'calc(w-20)', height: container ? 32 : 'calc(h-38)', ellipsis: true },
         },
         ...Object.fromEntries(
           SIDES.map((side) => [

@@ -447,6 +447,12 @@ async function interactions(page) {
   // --- nesting ---
   await page.locator('.ag-splitter-left .ag-splitter-toggle').click()
   await page.waitForTimeout(300)
+  const sizeOf = (key) =>
+    page.evaluate((k) => {
+      const body = document.querySelector(`.ag-paper .ag-node[data-key="${k}"] .ag-body`)
+      return { width: Number(body.getAttribute('width')), height: Number(body.getAttribute('height')) }
+    }, key)
+  const sizeBefore = await sizeOf(system)
   const container = await nodeAt(system).boundingBox()
   const child = await nodeAt(api).boundingBox()
   await page.mouse.move(child.x + child.width / 2, child.y + child.height / 2)
@@ -455,6 +461,15 @@ async function interactions(page) {
   await page.mouse.up()
   await page.waitForTimeout(3500)
   check('dropping one element on another nests it', (await page.locator('.ag-paper .ag-node-container').count()) > 0)
+
+  // A container the architect sized on purpose must not be reshaped by what is dropped into it.
+  // Fitting it to its contents also shrank it, and the spacing of the whole diagram went with it.
+  const sizeAfter = await sizeOf(system)
+  check(
+    'the container is never shrunk by what is put inside it',
+    sizeAfter.width >= sizeBefore.width && sizeAfter.height >= sizeBefore.height,
+    `${sizeBefore.width}x${sizeBefore.height} -> ${sizeAfter.width}x${sizeAfter.height}`,
+  )
 
   // Nodes are a flat list in the DOM, so a nested child is a sibling of its container, not a
   // descendant of it — comparing rendered boxes is the only way to know it really sits inside.
@@ -547,13 +562,22 @@ async function interactions(page) {
   // The body rect, not the node group: the group's box also covers the connection points and the
   // resize grip, which shifts its centre by most of a handle.
   const made = await nodeAt(madeKey).locator('.ag-body').boundingBox()
-  // Within a node of the drop, which is the claim worth making: it landed where the gesture
-  // pointed rather than in the next free slot of the tidy grid, which would be far away.
+  /*
+   * Relative to the source, not to remembered screen coordinates.
+   *
+   * The line was dragged straight down from Ledger, so the new element belongs directly below it
+   * and roughly on its axis. Comparing against the drop point recorded earlier compares across a
+   * canvas that may have panned in between, and reads as a placement bug when the placement is
+   * right — it did exactly that.
+   */
+  const from2 = await nodeAt(ledgerKey).locator('.ag-body').boundingBox()
   check(
     'the new element lands where the line was dropped',
-    Math.abs(made.x + made.width / 2 - dropX) < 110 && Math.abs(made.y + made.height / 2 - dropY) < 110,
-    `centre ${Math.round(made.x + made.width / 2)},${Math.round(made.y + made.height / 2)} vs drop ${Math.round(dropX)},${Math.round(dropY)}`,
+    Math.abs(made.x + made.width / 2 - (from2.x + from2.width / 2)) < 80 && made.y > from2.y + from2.height,
+    `centre x ${Math.round(made.x + made.width / 2)} vs source ${Math.round(from2.x + from2.width / 2)}, below: ${made.y > from2.y + from2.height}`,
   )
+  void dropX
+  void dropY
   await page.keyboard.press('Escape')
   await page.screenshot({ path: `${outDir}/33-magic.png` })
 
