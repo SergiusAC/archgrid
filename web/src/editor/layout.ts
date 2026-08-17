@@ -72,12 +72,33 @@ export async function autoLayout(
   return positions
 }
 
-/** Somewhere sensible to drop a newly created element when nothing else says where. */
+/**
+ * Somewhere sensible to drop a newly created element when nothing else says where.
+ *
+ * Scans a grid for a genuinely empty slot rather than indexing by how many elements exist.
+ * The counting version put new elements straight on top of ones ELK had already placed
+ * somewhere else — a diagram that silently hides a box behind another is worse than an untidy
+ * one, because the element looks like it was never created.
+ */
 export function nextFreePosition(taken: Record<string, Position>): Position {
-  const count = Object.keys(taken).length
-  const columns = 4
-  return {
-    x: 60 + (count % columns) * (NODE_WIDTH + 60),
-    y: 60 + Math.floor(count / columns) * (NODE_HEIGHT + 60),
+  const occupied = Object.values(taken)
+  const stepX = NODE_WIDTH + 48
+  const stepY = NODE_HEIGHT + 48
+  const columns = 8
+
+  for (let row = 0; row < 500; row++) {
+    for (let column = 0; column < columns; column++) {
+      const candidate = { x: 40 + column * stepX, y: 40 + row * stepY }
+      const clashes = occupied.some(
+        (position) =>
+          Math.abs(position.x - candidate.x) < NODE_WIDTH + 16 &&
+          Math.abs(position.y - candidate.y) < NODE_HEIGHT + 16,
+      )
+      if (!clashes) {
+        return candidate
+      }
+    }
   }
+  // Unreachable for any plausible diagram; better than looping forever.
+  return { x: 40, y: 40 + 500 * stepY }
 }

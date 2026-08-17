@@ -164,9 +164,182 @@ code {
 
 .ag-editor {
   display: grid;
-  grid-template-columns: 15rem 1fr;
+  grid-template-columns: 15rem minmax(0, 1fr) 18rem;
   flex: 1;
   min-height: 0;
+}
+
+@media (max-width: 1200px) {
+  .ag-editor {
+    grid-template-columns: 13rem minmax(0, 1fr) 15rem;
+  }
+}
+
+.ag-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--line);
+}
+
+.ag-tab {
+  flex: 1;
+  border: none;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  padding: 0.5rem 0.25rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.ag-tab-active {
+  border-bottom-color: var(--accent);
+  color: var(--fg);
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- explorer */
+
+.ag-explorer {
+  padding: 0.75rem;
+}
+
+.ag-explorer-count {
+  font-size: 0.75rem;
+  margin: 0.25rem 0 0;
+}
+
+.ag-explorer-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.ag-explorer-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+
+.ag-explorer-item {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  border: none;
+  background: none;
+  padding: 0.2rem 0.3rem;
+  border-radius: 0.25rem;
+  text-align: left;
+}
+
+.ag-explorer-item:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.ag-explorer-selected .ag-explorer-item {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.ag-explorer-name {
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.ag-explorer-meta {
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+
+.ag-explorer-add {
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- properties */
+
+.ag-properties {
+  border-right: none;
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.ag-props-type {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.ag-props-key {
+  display: block;
+  margin-top: -0.4rem;
+}
+
+.ag-properties textarea {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.375rem;
+  background: var(--bg);
+  color: var(--fg);
+  resize: vertical;
+}
+
+.ag-props-group h3 {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0.75rem 0 0.4rem;
+}
+
+.ag-props-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.ag-props-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+}
+
+.ag-props-row span {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.ag-props-add {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 0.25rem;
+  margin-top: 0.25rem;
+}
+
+.ag-props-add input {
+  min-width: 0;
+  font-size: 0.8rem;
+}
+
+.ag-props-usage {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.8rem;
 }
 
 .ag-editor-loading {

@@ -14,12 +14,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { Api } from '../api/client.ts'
 import { ApiError } from '../api/client.ts'
-import type { Command, ElementType, ModelElement, ModelRelationship } from '../api/types.ts'
+import type { Command, ElementType, ModelElement, ModelRelationship, Profile } from '../api/types.ts'
 import { LAYER_COLORS, Metamodel } from '../metamodel/Metamodel.ts'
 import ArchimateNodeView, { type ArchimateNode } from './ArchimateNode.tsx'
 import ContextMenu, { type ContextTarget } from './ContextMenu.tsx'
+import Explorer from './Explorer.tsx'
 import MarkerDefs from './MarkerDefs.tsx'
 import Palette from './Palette.tsx'
+import Properties from './Properties.tsx'
 import { NODE_HEIGHT, NODE_WIDTH, autoLayout, nextFreePosition } from './layout.ts'
 import { marker, notationFor } from './notation.ts'
 import { invert, useHistoryStore, useLayoutStore } from './store.ts'
@@ -33,7 +35,7 @@ interface EditorProps {
   workspace: string
   model: string
   metamodel: Metamodel
-  profiles: { name: string; conceptType: string }[]
+  profiles: Profile[]
 }
 
 export default function Editor({ api, workspace, model, metamodel, profiles }: EditorProps) {
@@ -44,6 +46,7 @@ export default function Editor({ api, workspace, model, metamodel, profiles }: E
   const [message, setMessage] = useState<{ kind: 'error' | 'info'; text: string } | null>(null)
   const [selected, setSelected] = useState<string[]>([])
   const [context, setContext] = useState<ContextTarget | null>(null)
+  const [sidebar, setSidebar] = useState<'palette' | 'model'>('palette')
   const flow = useRef<ReactFlowInstance<ArchimateNode, Edge> | null>(null)
   const fitted = useRef(false)
 
@@ -266,6 +269,45 @@ export default function Editor({ api, workspace, model, metamodel, profiles }: E
     [byKey, apply],
   )
 
+  const renameElement = useCallback(
+    (key: string, name: string) =>
+      apply.mutate({ commands: [{ op: 'rename-element', key, name }], label: `Rename to ${name}` }),
+    [apply],
+  )
+
+  const setDocumentation = useCallback(
+    (key: string, documentation: string) =>
+      apply.mutate({
+        commands: [{ op: 'set-element-documentation', key, documentation: documentation || null }],
+        label: `Document ${byKey[key]?.name ?? key}`,
+      }),
+    [apply, byKey],
+  )
+
+  const setProperty = useCallback(
+    (key: string, property: string, value: string | null) =>
+      apply.mutate({
+        commands: [{ op: 'set-element-property', key, property, value }],
+        label: value === null ? `Remove ${property}` : `Set ${property}`,
+      }),
+    [apply],
+  )
+
+  /** Selecting from the explorer brings the element onto the view if it was taken off it. */
+  const selectElement = useCallback(
+    (key: string) => {
+      if (hidden[key]) {
+        show(key)
+      }
+      setSelected([key])
+      setContext(null)
+      window.requestAnimationFrame(() =>
+        flow.current?.fitView({ nodes: [{ id: key }], padding: 0.6, duration: 300, maxZoom: 1.2 }),
+      )
+    },
+    [hidden, show],
+  )
+
   /**
    * Takes elements off this diagram. Not a model change, so no command and no commit — the
    * element keeps existing, keeps its relationships, and can be put back from the panel.
@@ -391,15 +433,48 @@ export default function Editor({ api, workspace, model, metamodel, profiles }: E
       <MarkerDefs />
 
       <div className="ag-sidebar">
-        <Palette
-          metamodel={metamodel}
-          viewpoint={viewpoint}
-          onViewpointChange={setViewpoint}
-          onCreate={(type: ElementType) => createElement(type.concept, type.name)}
-          profiles={profiles}
-          onCreateProfiled={(name) => createElement(name, name)}
-          busy={apply.isPending}
-        />
+        <div className="ag-tabs" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={sidebar === 'palette'}
+            className={sidebar === 'palette' ? 'ag-tab ag-tab-active' : 'ag-tab'}
+            onClick={() => setSidebar('palette')}
+          >
+            Palette
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={sidebar === 'model'}
+            className={sidebar === 'model' ? 'ag-tab ag-tab-active' : 'ag-tab'}
+            onClick={() => setSidebar('model')}
+          >
+            Model ({elements.length})
+          </button>
+        </div>
+
+        {sidebar === 'palette' ? (
+          <Palette
+            metamodel={metamodel}
+            viewpoint={viewpoint}
+            onViewpointChange={setViewpoint}
+            onCreate={(type: ElementType) => createElement(type.concept, type.name)}
+            profiles={profiles}
+            onCreateProfiled={(name) => createElement(name, name)}
+            busy={apply.isPending}
+          />
+        ) : (
+          <Explorer
+            elements={elements}
+            relationships={relationships}
+            hidden={hidden}
+            metamodel={metamodel}
+            selected={selected}
+            onSelect={selectElement}
+            onAddToView={show}
+          />
+        )}
 
         {hiddenElements.length > 0 && (
           <section className="ag-hidden-panel">
@@ -513,6 +588,24 @@ export default function Editor({ api, workspace, model, metamodel, profiles }: E
           </ReactFlow>
         </div>
       </div>
+
+      <Properties
+        element={selected.length === 1 ? (byKey[selected[0]] ?? null) : null}
+        selectedCount={selected.length}
+        metamodel={metamodel}
+        profile={
+          selected.length === 1
+            ? profiles.find((candidate) => candidate.name === byKey[selected[0]]?.profile)
+            : undefined
+        }
+        relationships={relationships}
+        elementsByKey={byKey}
+        busy={apply.isPending}
+        onRename={renameElement}
+        onDocumentation={setDocumentation}
+        onProperty={setProperty}
+        onSelect={selectElement}
+      />
 
       {context && byKey[context.elementKey] && (
         <ContextMenu

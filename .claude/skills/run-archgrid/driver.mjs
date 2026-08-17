@@ -170,6 +170,22 @@ async function smoke(page) {
   })
   check('all nodes are inside the viewport after fitView', offscreen === 0, `${offscreen} off-screen`)
 
+  // A node hidden behind another looks like it was never created at all, which is a worse
+  // failure than an untidy diagram.
+  const overlaps = await page.evaluate(() => {
+    const boxes = [...document.querySelectorAll('.ag-node')].map((n) => n.getBoundingClientRect())
+    let count = 0
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i]
+        const b = boxes[j]
+        if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) count++
+      }
+    }
+    return count
+  })
+  check('no two nodes overlap', overlaps === 0, `${overlaps} overlapping pairs`)
+
   // --- right-click inspector ---
   await page.locator('.ag-node').first().click({ button: 'right' })
   await page.waitForSelector('.ag-context', { timeout: 5000 })
@@ -217,6 +233,37 @@ async function smoke(page) {
     onCanvas === redone - 1 && restorable > 0,
     `${restorable} restorable`,
   )
+
+  // --- properties panel: renaming is the one edit with no other route in the UI ---
+  await page.locator('.ag-node').first().click()
+  await page.waitForSelector('.ag-properties input', { timeout: 5000 })
+  const renamed = `Renamed ${Date.now() % 100000}`
+  const nameField = page.locator('.ag-properties .ag-field input').first()
+  await nameField.fill(renamed)
+  await nameField.blur()
+  await page.waitForTimeout(2500)
+  const onCanvasName = await page.locator('.ag-node .ag-node-label').first().textContent()
+  check('renaming from the properties panel reaches the canvas', onCanvasName?.includes('Renamed'), onCanvasName ?? '')
+  await shot('04-properties')
+
+  // --- explorer lists the whole model, including what is off the view ---
+  await page.getByRole('tab', { name: /^Model/ }).click()
+  await page.waitForSelector('.ag-explorer', { timeout: 5000 })
+  const explorer = await page.evaluate(() => ({
+    items: document.querySelectorAll('.ag-explorer-item').length,
+    addable: document.querySelectorAll('.ag-explorer-add').length,
+  }))
+  const modelSize = await page.evaluate(
+    () => Number(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.match(/\d+/)?.[0] ?? 0),
+  )
+  check('explorer lists every element in the model', explorer.items === modelSize, `${explorer.items} of ${modelSize}`)
+  check('elements off the view offer "add to view"', explorer.addable > 0, `${explorer.addable} addable`)
+
+  await page.locator('.ag-explorer input').fill('kafka')
+  await page.waitForTimeout(400)
+  const filtered = await page.locator('.ag-explorer-item').count()
+  check('explorer search narrows the list', filtered > 0 && filtered < explorer.items, `${filtered} match`)
+  await shot('05-explorer')
 
   const failed = findings.filter((f) => !f.ok)
   log(`--- ${findings.length - failed.length}/${findings.length} checks passed, screenshots in ${outDir}/`)
