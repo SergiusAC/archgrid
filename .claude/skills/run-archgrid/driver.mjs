@@ -557,6 +557,30 @@ async function interactions(page) {
   await page.keyboard.press('Escape')
   await page.screenshot({ path: `${outDir}/33-magic.png` })
 
+  // --- notation: the shape says what it is before any word is read ---
+  const shapes = await page.evaluate(() =>
+    [...document.querySelectorAll('.ag-paper .ag-node')].map((node) => ({
+      name: node.querySelector('.ag-node-label')?.textContent?.trim(),
+      radius: Number(node.querySelector('.ag-body')?.getAttribute('rx') ?? 0),
+      icon: (node.querySelector('.ag-node-icon')?.getAttribute('d') ?? '').length,
+    })),
+  )
+  check(
+    'every element carries its type glyph',
+    shapes.every((shape) => shape.icon > 0),
+    `${shapes.filter((s) => s.icon > 0).length} of ${shapes.length}`,
+  )
+  // A service is a pill and a component is a box. If both come back square, the shape vocabulary
+  // is not being applied and the diagram has quietly become a flowchart again.
+  const service = shapes.find((shape) => shape.name === 'Application Service')
+  const component = shapes.find((shape) => shape.name === 'Payment System')
+  check(
+    'a service is drawn as a pill, a component as a box',
+    service && component && service.radius > component.radius + 20,
+    `service rx=${service?.radius}, component rx=${component?.radius}`,
+  )
+  await page.screenshot({ path: `${outDir}/34-notation.png` })
+
   report()
 }
 

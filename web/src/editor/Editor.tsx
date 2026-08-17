@@ -279,6 +279,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           typeLabel: element.profile ?? type?.name ?? element.conceptType,
           layer: type?.layer ?? 'other',
           specialised: element.profile != null,
+          concept: element.conceptType,
           // Only a container that is itself on the view: nesting is a drawing of containment,
           // and a parent nobody can see is not one.
           parent: element.parent && onViewKeys.has(element.parent) ? element.parent : null,

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Layer } from '../api/types.ts'
 import { NEST_PADDING } from './layout.ts'
 import { notationFor } from './notation.ts'
+import { bodyShape, iconFor, iconPlacement } from './shapes.ts'
 import type { Position } from './store.ts'
 
 export interface CanvasElement {
@@ -12,6 +13,8 @@ export interface CanvasElement {
   typeLabel: string
   layer: Layer
   specialised: boolean
+  /** The ArchiMate concept, which decides the body shape and the corner glyph. */
+  concept: string
   /** The container, only when it is on this view too. */
   parent: string | null
   x: number
@@ -142,6 +145,7 @@ const ArchimateShape = joint.dia.Element.define(
         fontWeight: 600,
         class: 'ag-node-label',
       },
+      icon: { class: 'ag-node-icon' },
     },
   },
   {
@@ -149,6 +153,7 @@ const ArchimateShape = joint.dia.Element.define(
       { tagName: 'rect', selector: 'body' },
       { tagName: 'text', selector: 'type' },
       { tagName: 'text', selector: 'name' },
+      { tagName: 'path', selector: 'icon' },
       ...SIDES.map((side) => ({ tagName: 'circle', selector: `handle-${side.id}` })),
     ],
   },
@@ -487,6 +492,15 @@ export default function Canvas(props: CanvasProps) {
             .join(' '),
           'data-key': element.key,
         },
+        // Behaviour is rounded, a service is a pill, everything else is square — the geometry is
+        // half of what the notation says, and a reader takes it in before any word.
+        body: (() => {
+          const shape = bodyShape(element.concept)
+          const radius =
+            shape === 'stadium' ? Math.min(element.height, element.width) / 2 : shape === 'rounded' ? 12 : 4
+          return { rx: radius, ry: radius }
+        })(),
+        icon: { d: iconFor(element.concept), transform: iconPlacement(element.width) },
         type: { text: element.specialised ? `«${element.typeLabel}»` : element.typeLabel.toUpperCase() },
         name: {
           text: element.name,
