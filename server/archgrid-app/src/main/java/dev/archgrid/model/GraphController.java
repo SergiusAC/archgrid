@@ -3,20 +3,25 @@ package dev.archgrid.model;
 import dev.archgrid.admin.workspace.WorkspaceService;
 import dev.archgrid.domain.model.ModelCommand;
 import dev.archgrid.domain.model.ModelGraph;
+import dev.archgrid.domain.model.View;
 import dev.archgrid.domain.shared.Slug;
 import dev.archgrid.domain.workspace.Workspace;
 import jakarta.validation.Valid;
 import java.security.Principal;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -35,17 +40,26 @@ class GraphController {
     private final WorkspaceService workspaces;
     private final GraphService graphs;
     private final ModelCommandService commands;
+    private final FolderService folders;
+    private final ViewLayoutService layout;
 
-    GraphController(WorkspaceService workspaces, GraphService graphs, ModelCommandService commands) {
+    GraphController(
+            WorkspaceService workspaces,
+            GraphService graphs,
+            ModelCommandService commands,
+            FolderService folders,
+            ViewLayoutService layout) {
         this.workspaces = workspaces;
         this.graphs = graphs;
         this.commands = commands;
+        this.folders = folders;
+        this.layout = layout;
     }
 
     @GetMapping
     ModelApiDtos.GraphResponse graph(@PathVariable String workspaceKey) {
         Workspace workspace = workspace(workspaceKey);
-        ModelRepository.ModelRow row = graphs.of(workspace.id(), workspace.name());
+        GraphService.GraphRef row = graphs.of(workspace.id(), workspace.name());
         ModelGraph current = commands.current(row.id());
         return new ModelApiDtos.GraphResponse(
                 workspace.key().value(),
@@ -106,6 +120,110 @@ class GraphController {
         return commands.profiles(graphId(workspaceKey)).all().stream()
                 .map(ModelApiDtos.ProfileResponse::from)
                 .toList();
+    }
+
+    // ------------------------------------------------------------------ views
+
+    @GetMapping("/views")
+    List<ModelApiDtos.ViewSummaryResponse> views(@PathVariable String workspaceKey) {
+        UUID graphId = graphId(workspaceKey);
+        Map<String, String> byView = folders.viewFolders(graphId);
+        return commands.current(graphId).views().stream()
+                .map(view -> ModelApiDtos.ViewSummaryResponse.from(view, byView.get(view.key().value())))
+                .toList();
+    }
+
+    /** A view with everything needed to draw it: its elements, the relationships between them, and layout. */
+    @GetMapping("/views/{viewKey}")
+    ModelApiDtos.ViewResponse view(@PathVariable String workspaceKey, @PathVariable String viewKey) {
+        UUID graphId = graphId(workspaceKey);
+        ModelGraph graph = commands.current(graphId);
+        View view = graph.view(Slug.of(viewKey))
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No view '" + viewKey + "'."));
+
+        return new ModelApiDtos.ViewResponse(
+                view.key().value(),
+                view.name(),
+                view.viewpoint(),
+                folders.viewFolders(graphId).get(view.key().value()),
+                view.elements().stream()
+                        .map(graph::element)
+                        .flatMap(java.util.Optional::stream)
+                        .map(ModelApiDtos.ElementResponse::from)
+                        .toList(),
+                graph.relationshipsOn(view).stream()
+                        .map(ModelApiDtos.RelationshipResponse::from)
+                        .toList(),
+                layout.load(graphId, viewKey).stream()
+                        .map(node -> new ModelApiDtos.LayoutNodeResponse(
+                                node.elementKey(), node.x(), node.y(), node.width(), node.height()))
+                        .toList());
+    }
+
+    /**
+     * Saves coordinates.
+     *
+     * <p>A PUT rather than a command, and that asymmetry is the point: layout is the one layer
+     * outside the commit log, so dragging a box never appears in the history (ADR-0003).
+     */
+    @PutMapping("/views/{viewKey}/layout")
+    @PreAuthorize("hasAnyRole('CONTRIBUTOR', 'OWNER', 'ADMIN')")
+    void saveLayout(
+            @PathVariable String workspaceKey,
+            @PathVariable String viewKey,
+            @Valid @RequestBody ModelApiDtos.LayoutRequest request) {
+        layout.save(
+                graphId(workspaceKey),
+                viewKey,
+                request.nodes().stream()
+                        .map(node -> new dev.archgrid.model.ViewLayoutRepository.LayoutNode(
+                                node.element(), node.x(), node.y(), node.width(), node.height()))
+                        .toList());
+    }
+
+    // ------------------------------------------------------------------ folders
+
+    @GetMapping("/folders")
+    List<ModelApiDtos.FolderResponse> listFolders(
+            @PathVariable String workspaceKey, @RequestParam(defaultValue = "elements") String kind) {
+        return folders.list(graphId(workspaceKey), kind);
+    }
+
+    @PostMapping("/folders")
+    @PreAuthorize("hasAnyRole('CONTRIBUTOR', 'OWNER', 'ADMIN')")
+    ModelApiDtos.FolderResponse createFolder(
+            @PathVariable String workspaceKey,
+            @RequestParam(defaultValue = "elements") String kind,
+            @Valid @RequestBody ModelApiDtos.FolderRequest request) {
+        return folders.create(graphId(workspaceKey), kind, request.name(), request.parent());
+    }
+
+    @PutMapping("/folders/{folderId}")
+    @PreAuthorize("hasAnyRole('CONTRIBUTOR', 'OWNER', 'ADMIN')")
+    ModelApiDtos.FolderResponse updateFolder(
+            @PathVariable String workspaceKey,
+            @PathVariable UUID folderId,
+            @Valid @RequestBody ModelApiDtos.FolderRequest request) {
+        return folders.update(graphId(workspaceKey), folderId, request.name(), request.parent());
+    }
+
+    @DeleteMapping("/folders/{folderId}")
+    @PreAuthorize("hasAnyRole('CONTRIBUTOR', 'OWNER', 'ADMIN')")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    void deleteFolder(@PathVariable String workspaceKey, @PathVariable UUID folderId) {
+        folders.delete(graphId(workspaceKey), folderId);
+    }
+
+    /** Puts an element or a view into a folder. A null folder moves it to the root. */
+    @PutMapping("/folders/assign")
+    @PreAuthorize("hasAnyRole('CONTRIBUTOR', 'OWNER', 'ADMIN')")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    void assign(
+            @PathVariable String workspaceKey,
+            @RequestParam String kind,
+            @RequestParam String key,
+            @RequestParam(required = false) UUID folder) {
+        folders.assign(graphId(workspaceKey), kind, key, folder);
     }
 
     @GetMapping("/commits")

@@ -52,7 +52,9 @@ final class ModelApiDtos {
             String source,
             String target,
             String property,
-            String value) {
+            String value,
+            String viewpoint,
+            String element) {
 
         ModelCommand toCommand() {
             Slug subject = slug(key, "key");
@@ -72,9 +74,19 @@ final class ModelApiDtos {
                         slug(require(target, "target"), "target"),
                         name);
                 case "delete-relationship" -> new ModelCommand.DeleteRelationship(subject);
+                case "create-view" -> new ModelCommand.CreateView(
+                        subject, require(name, "name"), require(viewpoint, "viewpoint"));
+                case "rename-view" -> new ModelCommand.RenameView(subject, require(name, "name"));
+                case "set-viewpoint" -> new ModelCommand.SetViewpoint(subject, require(viewpoint, "viewpoint"));
+                case "delete-view" -> new ModelCommand.DeleteView(subject);
+                case "add-to-view" -> new ModelCommand.AddToView(subject, slug(require(element, "element"), "element"));
+                case "remove-from-view" -> new ModelCommand.RemoveFromView(
+                        subject, slug(require(element, "element"), "element"));
                 default -> throw new IllegalArgumentException("Unknown operation '" + op
                         + "'. Supported: create-element, rename-element, set-element-documentation, "
-                        + "set-element-property, move-element, delete-element, add-relationship, delete-relationship.");
+                        + "set-element-property, move-element, delete-element, add-relationship, "
+                        + "delete-relationship, create-view, rename-view, set-viewpoint, delete-view, "
+                        + "add-to-view, remove-from-view.");
             };
         }
 
@@ -136,6 +148,40 @@ final class ModelApiDtos {
                     relationship.properties());
         }
     }
+
+    /** A view in the list: enough to draw the tree, without its contents. */
+    record ViewSummaryResponse(String key, String name, String viewpoint, String folder, int elements) {
+
+        static ViewSummaryResponse from(dev.archgrid.domain.model.View view, String folder) {
+            return new ViewSummaryResponse(
+                    view.key().value(), view.name(), view.viewpoint(), folder, view.elements().size());
+        }
+    }
+
+    /**
+     * A view with everything needed to draw it.
+     *
+     * <p>Relationships are computed rather than stored: those with both endpoints on the view.
+     */
+    record ViewResponse(
+            String key,
+            String name,
+            String viewpoint,
+            String folder,
+            List<ElementResponse> elements,
+            List<RelationshipResponse> relationships,
+            List<LayoutNodeResponse> layout) {}
+
+    record LayoutNodeResponse(String element, double x, double y, Double width, Double height) {}
+
+    record LayoutNodeRequest(@NotBlank String element, double x, double y, Double width, Double height) {}
+
+    /** Coordinates never travel as commands: moving a box is not a model change (ADR-0003). */
+    record LayoutRequest(@Valid List<LayoutNodeRequest> nodes) {}
+
+    record FolderRequest(@NotBlank @Size(max = 120) String name, String parent) {}
+
+    record FolderResponse(String id, String name, String kind, String parent) {}
 
     record ProfileResponse(String name, String conceptType, List<AttributeResponse> attributes) {
 

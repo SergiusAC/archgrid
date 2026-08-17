@@ -110,9 +110,26 @@ async function openRepository(page) {
     }
     await page.waitForSelector('.ag-canvas', { timeout: 20_000 })
   }
+
+  // The canvas draws a view, not the repository (ADR-0009). Without one there is only an empty
+  // state, so open the first view or make one.
+  const existing = page.locator('.ag-tree-item')
+  if ((await existing.count()) > 0) {
+    await existing.first().click()
+  } else {
+    page.once('dialog', (dialog) => dialog.accept('UI check'))
+    await page.locator('.ag-block-button').first().click()
+    await page.waitForTimeout(2500)
+  }
+
   // Auto-layout resolves asynchronously through ELK, then the view refits. Asserting before
   // that settles gives node counts that are right and positions that are all zero.
   await page.waitForTimeout(3000)
+}
+
+async function repositoryCount(page) {
+  const label = await page.getByRole('tab', { name: /^Repository/ }).textContent()
+  return Number(label?.match(/\d+/)?.[0] ?? 0)
 }
 
 async function smoke(page) {
@@ -125,10 +142,11 @@ async function smoke(page) {
 
   let nodes = await page.locator('.ag-node').count()
   if (nodes === 0) {
-    log('repository is empty, adding two elements so there is something to look at')
+    log('view is empty, adding two elements so there is something to look at')
+    await page.getByRole('tab', { name: /^Palette/ }).click()
     for (const label of ['Application Component', 'System Software']) {
       await page.locator('.ag-palette-item', { hasText: new RegExp(`^${label}$`) }).first().click()
-      await page.waitForTimeout(1500)
+      await page.waitForTimeout(2000)
     }
     nodes = await page.locator('.ag-node').count()
   }
@@ -212,6 +230,8 @@ async function smoke(page) {
 
   // --- undo / redo through the keyboard ---
   const before = await page.locator('.ag-node').count()
+  // The palette lives behind its own tab now that views have one too.
+  await page.getByRole('tab', { name: /^Palette/ }).click()
   await page.locator('.ag-palette-item', { hasText: /^Application Service$/ }).first().click()
   await page.waitForTimeout(2500)
   const created = await page.locator('.ag-node').count()
@@ -227,16 +247,17 @@ async function smoke(page) {
   check('Ctrl+Shift+Z redoes it', redone === created, `${undone} → ${redone}`)
 
   // --- remove from view must not be a model change ---
+  const inRepositoryBefore = await repositoryCount(page)
   await page.locator('.ag-node').first().click()
   await page.keyboard.press('Delete')
-  await page.waitForTimeout(800)
+  await page.waitForTimeout(2500)
   const onCanvas = await page.locator('.ag-node').count()
-  const restorable = await page.locator('.ag-hidden-panel button.ag-link').count()
+  const inRepositoryAfter = await repositoryCount(page)
   await shot('03-removed-from-view')
   check(
-    'Delete removes from the view and offers it back',
-    onCanvas === redone - 1 && restorable > 0,
-    `${restorable} restorable`,
+    'Delete takes it off the view but leaves it in the repository',
+    onCanvas === redone - 1 && inRepositoryAfter === inRepositoryBefore,
+    `canvas ${redone} -> ${onCanvas}, repository ${inRepositoryBefore} -> ${inRepositoryAfter}`,
   )
 
   // --- properties panel: renaming is the one edit with no other route in the UI ---
@@ -253,10 +274,10 @@ async function smoke(page) {
 
   // --- explorer lists the whole model, including what is off the view ---
   await page.getByRole('tab', { name: /^Repository/ }).click()
-  await page.waitForSelector('.ag-explorer', { timeout: 5000 })
+  await page.waitForSelector('.ag-sidebar-body', { timeout: 5000 })
   const explorer = await page.evaluate(() => ({
-    items: document.querySelectorAll('.ag-explorer-item').length,
-    addable: document.querySelectorAll('.ag-explorer-add').length,
+    items: document.querySelectorAll('.ag-tree-item').length,
+    addable: document.querySelectorAll('.ag-link.ag-tree-tiny').length,
   }))
   const modelSize = await page.evaluate(
     () => Number(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.match(/\d+/)?.[0] ?? 0),
@@ -267,9 +288,9 @@ async function smoke(page) {
   // Search for the name this run just set, rather than for something the repository may or may
   // not contain — a check that depends on pre-existing data reports a product defect when the
   // only thing wrong is an empty database.
-  await page.locator('.ag-explorer input').fill(renamed)
+  await page.locator('.ag-sidebar-body input').first().fill(renamed)
   await page.waitForTimeout(400)
-  const filtered = await page.locator('.ag-explorer-item').count()
+  const filtered = await page.locator('.ag-tree-item').count()
   check(
     'explorer search narrows the list',
     filtered > 0 && filtered < explorer.items,

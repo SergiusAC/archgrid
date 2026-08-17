@@ -75,6 +75,8 @@ export interface ModelElement {
   documentation: string | null
   properties: Record<string, string>
   parent: string | null
+  /** Folder it is filed under, or null for the root. Organisation only. */
+  folder?: string | null
 }
 
 export interface ModelRelationship {
@@ -84,6 +86,42 @@ export interface ModelRelationship {
   target: string
   name: string | null
   properties: Record<string, string>
+}
+
+/** A named diagram over the repository. Elements are shown, not owned (ADR-0009). */
+export interface ViewSummary {
+  key: string
+  name: string
+  viewpoint: string
+  folder: string | null
+  elements: number
+}
+
+export interface LayoutNode {
+  element: string
+  x: number
+  y: number
+  width: number | null
+  height: number | null
+}
+
+export interface ViewDetail {
+  key: string
+  name: string
+  viewpoint: string
+  folder: string | null
+  elements: ModelElement[]
+  /** Computed: those with both endpoints on the view. Never stored as membership. */
+  relationships: ModelRelationship[]
+  layout: LayoutNode[]
+}
+
+/** Organisation only. A folder means nothing to the metamodel and is not versioned. */
+export interface Folder {
+  id: string
+  name: string
+  kind: 'elements' | 'views'
+  parent: string | null
 }
 
 /** A specialisation defined in a model: "Microservice" as a kind of Application Component. */
@@ -117,6 +155,14 @@ export type Command =
   | { op: 'delete-element'; key: string }
   | { op: 'add-relationship'; key: string; type: string; source: string; target: string; name?: string }
   | { op: 'delete-relationship'; key: string }
+  // View commands. `key` is the view; `element` is what goes on or off it. Coordinates are
+  // deliberately absent — layout has its own endpoint and never travels as a command.
+  | { op: 'create-view'; key: string; name: string; viewpoint: string }
+  | { op: 'rename-view'; key: string; name: string }
+  | { op: 'set-viewpoint'; key: string; viewpoint: string }
+  | { op: 'delete-view'; key: string }
+  | { op: 'add-to-view'; key: string; element: string }
+  | { op: 'remove-from-view'; key: string; element: string }
 
 export interface CommandRequest {
   baseCommitId: string | null

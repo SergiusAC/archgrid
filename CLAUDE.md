@@ -112,6 +112,28 @@ the missing reuse — it was that "where is this used", impact analysis and the 
 report would have answered from inside one model and been silently wrong about the rest of the
 landscape. Do not reintroduce a model selector.
 
+### Views and folders (ADR-0009)
+
+A **view** is what an architect creates and names — a context diagram of one system, the
+modules of another. It is a viewpoint plus a selection of repository elements, and the same
+element appears on any number of views. Its relationships are **computed**, not stored: those
+with both endpoints on the view.
+
+Four layers now, and what is versioned matters:
+
+| Layer | Versioned |
+|---|---|
+| Elements, relationships | yes, by commit |
+| View name, viewpoint, membership | yes, by commit |
+| Layout coordinates | **no** — own endpoint, `PUT .../views/{key}/layout` |
+| Folders | **no** — plain REST |
+
+**A folder means nothing to the metamodel.** It does not affect validation, derivation or C4
+depth; that is `element.parent` (ArchiMate composition), which is a different thing entirely.
+Confusing them gives a product where filing something elsewhere changes what a diagram shows.
+Two separate trees, `elements` and `views`. Deleting a folder moves its contents up rather
+than deleting them.
+
 ### Persistence
 
 PostgreSQL is the only stateful component, and there is no ORM — explicit SQL over

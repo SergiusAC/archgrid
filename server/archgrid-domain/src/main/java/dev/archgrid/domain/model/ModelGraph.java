@@ -26,15 +26,22 @@ public final class ModelGraph {
 
     private final Map<Slug, Element> elements = new LinkedHashMap<>();
     private final Map<Slug, Relationship> relationships = new LinkedHashMap<>();
+    private final Map<Slug, View> views = new LinkedHashMap<>();
 
     public static ModelGraph empty() {
         return new ModelGraph();
     }
 
     public static ModelGraph of(Collection<Element> elements, Collection<Relationship> relationships) {
+        return of(elements, relationships, List.of());
+    }
+
+    public static ModelGraph of(
+            Collection<Element> elements, Collection<Relationship> relationships, Collection<View> views) {
         ModelGraph graph = new ModelGraph();
         elements.forEach(graph::put);
         relationships.forEach(graph::put);
+        views.forEach(graph::put);
         return graph;
     }
 
@@ -62,6 +69,36 @@ public final class ModelGraph {
 
     public boolean containsRelationship(Slug key) {
         return relationships.containsKey(key);
+    }
+
+    public Optional<View> view(Slug key) {
+        return Optional.ofNullable(views.get(key));
+    }
+
+    public Collection<View> views() {
+        return Collections.unmodifiableCollection(views.values());
+    }
+
+    public boolean containsView(Slug key) {
+        return views.containsKey(key);
+    }
+
+    /** Which views show this element — the other half of "where is this used". */
+    public List<View> viewsShowing(Slug elementKey) {
+        return views.values().stream().filter(view -> view.contains(elementKey)).toList();
+    }
+
+    /**
+     * The relationships a view displays: those with both endpoints on it.
+     *
+     * <p>Derived rather than stored, so a view can never hold a relationship whose endpoint it
+     * no longer shows.
+     */
+    public List<Relationship> relationshipsOn(View view) {
+        return relationships.values().stream()
+                .filter(relationship ->
+                        view.contains(relationship.source()) && view.contains(relationship.target()))
+                .toList();
     }
 
     public List<Element> childrenOf(Slug key) {
@@ -116,6 +153,11 @@ public final class ModelGraph {
         relationships.put(relationship.key(), relationship);
     }
 
+    public void put(View view) {
+        Objects.requireNonNull(view, "view must not be null");
+        views.put(view.key(), view);
+    }
+
     public void removeElement(Slug key) {
         elements.remove(key);
     }
@@ -124,8 +166,15 @@ public final class ModelGraph {
         relationships.remove(key);
     }
 
+    public void removeView(Slug key) {
+        views.remove(key);
+    }
+
     /** A shallow copy, so commands can be applied to a candidate state without touching the original. */
     public ModelGraph copy() {
-        return of(new ArrayList<>(elements.values()), new ArrayList<>(relationships.values()));
+        return of(
+                new ArrayList<>(elements.values()),
+                new ArrayList<>(relationships.values()),
+                new ArrayList<>(views.values()));
     }
 }

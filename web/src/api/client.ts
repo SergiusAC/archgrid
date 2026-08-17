@@ -2,12 +2,16 @@ import type {
   Commit,
   CommitResult,
   CommandRequest,
+  Folder,
   Graph,
+  LayoutNode,
   MetamodelDto,
   ModelElement,
   ModelRelationship,
   ProblemDetail,
   Profile,
+  ViewDetail,
+  ViewSummary,
   Workspace,
 } from './types.ts'
 
@@ -81,6 +85,38 @@ export function createApi(token: string) {
       request<ModelRelationship[]>(`/api/workspaces/${encode(workspace)}/relationships`, token),
 
     profiles: (workspace: string) => request<Profile[]>(`/api/workspaces/${encode(workspace)}/profiles`, token),
+
+    views: (workspace: string) => request<ViewSummary[]>(`/api/workspaces/${encode(workspace)}/views`, token),
+
+    view: (workspace: string, view: string) =>
+      request<ViewDetail>(`/api/workspaces/${encode(workspace)}/views/${encode(view)}`, token),
+
+    /** A PUT, not a command: coordinates are the one layer outside the commit log (ADR-0003). */
+    saveLayout: (workspace: string, view: string, nodes: LayoutNode[]) =>
+      request<void>(`/api/workspaces/${encode(workspace)}/views/${encode(view)}/layout`, token, {
+        method: 'PUT',
+        body: JSON.stringify({ nodes }),
+      }),
+
+    folders: (workspace: string, kind: 'elements' | 'views') =>
+      request<Folder[]>(`/api/workspaces/${encode(workspace)}/folders?kind=${kind}`, token),
+
+    createFolder: (workspace: string, kind: 'elements' | 'views', name: string, parent?: string | null) =>
+      request<Folder>(`/api/workspaces/${encode(workspace)}/folders?kind=${kind}`, token, {
+        method: 'POST',
+        body: JSON.stringify({ name, parent: parent ?? null }),
+      }),
+
+    deleteFolder: (workspace: string, id: string) =>
+      request<void>(`/api/workspaces/${encode(workspace)}/folders/${encode(id)}`, token, { method: 'DELETE' }),
+
+    assignFolder: (workspace: string, kind: 'elements' | 'views', key: string, folder: string | null) =>
+      request<void>(
+        `/api/workspaces/${encode(workspace)}/folders/assign?kind=${kind}&key=${encode(key)}` +
+          (folder ? `&folder=${encode(folder)}` : ''),
+        token,
+        { method: 'PUT' },
+      ),
 
     commits: (workspace: string) => request<Commit[]>(`/api/workspaces/${encode(workspace)}/commits`, token),
 

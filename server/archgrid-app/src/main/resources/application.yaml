@@ -29,6 +29,12 @@ spring:
         jwt:
           issuer-uri: ${ARCHGRID_OIDC_ISSUER:http://localhost:8081/realms/archgrid}
 
+  mvc:
+    problemdetails:
+      # Framework exceptions (404 from a missing view, 422 from a refused folder move) then
+      # return RFC 9457 documents like the rest of the API instead of Boot's error page.
+      enabled: true
+
 server:
   port: ${ARCHGRID_PORT:8080}
   shutdown: graceful

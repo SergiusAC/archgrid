@@ -2,6 +2,7 @@ package dev.archgrid.model;
 
 import dev.archgrid.domain.shared.Slug;
 import dev.archgrid.domain.workspace.WorkspaceId;
+import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,13 +28,26 @@ class GraphService {
         this.repository = repository;
     }
 
+    /**
+     * What a caller outside this package may know about the graph.
+     *
+     * <p>Deliberately not {@code ModelRepository.ModelRow}: returning a repository's own type
+     * makes every caller depend on the repository, which is exactly what the architecture rules
+     * forbid controllers from doing.
+     */
+    record GraphRef(UUID id, UUID headCommitId) {}
+
     @Transactional
-    ModelRepository.ModelRow of(WorkspaceId workspaceId, String workspaceName) {
-        return repository.find(workspaceId).orElseGet(() -> {
-            // Concurrent first loads all reach here; the insert absorbs the conflict, so
-            // whichever request lost the race still reads the winner's row.
-            repository.createIfAbsent(workspaceId, GRAPH_KEY, workspaceName);
-            return repository.find(workspaceId).orElseThrow();
-        });
+    GraphRef of(WorkspaceId workspaceId, String workspaceName) {
+        return repository
+                .find(workspaceId)
+                .or(() -> {
+                    // Concurrent first loads all reach here; the insert absorbs the conflict, so
+                    // whichever request lost the race still reads the winner's row.
+                    repository.createIfAbsent(workspaceId, GRAPH_KEY, workspaceName);
+                    return repository.find(workspaceId);
+                })
+                .map(row -> new GraphRef(row.id(), row.headCommitId()))
+                .orElseThrow();
     }
 }

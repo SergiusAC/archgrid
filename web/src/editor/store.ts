@@ -199,6 +199,22 @@ export function invert(
         }
         break
       }
+      case 'create-view':
+        inverse.push({ op: 'delete-view', key: command.key })
+        break
+      case 'add-to-view':
+        inverse.push({ op: 'remove-from-view', key: command.key, element: command.element })
+        break
+      case 'remove-from-view':
+        inverse.push({ op: 'add-to-view', key: command.key, element: command.element })
+        break
+      // rename-view, set-viewpoint and delete-view need the view's previous state, which this
+      // snapshot does not carry. Undo for them arrives with the history UI in phase 5, where a
+      // commit diff supplies it; producing a wrong inverse here would be worse than none.
+      case 'rename-view':
+      case 'set-viewpoint':
+      case 'delete-view':
+        break
     }
   }
 

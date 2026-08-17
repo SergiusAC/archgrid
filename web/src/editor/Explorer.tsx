@@ -1,33 +1,43 @@
 import { useMemo, useState } from 'react'
 
-import type { ModelElement, ModelRelationship } from '../api/types.ts'
-import { LAYER_LABELS, type Metamodel, layerOrder } from '../metamodel/Metamodel.ts'
+import type { Folder, ModelElement, ModelRelationship } from '../api/types.ts'
+import type { Metamodel } from '../metamodel/Metamodel.ts'
+import FolderTree, { type TreeItem } from './FolderTree.tsx'
 
 interface ExplorerProps {
   elements: ModelElement[]
   relationships: ModelRelationship[]
-  hidden: Record<string, true>
+  folders: Folder[]
+  /** Which elements the open view already shows. */
+  onView: Set<string>
   metamodel: Metamodel
   selected: string[]
   onSelect: (key: string) => void
   onAddToView: (key: string) => void
+  onCreateFolder: (parent: string | null) => void
+  onDeleteFolder: (id: string) => void
+  onMoveItem: (key: string, folder: string | null) => void
 }
 
 /**
- * Every element in the model, whether or not it is on this diagram.
+ * The repository: every element, whether or not the open view shows it.
  *
- * This is where the product's central claim becomes visible: the model is the thing, and a
- * diagram is one view of part of it. An explorer that only listed what is currently drawn
- * would quietly teach the opposite (ADR-0003).
+ * This is where the product's central claim is visible. The model is the thing; a view is one
+ * diagram over part of it. A browser that listed only what is currently drawn would quietly
+ * teach the opposite (ADR-0008, ADR-0009).
  */
 export default function Explorer({
   elements,
   relationships,
-  hidden,
+  folders,
+  onView,
   metamodel,
   selected,
   onSelect,
   onAddToView,
+  onCreateFolder,
+  onDeleteFolder,
+  onMoveItem,
 }: ExplorerProps) {
   const [query, setQuery] = useState('')
 
@@ -40,41 +50,30 @@ export default function Explorer({
     return counts
   }, [relationships])
 
-  const grouped = useMemo(() => {
+  const items: TreeItem[] = useMemo(() => {
     const needle = query.trim().toLowerCase()
-    const matching = elements.filter((element) => {
-      if (!needle) {
-        return true
-      }
-      // Search names, keys and type — an architect looking for "kafka" may remember any of them.
-      return (
-        element.name.toLowerCase().includes(needle) ||
-        element.key.includes(needle) ||
-        element.type.toLowerCase().includes(needle) ||
-        element.conceptType.toLowerCase().includes(needle)
+    return elements
+      .filter(
+        (element) =>
+          !needle ||
+          // Names, keys and type: an architect looking for "kafka" may remember any of them.
+          element.name.toLowerCase().includes(needle) ||
+          element.key.includes(needle) ||
+          element.conceptType.toLowerCase().includes(needle) ||
+          (element.profile ?? '').toLowerCase().includes(needle),
       )
-    })
-
-    const groups = new Map<string, ModelElement[]>()
-    for (const element of matching) {
-      const layer = metamodel.elementType(element.conceptType)?.layer ?? 'other'
-      const bucket = groups.get(layer)
-      if (bucket) {
-        bucket.push(element)
-      } else {
-        groups.set(layer, [element])
-      }
-    }
-    return [...groups.entries()]
-      .sort(([a], [b]) => layerOrder(a as never) - layerOrder(b as never))
-      .map(([layer, items]) => [layer, items.sort((a, b) => a.name.localeCompare(b.name))] as const)
-  }, [elements, query, metamodel])
-
-  const total = elements.length
-  const shown = grouped.reduce((sum, [, items]) => sum + items.length, 0)
+      .map((element) => ({
+        key: element.key,
+        label: element.name,
+        meta:
+          (element.profile ?? metamodel.elementType(element.conceptType)?.name ?? element.conceptType) +
+          (degree[element.key] ? ` · ${degree[element.key]}` : ''),
+        folder: element.folder ?? null,
+      }))
+  }, [elements, query, metamodel, degree])
 
   return (
-    <div className="ag-explorer">
+    <div className="ag-sidebar-body">
       <label className="ag-field">
         <span>Search</span>
         <input
@@ -84,52 +83,35 @@ export default function Explorer({
         />
       </label>
       <p className="ag-muted ag-explorer-count">
-        {query ? `${shown} of ${total}` : `${total} element${total === 1 ? '' : 's'}`} in the model
+        {query ? `${items.length} of ${elements.length}` : `${elements.length}`} in the repository
       </p>
 
-      {grouped.map(([layer, items]) => (
-        <section key={layer} className="ag-palette-group">
-          <h3>{LAYER_LABELS[layer as keyof typeof LAYER_LABELS] ?? layer}</h3>
-          <ul className="ag-explorer-list">
-            {items.map((element) => {
-              const notOnView = Boolean(hidden[element.key])
-              // The concept's display name, not the raw concept, so the explorer and the
-              // canvas call the same type the same thing.
-              const typeLabel =
-                element.profile ?? metamodel.elementType(element.conceptType)?.name ?? element.conceptType
-              return (
-                <li key={element.key} className={selected.includes(element.key) ? 'ag-explorer-selected' : ''}>
-                  <button
-                    type="button"
-                    className="ag-explorer-item"
-                    onClick={() => onSelect(element.key)}
-                    title={`${typeLabel} · ${degree[element.key] ?? 0} relationship(s)`}
-                  >
-                    <span className="ag-explorer-name">{element.name}</span>
-                    <span className="ag-explorer-meta">
-                      {element.profile ? `«${element.profile}»` : typeLabel}
-                      {degree[element.key] ? ` · ${degree[element.key]}` : ''}
-                    </span>
-                  </button>
-                  {notOnView && (
-                    <button
-                      type="button"
-                      className="ag-link ag-explorer-add"
-                      onClick={() => onAddToView(element.key)}
-                      title="This element is in the model but not on this view"
-                    >
-                      add to view
-                    </button>
-                  )}
-                </li>
-              )
-            })}
-          </ul>
-        </section>
-      ))}
-
-      {total === 0 && <p className="muted">The model is empty. Add an element from the palette.</p>}
-      {total > 0 && shown === 0 && <p className="muted">Nothing matches “{query}”.</p>}
+      <FolderTree
+        folders={folders}
+        items={items}
+        selected={selected}
+        emptyLabel="The repository is empty. Add an element from the palette."
+        onSelect={onSelect}
+        onCreateFolder={onCreateFolder}
+        onDeleteFolder={onDeleteFolder}
+        onMoveItem={onMoveItem}
+        renderActions={(item) =>
+          onView.has(item.key) ? (
+            <span className="ag-tree-onview" title="Already on the open view">
+              ●
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="ag-link ag-tree-tiny"
+              onClick={() => onAddToView(item.key)}
+              title="Show this element on the open view"
+            >
+              add
+            </button>
+          )
+        }
+      />
     </div>
   )
 }

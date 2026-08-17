@@ -34,6 +34,7 @@ Architecture Knowledge Platform: архитектурный граф как sour
 | [0006](adr/0006-ai-as-isolated-optional-sidecar.md) | AI — изолированный отключаемый sidecar | accepted |
 | [0007](adr/0007-c4-projection.md) | C4 — проекция поверх ArchiMate, а не второй набор типов | accepted |
 | [0008](adr/0008-one-graph-per-workspace.md) | Workspace — это репозиторий: один связный граф | accepted |
+| [0009](adr/0009-views-and-folders.md) | Представления как первоклассная сущность; папки — организация, а не смысл | accepted |
 
 ## Ключевые вехи
 

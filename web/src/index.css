@@ -678,3 +678,138 @@ code {
   color: var(--error);
   opacity: 0.85;
 }
+
+/* ---------------------------------------------------------------- sidebar body and trees */
+
+.ag-sidebar-body {
+  padding: 0.75rem;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.ag-block-button {
+  width: 100%;
+  margin-bottom: 0.5rem;
+}
+
+.ag-tree-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.25rem;
+}
+
+.ag-tree-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.ag-tree-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.ag-tree-folder {
+  display: block !important;
+}
+
+.ag-tree-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  padding: 0.1rem 0;
+}
+
+.ag-tree-folder-name {
+  flex: 1;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ag-tree-toggle {
+  border: none;
+  background: none;
+  padding: 0 0.15rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.ag-tree-tiny {
+  font-size: 0.72rem;
+  padding: 0;
+}
+
+.ag-tree-item {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  border: none;
+  background: none;
+  padding: 0.15rem 0.3rem;
+  border-radius: 0.25rem;
+  text-align: left;
+}
+
+.ag-tree-item:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.ag-tree-selected .ag-tree-item {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.ag-tree-label {
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.ag-tree-meta {
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+
+/* The folder picker stays out of the way until the row is hovered. */
+.ag-tree-move {
+  width: 1.6rem;
+  font-size: 0.7rem;
+  padding: 0 0.1rem;
+  opacity: 0.25;
+  border-color: transparent;
+}
+
+.ag-tree-list li:hover .ag-tree-move {
+  opacity: 1;
+  border-color: var(--line);
+}
+
+.ag-tree-onview {
+  color: var(--ok);
+  font-size: 0.7rem;
+}
+
+.ag-view-name {
+  font-size: 0.9rem;
+  margin-right: 0.5rem;
+}
+
+.ag-empty-canvas {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.6rem;
+  max-width: 32rem;
+  padding: 3rem;
+}

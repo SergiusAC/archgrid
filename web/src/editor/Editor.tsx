@@ -19,12 +19,13 @@ import { LAYER_COLORS, Metamodel } from '../metamodel/Metamodel.ts'
 import ArchimateNodeView, { type ArchimateNode } from './ArchimateNode.tsx'
 import ContextMenu, { type ContextTarget } from './ContextMenu.tsx'
 import Explorer from './Explorer.tsx'
+import FolderTree, { type TreeItem } from './FolderTree.tsx'
 import MarkerDefs from './MarkerDefs.tsx'
 import Palette from './Palette.tsx'
 import Properties from './Properties.tsx'
 import { NODE_HEIGHT, NODE_WIDTH, autoLayout, nextFreePosition } from './layout.ts'
 import { marker, notationFor } from './notation.ts'
-import { invert, useHistoryStore, useLayoutStore } from './store.ts'
+import { invert, useHistoryStore } from './store.ts'
 
 import '@xyflow/react/dist/style.css'
 
@@ -37,97 +38,89 @@ interface EditorProps {
   profiles: Profile[]
 }
 
+/**
+ * The editor is view-centric: the canvas draws one view, and the repository is browsed beside
+ * it (ADR-0009). An element belongs to the repository; a view merely shows it.
+ */
 export default function Editor({ api, workspace, metamodel, profiles }: EditorProps) {
   const queryClient = useQueryClient()
-  const [viewpoint, setViewpoint] = useState('layered')
+  const [viewKey, setViewKey] = useState<string | null>(null)
   const [relationshipType, setRelationshipType] = useState('Serving')
   const [connectingFrom, setConnectingFrom] = useState<string | null>(null)
   const [message, setMessage] = useState<{ kind: 'error' | 'info'; text: string } | null>(null)
   const [selected, setSelected] = useState<string[]>([])
   const [context, setContext] = useState<ContextTarget | null>(null)
-  const [sidebar, setSidebar] = useState<'palette' | 'model'>('palette')
+  const [sidebar, setSidebar] = useState<'views' | 'palette' | 'repository'>('views')
   const flow = useRef<ReactFlowInstance<ArchimateNode, Edge> | null>(null)
-  const fitted = useRef(false)
-
-  const positions = useLayoutStore((state) => state.positions)
-  const hidden = useLayoutStore((state) => state.hidden)
-  const setPositions = useLayoutStore((state) => state.setPositions)
-  const setPosition = useLayoutStore((state) => state.setPosition)
-  const hide = useLayoutStore((state) => state.hide)
-  const show = useLayoutStore((state) => state.show)
-  const showAll = useLayoutStore((state) => state.showAll)
+  // State, not just the ref: the refit effect must re-run once React Flow initialises, and a ref
+  // never triggers a re-render, so the effect saw a null instance and never fired again.
+  const [canvasReady, setCanvasReady] = useState(false)
+  const fittedFor = useRef<string | null>(null)
   const history = useHistoryStore()
 
-  const snapshot = useQuery({
-    queryKey: ['graph', workspace],
+  const graph = useQuery({ queryKey: ['graph', workspace], queryFn: () => api.graph(workspace) })
+  const views = useQuery({ queryKey: ['views', workspace], queryFn: () => api.views(workspace) })
+  const repository = useQuery({
+    queryKey: ['repository', workspace],
     queryFn: async () => {
-      const [graph, elements, relationships] = await Promise.all([
-        api.graph(workspace),
-        api.elements(workspace),
-        api.relationships(workspace),
-      ])
-      return { graph, elements, relationships }
+      const [elements, relationships] = await Promise.all([api.elements(workspace), api.relationships(workspace)])
+      return { elements, relationships }
     },
   })
+  const viewFolders = useQuery({
+    queryKey: ['folders', workspace, 'views'],
+    queryFn: () => api.folders(workspace, 'views'),
+  })
+  const elementFolders = useQuery({
+    queryKey: ['folders', workspace, 'elements'],
+    queryFn: () => api.folders(workspace, 'elements'),
+  })
+  useEffect(() => {
+    fittedFor.current = null
+  }, [viewKey])
 
-  const elements = useMemo(() => snapshot.data?.elements ?? [], [snapshot.data])
-  const relationships = useMemo(() => snapshot.data?.relationships ?? [], [snapshot.data])
-  const headCommitId = snapshot.data?.graph.headCommitId ?? null
+  const view = useQuery({
+    queryKey: ['view', workspace, viewKey],
+    enabled: viewKey != null,
+    queryFn: () => api.view(workspace, viewKey!),
+  })
 
+  const headCommitId = graph.data?.headCommitId ?? null
+  const allElements = useMemo(() => repository.data?.elements ?? [], [repository.data])
+  const allRelationships = useMemo(() => repository.data?.relationships ?? [], [repository.data])
   const byKey = useMemo(
-    () => Object.fromEntries(elements.map((element) => [element.key, element])) as Record<string, ModelElement>,
-    [elements],
+    () => Object.fromEntries(allElements.map((e) => [e.key, e])) as Record<string, ModelElement>,
+    [allElements],
   )
   const relationshipsByKey = useMemo(
-    () =>
-      Object.fromEntries(relationships.map((relationship) => [relationship.key, relationship])) as Record<
-        string,
-        ModelRelationship
-      >,
-    [relationships],
+    () => Object.fromEntries(allRelationships.map((r) => [r.key, r])) as Record<string, ModelRelationship>,
+    [allRelationships],
   )
 
-  const visibleElements = useMemo(() => elements.filter((element) => !hidden[element.key]), [elements, hidden])
-  const visibleRelationships = useMemo(
-    () =>
-      relationships.filter(
-        (relationship) => !hidden[relationship.source] && !hidden[relationship.target],
-      ),
-    [relationships, hidden],
-  )
-  const hiddenElements = useMemo(() => elements.filter((element) => hidden[element.key]), [elements, hidden])
+  const onView = useMemo(() => view.data?.elements ?? [], [view.data])
+  const onViewKeys = useMemo(() => new Set(onView.map((element) => element.key)), [onView])
+  const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({})
 
+  // Server layout is the truth; local positions mirror it so dragging feels immediate.
   useEffect(() => {
-    const missing = visibleElements.filter((element) => !positions[element.key])
-    if (missing.length === 0) {
+    if (!view.data) {
       return
     }
-    if (Object.keys(positions).length === 0) {
-      void autoLayout(visibleElements, visibleRelationships).then(setPositions)
-    } else {
-      const placed: Record<string, { x: number; y: number }> = {}
-      let taken = positions
-      for (const element of missing) {
-        const position = nextFreePosition(taken)
-        placed[element.key] = position
-        taken = { ...taken, [element.key]: position }
-      }
-      setPositions(placed)
+    const stored: Record<string, { x: number; y: number }> = {}
+    for (const node of view.data.layout) {
+      stored[node.element] = { x: node.x, y: node.y }
     }
-  }, [visibleElements, visibleRelationships, positions, setPositions])
+    setPositions(stored)
+  }, [view.data])
 
-  // Auto-layout resolves after the canvas has already mounted, so React Flow's own `fitView`
-  // has by then fitted a diagram whose nodes were all at the origin. Refit once the first real
-  // positions land, otherwise the model opens zoomed into a corner.
-  useEffect(() => {
-    if (fitted.current || !flow.current || visibleElements.length === 0) {
-      return
-    }
-    if (visibleElements.every((element) => positions[element.key])) {
-      fitted.current = true
-      window.requestAnimationFrame(() => flow.current?.fitView({ padding: 0.2, duration: 300 }))
-    }
-  }, [visibleElements, positions])
+  const refresh = useCallback(async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['graph', workspace] }),
+      queryClient.invalidateQueries({ queryKey: ['repository', workspace] }),
+      queryClient.invalidateQueries({ queryKey: ['views', workspace] }),
+      queryClient.invalidateQueries({ queryKey: ['view', workspace] }),
+    ])
+  }, [queryClient, workspace])
 
   const apply = useMutation({
     mutationFn: async ({ commands, label }: { commands: Command[]; label: string }) => {
@@ -138,37 +131,104 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     onSuccess: async ({ inverse, commands, label }) => {
       history.push({ forward: commands, inverse, label })
       setMessage(null)
-      await queryClient.invalidateQueries({ queryKey: ['graph', workspace] })
+      await refresh()
     },
     onError: (error: unknown) => setMessage({ kind: 'error', text: describe(error) }),
   })
 
-  /** Applies a batch without recording it, so undo and redo do not stack on themselves. */
   const applySilently = useCallback(
     async (commands: Command[], label: string) => {
       try {
         await api.applyCommands(workspace, { baseCommitId: headCommitId, message: label, commands })
         setMessage(null)
-        await queryClient.invalidateQueries({ queryKey: ['graph', workspace] })
+        await refresh()
         return true
       } catch (error) {
         setMessage({ kind: 'error', text: describe(error) })
         return false
       }
     },
-    [api, workspace, headCommitId, queryClient],
+    [api, workspace, headCommitId, refresh],
   )
+
+  /** Coordinates go straight to their own endpoint, never through a command (ADR-0003). */
+  const saveLayout = useMutation({
+    mutationFn: (next: Record<string, { x: number; y: number }>) =>
+      api.saveLayout(
+        workspace,
+        viewKey!,
+        Object.entries(next).map(([element, position]) => ({
+          element,
+          x: position.x,
+          y: position.y,
+          width: NODE_WIDTH,
+          height: NODE_HEIGHT,
+        })),
+      ),
+  })
+
+  const pendingSave = useRef<number | null>(null)
+  const scheduleLayoutSave = useCallback(
+    (next: Record<string, { x: number; y: number }>) => {
+      if (!viewKey) {
+        return
+      }
+      // Debounced: a drag emits a position per frame, and one request per frame would be
+      // both wasteful and a guaranteed source of out-of-order writes.
+      if (pendingSave.current) {
+        window.clearTimeout(pendingSave.current)
+      }
+      pendingSave.current = window.setTimeout(() => saveLayout.mutate(next), 500)
+    },
+    [viewKey, saveLayout],
+  )
+
+  // Place anything on the view that has no stored coordinates yet.
+  useEffect(() => {
+    if (!view.data || onView.length === 0) {
+      return
+    }
+    const missing = onView.filter((element) => !positions[element.key])
+    if (missing.length === 0) {
+      return
+    }
+    if (Object.keys(positions).length === 0) {
+      void autoLayout(onView, view.data.relationships).then((laid) => {
+        setPositions(laid)
+        scheduleLayoutSave(laid)
+      })
+    } else {
+      let taken = positions
+      const placed: Record<string, { x: number; y: number }> = {}
+      for (const element of missing) {
+        const position = nextFreePosition(taken)
+        placed[element.key] = position
+        taken = { ...taken, [element.key]: position }
+      }
+      const next = { ...positions, ...placed }
+      setPositions(next)
+      scheduleLayoutSave(next)
+    }
+  }, [view.data, onView, positions, scheduleLayoutSave])
+
+  useEffect(() => {
+    if (!viewKey || !canvasReady || fittedFor.current === viewKey || onView.length === 0) {
+      return
+    }
+    if (onView.every((element) => positions[element.key])) {
+      fittedFor.current = viewKey
+      window.requestAnimationFrame(() => flow.current?.fitView({ padding: 0.2, duration: 300 }))
+    }
+  }, [viewKey, canvasReady, onView, positions])
 
   const nodes: ArchimateNode[] = useMemo(
     () =>
-      visibleElements.map((element) => {
+      onView.map((element) => {
         const type = metamodel.elementType(element.conceptType)
         return {
           id: element.key,
           type: 'archimate' as const,
           position: positions[element.key] ?? { x: 0, y: 0 },
-          // Explicit dimensions: the minimap draws from these, and without them it renders
-          // an empty rectangle until every node has been measured.
           width: NODE_WIDTH,
           height: NODE_HEIGHT,
           selected: selected.includes(element.key),
@@ -182,12 +242,12 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           },
         }
       }),
-    [visibleElements, positions, selected, metamodel, connectingFrom, byKey, relationshipType],
+    [onView, positions, selected, metamodel, connectingFrom, byKey, relationshipType],
   )
 
   const edges: Edge[] = useMemo(
     () =>
-      visibleRelationships.map((relationship) => {
+      (view.data?.relationships ?? []).map((relationship) => {
         const notation = notationFor(relationship.type)
         return {
           id: relationship.key,
@@ -198,36 +258,38 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           markerStart: marker(notation.markerStart),
           animated: notation.animated ?? false,
           style: notation.dash ? { strokeDasharray: notation.dash } : undefined,
-          className: `ag-edge ag-edge-${relationship.type.toLowerCase()}`,
         }
       }),
-    [visibleRelationships],
+    [view.data],
   )
 
   const onNodesChange = useCallback(
     (changes: NodeChange<ArchimateNode>[]) => {
-      // Position changes never reach the server: dragging a box is not a model change (ADR-0003).
       const moved = applyNodeChanges(changes, nodes)
+      let next = positions
+      let dragged = false
       for (const change of changes) {
         if (change.type === 'position' && change.position) {
-          setPosition(change.id, change.position)
+          next = { ...next, [change.id]: change.position }
+          dragged = true
         }
         if (change.type === 'select') {
           setSelected(moved.filter((node) => node.selected).map((node) => node.id))
         }
       }
+      if (dragged) {
+        setPositions(next)
+        scheduleLayoutSave(next)
+      }
     },
-    [nodes, setPosition],
+    [nodes, positions, scheduleLayoutSave],
   )
 
   const isValidConnection = useCallback(
     (connection: Connection | Edge) => {
       const source = byKey[connection.source]
       const target = byKey[connection.target]
-      if (!source || !target) {
-        return false
-      }
-      return metamodel.permits(source.conceptType, target.conceptType, relationshipType)
+      return Boolean(source && target && metamodel.permits(source.conceptType, target.conceptType, relationshipType))
     },
     [byKey, metamodel, relationshipType],
   )
@@ -248,153 +310,118 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       }
       const key = uniqueKey(`${source.key}-${relationshipType.toLowerCase()}-${target.key}`, relationshipsByKey)
       apply.mutate({
-        commands: [
-          { op: 'add-relationship', key, type: relationshipType, source: source.key, target: target.key },
-        ],
+        commands: [{ op: 'add-relationship', key, type: relationshipType, source: source.key, target: target.key }],
         label: `Connect ${source.name} to ${target.name}`,
       })
     },
     [byKey, metamodel, relationshipType, relationshipsByKey, apply],
   )
 
+  /** New elements join the repository and land on the current view in one commit. */
   const createElement = useCallback(
     (typeRef: string, displayName: string) => {
       const key = uniqueKey(displayName, byKey)
-      apply.mutate({
-        commands: [{ op: 'create-element', key, type: typeRef, name: displayName }],
-        label: `Add ${displayName}`,
-      })
-    },
-    [byKey, apply],
-  )
-
-  const renameElement = useCallback(
-    (key: string, name: string) =>
-      apply.mutate({ commands: [{ op: 'rename-element', key, name }], label: `Rename to ${name}` }),
-    [apply],
-  )
-
-  const setDocumentation = useCallback(
-    (key: string, documentation: string) =>
-      apply.mutate({
-        commands: [{ op: 'set-element-documentation', key, documentation: documentation || null }],
-        label: `Document ${byKey[key]?.name ?? key}`,
-      }),
-    [apply, byKey],
-  )
-
-  const setProperty = useCallback(
-    (key: string, property: string, value: string | null) =>
-      apply.mutate({
-        commands: [{ op: 'set-element-property', key, property, value }],
-        label: value === null ? `Remove ${property}` : `Set ${property}`,
-      }),
-    [apply],
-  )
-
-  /** Selecting from the explorer brings the element onto the view if it was taken off it. */
-  const selectElement = useCallback(
-    (key: string) => {
-      if (hidden[key]) {
-        show(key)
+      const commands: Command[] = [{ op: 'create-element', key, type: typeRef, name: displayName }]
+      if (viewKey) {
+        commands.push({ op: 'add-to-view', key: viewKey, element: key })
       }
-      setSelected([key])
-      setContext(null)
-      window.requestAnimationFrame(() =>
-        flow.current?.fitView({ nodes: [{ id: key }], padding: 0.6, duration: 300, maxZoom: 1.2 }),
-      )
+      apply.mutate({ commands, label: `Add ${displayName}` })
     },
-    [hidden, show],
+    [byKey, viewKey, apply],
   )
 
-  /**
-   * Takes elements off this diagram. Not a model change, so no command and no commit — the
-   * element keeps existing, keeps its relationships, and can be put back from the panel.
-   */
-  const removeFromView = useCallback(
-    (keys: string[]) => {
-      if (keys.length === 0) {
+  const addToView = useCallback(
+    (elementKey: string) => {
+      if (!viewKey) {
+        setMessage({ kind: 'info', text: 'Open a view first, then add elements to it.' })
         return
       }
-      hide(keys)
-      setSelected((current) => current.filter((key) => !keys.includes(key)))
-      setContext(null)
-      const names = keys.map((key) => byKey[key]?.name ?? key).join(', ')
-      setMessage({ kind: 'info', text: `${names} removed from this view. Still in the model.` })
+      apply.mutate({
+        commands: [{ op: 'add-to-view', key: viewKey, element: elementKey }],
+        label: `Show ${byKey[elementKey]?.name ?? elementKey}`,
+      })
     },
-    [hide, byKey],
+    [viewKey, byKey, apply],
   )
 
-  /** Deletes from the model itself: permanent, everywhere, and it takes the relationships with it. */
+  /** Off this diagram only. The element stays in the repository and on every other view. */
+  const removeFromView = useCallback(
+    (keys: string[]) => {
+      if (!viewKey || keys.length === 0) {
+        return
+      }
+      setContext(null)
+      apply.mutate({
+        commands: keys.map((key) => ({ op: 'remove-from-view', key: viewKey, element: key })),
+        label: `Remove ${keys.map((k) => byKey[k]?.name ?? k).join(', ')} from ${view.data?.name ?? viewKey}`,
+      })
+    },
+    [viewKey, byKey, view.data, apply],
+  )
+
+  /** Out of the repository entirely: permanent, off every view, and it takes its relationships. */
   const deleteFromModel = useCallback(
     (keys: string[]) => {
       if (keys.length === 0) {
         return
       }
-      const affected = relationships.filter(
-        (relationship) => keys.includes(relationship.source) || keys.includes(relationship.target),
-      )
+      const affected = allRelationships.filter((r) => keys.includes(r.source) || keys.includes(r.target))
+      const shownOn = (views.data ?? []).length
       const names = keys.map((key) => byKey[key]?.name ?? key).join(', ')
-      const confirmed = window.confirm(
-        `Delete ${names} from the model?\n\n` +
-          (affected.length > 0
-            ? `${affected.length} relationship(s) will be deleted with it:\n` +
-              affected
-                .slice(0, 8)
-                .map((relationship) => `  • ${relationship.type}: ${relationship.source} → ${relationship.target}`)
-                .join('\n') +
-              (affected.length > 8 ? `\n  …and ${affected.length - 8} more` : '') +
-              '\n\n'
-            : 'Nothing else references it.\n\n') +
-          'This removes it from the model everywhere, not just from this view.',
-      )
       setContext(null)
+      const confirmed = window.confirm(
+        `Delete ${names} from the repository?\n\n` +
+          (affected.length > 0 ? `${affected.length} relationship(s) will be deleted with it.\n` : '') +
+          `It will disappear from every view (${shownOn} exist), not just this one.\n\n` +
+          'To take it off this diagram only, use "Remove from view".',
+      )
       if (confirmed) {
-        apply.mutate({
-          commands: keys.map((key) => ({ op: 'delete-element', key })),
-          label: `Delete ${names}`,
-        })
+        apply.mutate({ commands: keys.map((key) => ({ op: 'delete-element', key })), label: `Delete ${names}` })
       }
     },
-    [relationships, byKey, apply],
+    [allRelationships, views.data, byKey, apply],
   )
+
+  const createView = useCallback(async () => {
+    const name = window.prompt('Name of the new view', 'Context')
+    if (!name?.trim()) {
+      return
+    }
+    const key = uniqueKey(name, Object.fromEntries((views.data ?? []).map((v) => [v.key, true])))
+    // Open it only once the command has landed. Selecting it first made the detail query fire
+    // against a view the server did not have yet, which answered 404 and left the canvas blank.
+    if (
+      await applySilently(
+        [{ op: 'create-view', key, name: name.trim(), viewpoint: 'layered' }],
+        `Create view ${name.trim()}`,
+      )
+    ) {
+      setViewKey(key)
+    }
+  }, [views.data, applySilently])
 
   const undo = useCallback(async () => {
     const entry = history.popUndo()
-    if (!entry) {
-      return
-    }
-    if (await applySilently(entry.inverse, `Undo: ${entry.label}`)) {
+    if (entry && (await applySilently(entry.inverse, `Undo: ${entry.label}`))) {
       history.pushRedo(entry)
     }
   }, [history, applySilently])
 
   const redo = useCallback(async () => {
     const entry = history.popRedo()
-    if (!entry) {
-      return
-    }
-    if (await applySilently(entry.forward, `Redo: ${entry.label}`)) {
+    if (entry && (await applySilently(entry.forward, `Redo: ${entry.label}`))) {
       history.push(entry)
     }
   }, [history, applySilently])
 
-  // Ctrl/Cmd+Z, Ctrl+Shift+Z, Ctrl+Y, and Delete for taking things off the diagram. Delete is
-  // deliberately the non-destructive one: the key that is easiest to hit by accident must not
-  // be the one that changes the model.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null
-      if (
-        target &&
-        (target.isContentEditable ||
-          ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
-      ) {
+      if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) {
         return
       }
       const mod = event.ctrlKey || event.metaKey
       const key = event.key.toLowerCase()
-
       if (mod && key === 'z' && !event.shiftKey) {
         event.preventDefault()
         void undo()
@@ -402,29 +429,56 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         event.preventDefault()
         void redo()
       } else if ((event.key === 'Delete' || event.key === 'Backspace') && selected.length > 0) {
+        // The easiest key to hit by accident takes things off the diagram, never out of the
+        // repository.
         event.preventDefault()
         removeFromView(selected)
       } else if (event.key === 'Escape') {
         setContext(null)
       }
     }
-
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [undo, redo, selected, removeFromView])
 
-  const relayout = useCallback(() => {
-    void autoLayout(visibleElements, visibleRelationships).then((laid) => {
-      setPositions(laid)
-      window.requestAnimationFrame(() => flow.current?.fitView({ padding: 0.2, duration: 300 }))
-    })
-  }, [visibleElements, visibleRelationships, setPositions])
+  const viewItems: TreeItem[] = useMemo(
+    () =>
+      (views.data ?? []).map((summary) => ({
+        key: summary.key,
+        label: summary.name,
+        meta: `${summary.elements}`,
+        folder: summary.folder,
+      })),
+    [views.data],
+  )
 
-  if (snapshot.isPending) {
-    return <div className="ag-editor-loading">Loading model…</div>
+  const folderMutation = useMutation({
+    mutationFn: async (action: () => Promise<unknown>) => action(),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['folders', workspace] }),
+        queryClient.invalidateQueries({ queryKey: ['views', workspace] }),
+        queryClient.invalidateQueries({ queryKey: ['repository', workspace] }),
+      ]),
+    onError: (error: unknown) => setMessage({ kind: 'error', text: describe(error) }),
+  })
+
+  function folderActions(kind: 'views' | 'elements') {
+    return {
+      onCreateFolder: (parent: string | null) => {
+        const name = window.prompt('Folder name')
+        if (name?.trim()) {
+          folderMutation.mutate(() => api.createFolder(workspace, kind, name.trim(), parent))
+        }
+      },
+      onDeleteFolder: (id: string) => folderMutation.mutate(() => api.deleteFolder(workspace, id)),
+      onMoveItem: (key: string, folder: string | null) =>
+        folderMutation.mutate(() => api.assignFolder(workspace, kind, key, folder)),
+    }
   }
-  if (snapshot.isError) {
-    return <div className="ag-editor-loading error">{describe(snapshot.error)}</div>
+
+  if (graph.isPending || repository.isPending) {
+    return <div className="ag-editor-loading">Loading repository…</div>
   }
 
   return (
@@ -433,71 +487,70 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
 
       <div className="ag-sidebar">
         <div className="ag-tabs" role="tablist">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={sidebar === 'palette'}
-            className={sidebar === 'palette' ? 'ag-tab ag-tab-active' : 'ag-tab'}
-            onClick={() => setSidebar('palette')}
-          >
-            Palette
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={sidebar === 'model'}
-            className={sidebar === 'model' ? 'ag-tab ag-tab-active' : 'ag-tab'}
-            onClick={() => setSidebar('model')}
-          >
-            Repository ({elements.length})
-          </button>
+          {(['views', 'palette', 'repository'] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              aria-selected={sidebar === tab}
+              className={sidebar === tab ? 'ag-tab ag-tab-active' : 'ag-tab'}
+              onClick={() => setSidebar(tab)}
+            >
+              {tab === 'views' && `Views (${views.data?.length ?? 0})`}
+              {tab === 'palette' && 'Palette'}
+              {tab === 'repository' && `Repository (${allElements.length})`}
+            </button>
+          ))}
         </div>
 
-        {sidebar === 'palette' ? (
+        {sidebar === 'views' && (
+          <div className="ag-sidebar-body">
+            <button type="button" className="ag-block-button" onClick={() => void createView()} disabled={apply.isPending}>
+              + New view
+            </button>
+            <FolderTree
+              folders={viewFolders.data ?? []}
+              items={viewItems}
+              selected={viewKey ? [viewKey] : []}
+              emptyLabel="No views yet. A view is a diagram over the repository."
+              onSelect={setViewKey}
+              {...folderActions('views')}
+            />
+          </div>
+        )}
+
+        {sidebar === 'palette' && (
           <Palette
             metamodel={metamodel}
-            viewpoint={viewpoint}
-            onViewpointChange={setViewpoint}
+            viewpoint={view.data?.viewpoint ?? 'layered'}
+            onViewpointChange={(code) =>
+              viewKey && apply.mutate({ commands: [{ op: 'set-viewpoint', key: viewKey, viewpoint: code }], label: 'Change viewpoint' })
+            }
             onCreate={(type: ElementType) => createElement(type.concept, type.name)}
             profiles={profiles}
             onCreateProfiled={(name) => createElement(name, name)}
             busy={apply.isPending}
           />
-        ) : (
-          <Explorer
-            elements={elements}
-            relationships={relationships}
-            hidden={hidden}
-            metamodel={metamodel}
-            selected={selected}
-            onSelect={selectElement}
-            onAddToView={show}
-          />
         )}
 
-        {hiddenElements.length > 0 && (
-          <section className="ag-hidden-panel">
-            <h3>
-              Not on this view ({hiddenElements.length})
-              <button type="button" className="ag-link" onClick={showAll}>
-                show all
-              </button>
-            </h3>
-            <ul>
-              {hiddenElements.map((element) => (
-                <li key={element.key}>
-                  <button type="button" className="ag-link" onClick={() => show(element.key)}>
-                    {element.name}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
+        {sidebar === 'repository' && (
+          <Explorer
+            elements={allElements}
+            relationships={allRelationships}
+            folders={elementFolders.data ?? []}
+            onView={onViewKeys}
+            metamodel={metamodel}
+            selected={selected}
+            onSelect={(key) => setSelected([key])}
+            onAddToView={addToView}
+            {...folderActions('elements')}
+          />
         )}
       </div>
 
       <div className="ag-canvas-area">
         <div className="ag-toolbar">
+          <strong className="ag-view-name">{view.data?.name ?? 'No view open'}</strong>
           <label className="ag-field ag-inline">
             <span>Draw</span>
             <select value={relationshipType} onChange={(event) => setRelationshipType(event.target.value)}>
@@ -508,30 +561,31 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
               ))}
             </select>
           </label>
-          <button type="button" onClick={relayout}>
+          <button
+            type="button"
+            onClick={() =>
+              view.data &&
+              void autoLayout(onView, view.data.relationships).then((laid) => {
+                setPositions(laid)
+                scheduleLayoutSave(laid)
+                window.requestAnimationFrame(() => flow.current?.fitView({ padding: 0.2, duration: 300 }))
+              })
+            }
+            disabled={!viewKey}
+          >
             Auto-layout
           </button>
-          <button
-            type="button"
-            onClick={() => void undo()}
-            disabled={history.undoStack.length === 0}
-            title="Ctrl+Z"
-          >
+          <button type="button" onClick={() => void undo()} disabled={history.undoStack.length === 0} title="Ctrl+Z">
             Undo
           </button>
-          <button
-            type="button"
-            onClick={() => void redo()}
-            disabled={history.redoStack.length === 0}
-            title="Ctrl+Shift+Z or Ctrl+Y"
-          >
+          <button type="button" onClick={() => void redo()} disabled={history.redoStack.length === 0} title="Ctrl+Shift+Z">
             Redo
           </button>
           <button
             type="button"
             onClick={() => removeFromView(selected)}
-            disabled={selected.length === 0}
-            title="Delete — takes it off this diagram only"
+            disabled={selected.length === 0 || !viewKey}
+            title="Delete — takes it off this view only"
           >
             Remove from view
           </button>
@@ -540,51 +594,64 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
             className="ag-danger"
             onClick={() => deleteFromModel(selected)}
             disabled={selected.length === 0}
-            title="Permanent, everywhere"
           >
-            Delete from model
+            Delete from repository
           </button>
           <span className="ag-toolbar-spacer" />
           <span className="ag-muted">
-            {visibleElements.length} of {elements.length} elements · {visibleRelationships.length} relationships
+            {onView.length} on view · {allElements.length} in repository
           </span>
         </div>
 
         {message && <div className={`ag-banner ag-banner-${message.kind}`}>{message.text}</div>}
 
         <div className="ag-canvas">
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={nodeTypes}
-            onNodesChange={onNodesChange}
-            onConnect={onConnect}
-            isValidConnection={isValidConnection}
-            onConnectStart={(_event, params) => setConnectingFrom(params.nodeId ?? null)}
-            onConnectEnd={() => setConnectingFrom(null)}
-            onNodeContextMenu={(event, node) => {
-              event.preventDefault()
-              setContext({ elementKey: node.id, x: event.clientX, y: event.clientY })
-            }}
-            onPaneClick={() => setContext(null)}
-            // React Flow's own delete would remove nodes from the canvas without going through
-            // a command, so the diagram would disagree with the model until the next reload.
-            deleteKeyCode={null}
-            onInit={(instance) => {
-              flow.current = instance
-            }}
-            fitView
-          >
-            <Background gap={16} />
-            <Controls />
-            <MiniMap
-              pannable
-              zoomable
-              nodeColor={(node) => LAYER_COLORS[(node.data as { layer?: keyof typeof LAYER_COLORS }).layer ?? 'other']}
-              nodeStrokeColor="#6b7280"
-              nodeStrokeWidth={2}
-            />
-          </ReactFlow>
+          {viewKey ? (
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={nodeTypes}
+              onNodesChange={onNodesChange}
+              onConnect={onConnect}
+              isValidConnection={isValidConnection}
+              onConnectStart={(_event, params) => setConnectingFrom(params.nodeId ?? null)}
+              onConnectEnd={() => setConnectingFrom(null)}
+              onNodeContextMenu={(event, node) => {
+                event.preventDefault()
+                setContext({ elementKey: node.id, x: event.clientX, y: event.clientY })
+              }}
+              onPaneClick={() => setContext(null)}
+              deleteKeyCode={null}
+              onInit={(instance) => {
+                flow.current = instance
+                setCanvasReady(true)
+              }}
+              fitView
+            >
+              <Background gap={16} />
+              <Controls />
+              <MiniMap
+                pannable
+                zoomable
+                nodeColor={(node) =>
+                  LAYER_COLORS[(node.data as { layer?: keyof typeof LAYER_COLORS }).layer ?? 'other']
+                }
+                nodeStrokeColor="#6b7280"
+                nodeStrokeWidth={2}
+              />
+            </ReactFlow>
+          ) : (
+            <div className="ag-empty-canvas">
+              <p>Open a view, or create one.</p>
+              <p className="muted">
+                A view is a diagram over the repository — a context diagram of one system, the modules of
+                another, the course of a process. The same element can appear on any number of them.
+              </p>
+              <button type="button" onClick={() => void createView()}>
+                + New view
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -593,24 +660,34 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         selectedCount={selected.length}
         metamodel={metamodel}
         profile={
-          selected.length === 1
-            ? profiles.find((candidate) => candidate.name === byKey[selected[0]]?.profile)
-            : undefined
+          selected.length === 1 ? profiles.find((p) => p.name === byKey[selected[0]]?.profile) : undefined
         }
-        relationships={relationships}
+        relationships={allRelationships}
         elementsByKey={byKey}
         busy={apply.isPending}
-        onRename={renameElement}
-        onDocumentation={setDocumentation}
-        onProperty={setProperty}
-        onSelect={selectElement}
+        onRename={(key, name) =>
+          apply.mutate({ commands: [{ op: 'rename-element', key, name }], label: `Rename to ${name}` })
+        }
+        onDocumentation={(key, documentation) =>
+          apply.mutate({
+            commands: [{ op: 'set-element-documentation', key, documentation: documentation || null }],
+            label: `Document ${byKey[key]?.name ?? key}`,
+          })
+        }
+        onProperty={(key, property, value) =>
+          apply.mutate({
+            commands: [{ op: 'set-element-property', key, property, value }],
+            label: value === null ? `Remove ${property}` : `Set ${property}`,
+          })
+        }
+        onSelect={(key) => setSelected([key])}
       />
 
       {context && byKey[context.elementKey] && (
         <ContextMenu
           target={context}
           element={byKey[context.elementKey]}
-          relationships={relationships}
+          relationships={allRelationships}
           elementsByKey={byKey}
           metamodel={metamodel}
           onClose={() => setContext(null)}
@@ -622,12 +699,6 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   )
 }
 
-/**
- * How a node should look while a connection is being dragged out of another one.
- *
- * This is the feature that makes the product something other than a drawing tool: the
- * metamodel answers "may this exist" before the user lets go of the mouse.
- */
 function connectionState(
   element: ModelElement,
   connectingFrom: string | null,
@@ -678,7 +749,7 @@ function describe(error: unknown): string {
       return violations.map((violation) => violation.detail).join(' ')
     }
     if (error.isStaleBase) {
-      return 'Someone else changed this model. Reload to get their changes before continuing.'
+      return 'Someone else changed this repository. Reload to get their changes before continuing.'
     }
     return error.message
   }

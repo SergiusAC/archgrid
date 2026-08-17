@@ -137,4 +137,98 @@ public sealed interface ModelCommand {
             return key;
         }
     }
+
+    // ------------------------------------------------------------------ views
+    //
+    // View definitions are versioned like the semantic model, because "this element belongs on
+    // the context diagram" is a documentation decision worth attributing (ADR-0003, ADR-0009).
+    // Coordinates are not: they never travel through a command.
+
+    record CreateView(Slug key, String name, String viewpoint) implements ModelCommand {
+
+        public CreateView {
+            Objects.requireNonNull(key, "key must not be null");
+            Objects.requireNonNull(name, "name must not be null");
+            Objects.requireNonNull(viewpoint, "viewpoint must not be null");
+        }
+
+        public static CreateView of(String key, String name, String viewpoint) {
+            return new CreateView(Slug.of(key), name, viewpoint);
+        }
+
+        @Override
+        public Slug subject() {
+            return key;
+        }
+    }
+
+    record RenameView(Slug key, String name) implements ModelCommand {
+
+        public RenameView {
+            Objects.requireNonNull(key, "key must not be null");
+            Objects.requireNonNull(name, "name must not be null");
+        }
+
+        @Override
+        public Slug subject() {
+            return key;
+        }
+    }
+
+    record SetViewpoint(Slug key, String viewpoint) implements ModelCommand {
+
+        public SetViewpoint {
+            Objects.requireNonNull(key, "key must not be null");
+            Objects.requireNonNull(viewpoint, "viewpoint must not be null");
+        }
+
+        @Override
+        public Slug subject() {
+            return key;
+        }
+    }
+
+    /** Deletes the diagram. The elements it showed are untouched — they belong to the repository. */
+    record DeleteView(Slug key) implements ModelCommand {
+
+        public DeleteView {
+            Objects.requireNonNull(key, "key must not be null");
+        }
+
+        @Override
+        public Slug subject() {
+            return key;
+        }
+    }
+
+    record AddToView(Slug view, Slug element) implements ModelCommand {
+
+        public AddToView {
+            Objects.requireNonNull(view, "view must not be null");
+            Objects.requireNonNull(element, "element must not be null");
+        }
+
+        public static AddToView of(String view, String element) {
+            return new AddToView(Slug.of(view), Slug.of(element));
+        }
+
+        @Override
+        public Slug subject() {
+            return view;
+        }
+    }
+
+    /** Takes the element off this diagram only. It stays in the repository and in other views. */
+    record RemoveFromView(Slug view, Slug element) implements ModelCommand {
+
+        public RemoveFromView {
+            Objects.requireNonNull(view, "view must not be null");
+            Objects.requireNonNull(element, "element must not be null");
+        }
+
+        @Override
+        public Slug subject() {
+            return view;
+        }
+    }
 }

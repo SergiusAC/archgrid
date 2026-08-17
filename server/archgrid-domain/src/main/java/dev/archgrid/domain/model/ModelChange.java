@@ -93,6 +93,76 @@ public final class ModelChange {
                     graph.removeRelationship(delete.key());
                 }
             }
+            case ModelCommand.CreateView create -> createView(graph, create, metamodel, violations);
+            case ModelCommand.RenameView rename -> mutateView(
+                    graph, rename.key(), violations, view -> view.withName(rename.name()));
+            case ModelCommand.SetViewpoint set -> {
+                if (metamodel.viewpoint(set.viewpoint()).isEmpty()) {
+                    violations.add(Violation.of(
+                            Violation.Code.UNKNOWN_TYPE,
+                            set.key(),
+                            "'" + set.viewpoint() + "' is not a viewpoint in this metamodel."));
+                } else {
+                    mutateView(graph, set.key(), violations, view -> view.withViewpoint(set.viewpoint()));
+                }
+            }
+            case ModelCommand.DeleteView delete -> {
+                if (!graph.containsView(delete.key())) {
+                    violations.add(Violation.of(
+                            Violation.Code.UNKNOWN_SUBJECT,
+                            delete.key(),
+                            "There is no view '" + delete.key() + "' in this model."));
+                } else {
+                    // Only the diagram goes. Its elements belong to the repository and stay there.
+                    graph.removeView(delete.key());
+                }
+            }
+            case ModelCommand.AddToView add -> {
+                if (!graph.containsElement(add.element())) {
+                    violations.add(Violation.of(
+                            Violation.Code.UNKNOWN_SUBJECT,
+                            add.view(),
+                            "There is no element '" + add.element() + "' to put on this view."));
+                } else {
+                    mutateView(graph, add.view(), violations, view -> view.with(add.element()));
+                }
+            }
+            case ModelCommand.RemoveFromView remove -> mutateView(
+                    graph, remove.view(), violations, view -> view.without(remove.element()));
+        }
+    }
+
+    private static void createView(
+            ModelGraph graph, ModelCommand.CreateView create, Metamodel metamodel, List<Violation> violations) {
+        if (graph.containsView(create.key())) {
+            violations.add(Violation.of(
+                    Violation.Code.DUPLICATE_KEY,
+                    create.key(),
+                    "A view with key '" + create.key() + "' already exists in this model."));
+            return;
+        }
+        if (metamodel.viewpoint(create.viewpoint()).isEmpty()) {
+            violations.add(Violation.of(
+                    Violation.Code.UNKNOWN_TYPE,
+                    create.key(),
+                    "'" + create.viewpoint() + "' is not a viewpoint in this metamodel."));
+            return;
+        }
+        graph.put(View.of(create.key(), create.name(), create.viewpoint()));
+    }
+
+    private static void mutateView(
+            ModelGraph graph, Slug key, List<Violation> violations, java.util.function.UnaryOperator<View> mutation) {
+        Optional<View> view = graph.view(key);
+        if (view.isEmpty()) {
+            violations.add(
+                    Violation.of(Violation.Code.UNKNOWN_SUBJECT, key, "There is no view '" + key + "' in this model."));
+            return;
+        }
+        try {
+            graph.put(mutation.apply(view.get()));
+        } catch (IllegalArgumentException ex) {
+            violations.add(Violation.of(Violation.Code.NOT_APPLICABLE, key, ex.getMessage()));
         }
     }
 
@@ -197,6 +267,9 @@ public final class ModelChange {
         }
         graph.relationshipsTouching(delete.key())
                 .forEach(relationship -> graph.removeRelationship(relationship.key()));
+        // It also has to come off every diagram that shows it. A view referring to an element
+        // the repository no longer has is not a state the user can fix from the diagram.
+        graph.viewsShowing(delete.key()).forEach(view -> graph.put(view.without(delete.key())));
         graph.removeElement(delete.key());
     }
 
@@ -252,6 +325,18 @@ public final class ModelChange {
         }
 
         detectContainmentCycles(graph, violations);
+
+        for (View view : graph.views()) {
+            for (Slug member : view.elements()) {
+                if (!graph.containsElement(member)) {
+                    violations.add(Violation.of(
+                            Violation.Code.DANGLING_ENDPOINT,
+                            view.key(),
+                            "View '" + view.key() + "' shows element '" + member
+                                    + "', which is not in the repository."));
+                }
+            }
+        }
 
         for (Relationship relationship : graph.relationships()) {
             Optional<Element> source = graph.element(relationship.source());

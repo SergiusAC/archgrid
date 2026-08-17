@@ -4,6 +4,7 @@ import dev.archgrid.domain.metamodel.Metamodel;
 import dev.archgrid.domain.model.Element;
 import dev.archgrid.domain.model.ModelGraph;
 import dev.archgrid.domain.model.Relationship;
+import dev.archgrid.domain.model.View;
 import dev.archgrid.domain.profile.AttributeDefinition;
 import dev.archgrid.domain.profile.AttributeType;
 import dev.archgrid.domain.profile.Profile;
@@ -122,7 +123,43 @@ class ModelGraphRepository {
                 })
                 .list();
 
-        return ModelGraph.of(elements, relationships);
+        return ModelGraph.of(elements, relationships, loadViews(modelId));
+    }
+
+    private List<View> loadViews(UUID modelId) {
+        Map<Slug, Set<Slug>> members = new LinkedHashMap<>();
+        jdbc.sql(
+                        """
+                        select v."key" as view_key, e."key" as element_key
+                        from view_element ve
+                        join view v on v.id = ve.view_id
+                        join element e on e.id = ve.element_id
+                        where v.model_id = :modelId and ve.to_seq is null
+                        order by e."key"
+                        """)
+                .param("modelId", modelId)
+                .query((ResultSet rs, int rowNum) -> {
+                    members.computeIfAbsent(Slug.of(rs.getString("view_key")), key -> new LinkedHashSet<>())
+                            .add(Slug.of(rs.getString("element_key")));
+                    return null;
+                })
+                .list();
+
+        return jdbc.sql(
+                        """
+                        select v."key" as view_key, vv.name, vv.viewpoint
+                        from view_version vv
+                        join view v on v.id = vv.view_id
+                        where v.model_id = :modelId and vv.to_seq is null
+                        order by vv.name
+                        """)
+                .param("modelId", modelId)
+                .query((ResultSet rs, int rowNum) -> {
+                    Slug key = Slug.of(rs.getString("view_key"));
+                    return new View(
+                            key, rs.getString("name"), rs.getString("viewpoint"), members.getOrDefault(key, Set.of()));
+                })
+                .list();
     }
 
     /** Properties are expanded by PostgreSQL rather than parsed here — {@code jsonb_each_text} is exact and cheap. */
@@ -195,6 +232,7 @@ class ModelGraphRepository {
         Map<String, UUID> profileIds = profileIdsByName(modelId);
         writeElements(modelId, before, after, seq, profileIds);
         writeRelationships(modelId, before, after, seq);
+        writeViews(modelId, before, after, seq);
 
         jdbc.sql("update model set head_commit_id = :commitId, updated_at = now() where id = :modelId")
                 .param("commitId", commitId)
@@ -278,6 +316,84 @@ class ModelGraphRepository {
                         .param("name", updated.name())
                         .param("properties", json.writeValueAsString(updated.properties()))
                         .update();
+            }
+        }
+    }
+
+    /**
+     * Writes view definitions and membership.
+     *
+     * <p>Membership is versioned per element rather than as a blob: a diff then shows "added
+     * Payment Service to the context view", which is the change that actually happened, instead
+     * of "the membership list changed".
+     */
+    private void writeViews(UUID modelId, ModelGraph before, ModelGraph after, long seq) {
+        Map<Slug, View> old = byKey(before.views(), View::key);
+        Map<Slug, View> current = byKey(after.views(), View::key);
+
+        Set<Slug> touched = new LinkedHashSet<>(old.keySet());
+        touched.addAll(current.keySet());
+
+        Map<Slug, UUID> viewIds = identifiers("view", modelId);
+        for (Slug key : current.keySet()) {
+            viewIds.computeIfAbsent(key, missing -> {
+                UUID id = UUID.randomUUID();
+                jdbc.sql("insert into view (id, model_id, \"key\") values (:id, :modelId, :key)")
+                        .param("id", id)
+                        .param("modelId", modelId)
+                        .param("key", missing.value())
+                        .update();
+                return id;
+            });
+        }
+        Map<Slug, UUID> elementIds = elementIds(modelId);
+
+        for (Slug key : touched) {
+            View previous = old.get(key);
+            View updated = current.get(key);
+            UUID viewId = viewIds.get(key);
+
+            boolean definitionChanged = previous == null
+                    || updated == null
+                    || !previous.name().equals(updated.name())
+                    || !previous.viewpoint().equals(updated.viewpoint());
+            if (definitionChanged) {
+                if (previous != null) {
+                    closeVersion("view", "view_id", viewId, seq);
+                }
+                if (updated != null) {
+                    jdbc.sql("insert into view_version (view_id, from_seq, name, viewpoint) "
+                                    + "values (:id, :seq, :name, :viewpoint)")
+                            .param("id", viewId)
+                            .param("seq", seq)
+                            .param("name", updated.name())
+                            .param("viewpoint", updated.viewpoint())
+                            .update();
+                }
+            }
+
+            Set<Slug> was = previous == null ? Set.of() : previous.elements();
+            Set<Slug> now = updated == null ? Set.of() : updated.elements();
+
+            for (Slug gone : was) {
+                if (!now.contains(gone)) {
+                    jdbc.sql("update view_element set to_seq = :seq "
+                                    + "where view_id = :view and element_id = :element and to_seq is null")
+                            .param("seq", seq)
+                            .param("view", viewId)
+                            .param("element", elementIds.get(gone))
+                            .update();
+                }
+            }
+            for (Slug added : now) {
+                if (!was.contains(added)) {
+                    jdbc.sql("insert into view_element (view_id, element_id, from_seq) "
+                                    + "values (:view, :element, :seq)")
+                            .param("view", viewId)
+                            .param("element", elementIds.get(added))
+                            .param("seq", seq)
+                            .update();
+                }
             }
         }
     }
