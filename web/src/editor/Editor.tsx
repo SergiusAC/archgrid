@@ -9,6 +9,7 @@ import Canvas, { type CanvasElement, type CanvasLink, type Geometry } from './Ca
 import ContextMenu, { type ContextTarget } from './ContextMenu.tsx'
 import Explorer from './Explorer.tsx'
 import FolderTree, { type TreeItem } from './FolderTree.tsx'
+import MagicMenu from './MagicMenu.tsx'
 import Palette from './Palette.tsx'
 import Properties from './Properties.tsx'
 import Splitter from './Splitter.tsx'
@@ -39,6 +40,8 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   const [sidebar, setSidebar] = useState<'views' | 'palette' | 'repository'>('views')
   // The element whose name is being typed in place, straight after creation.
   const [editingKey, setEditingKey] = useState<string | null>(null)
+  // Where a line was dropped on empty canvas, and what it came from.
+  const [magic, setMagic] = useState<{ x: number; y: number; source: string; at: Position } | null>(null)
   const [picker, setPicker] = useState<{
     x: number
     y: number
@@ -48,6 +51,14 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   } | null>(null)
   // Positions as they were when a drag began, so the move can be undone as one action.
   const dragOrigin = useRef<Record<string, Position> | null>(null)
+  /**
+   * Where an element the user has just asked for should land.
+   *
+   * Kept in a ref rather than in `positions`, because the command that creates it refetches the
+   * view, and the server layout comes back without the new element — it is saved separately and
+   * later. Seeding the state was therefore erased a moment after it was written.
+   */
+  const placeAt = useRef<Record<string, Position>>({})
   // Changing this asks the canvas to refit; it changes when a view is opened or auto-laid out.
   const [fitToken, setFitToken] = useState<string | null>(null)
   // Bumped whenever geometry changes for a reason the canvas cannot know: a view opening,
@@ -219,7 +230,10 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       let taken = positions
       const placed: Record<string, { x: number; y: number }> = {}
       for (const element of missing) {
-        const position = nextFreePosition(taken, sizes)
+        // A place the user pointed at beats the tidy grid every time.
+        const asked = placeAt.current[element.key]
+        delete placeAt.current[element.key]
+        const position = asked ?? nextFreePosition(taken, sizes)
         placed[element.key] = position
         taken = { ...taken, [element.key]: position }
       }
@@ -452,6 +466,38 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       setEditingKey(key)
     },
     [byKey, viewKey, apply],
+  )
+
+  /**
+   * The Magic Connector's other half: an element and the relationship reaching it, in one commit.
+   *
+   * One commit rather than two on purpose. "Added Ledger" followed by "Connected Payment API to
+   * Ledger" is two entries in the history for one decision, and undo would then take two presses
+   * to get back to where the user started.
+   */
+  const createConnected = useCallback(
+    (sourceKey: string, relationship: string, type: ElementType, at: Position) => {
+      const source = byKey[sourceKey]
+      if (!source || !viewKey) {
+        return
+      }
+      const key = uniqueKey(type.name, byKey)
+      // Centred on where the line was dropped, not hung off it by a corner: the cursor was
+      // pointing at where the element should be, not at its top-left pixel.
+      placeAt.current[key] = { x: Math.round(at.x - NODE_WIDTH / 2), y: Math.round(at.y - NODE_HEIGHT / 2) }
+      const relationshipKey = uniqueKey(`${sourceKey}-${relationship.toLowerCase()}-${key}`, relationshipsByKey)
+      apply.mutate({
+        commands: [
+          { op: 'create-element', key, type: type.concept, name: type.name },
+          { op: 'add-to-view', key: viewKey, element: key },
+          { op: 'add-relationship', key: relationshipKey, type: relationship, source: sourceKey, target: key },
+        ],
+        label: `${relationship} ${type.name} from ${source.name}`,
+      })
+      // Named after its type until the user says otherwise, so put the cursor there straight away.
+      setEditingKey(key)
+    },
+    [byKey, relationshipsByKey, viewKey, apply],
   )
 
   const addToView = useCallback(
@@ -807,6 +853,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
               onGeometryEnd={onGeometryEnd}
               onNest={(key, parent, next) => void onNest(key, parent, next)}
               onConnect={onConnect}
+              onMagic={(source, x, y, at) => setMagic({ source, x, y, at })}
               canConnect={canConnect}
               onContextMenu={(elementKey, x, y) => setContext({ elementKey, x, y })}
               onBlankClick={() => setContext(null)}
@@ -874,6 +921,23 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         }
         onSelect={(key) => setSelected([key])}
       />
+      )}
+
+      {magic && byKey[magic.source] && (
+        <MagicMenu
+          x={magic.x}
+          y={magic.y}
+          sourceName={byKey[magic.source].name}
+          sourceConcept={byKey[magic.source].conceptType}
+          metamodel={metamodel}
+          palette={metamodel.palette(view.data?.viewpoint ?? 'layered')}
+          onPick={(relationship, type) => {
+            const { source, at } = magic
+            setMagic(null)
+            createConnected(source, relationship, type, at)
+          }}
+          onCancel={() => setMagic(null)}
+        />
       )}
 
       {picker && (

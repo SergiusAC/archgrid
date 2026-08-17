@@ -54,6 +54,11 @@ interface CanvasProps {
    */
   onNest: (key: string, parent: string | null, geometry: Geometry) => void
   onConnect: (source: string, target: string) => void
+  /**
+   * A line dragged into empty space. The gesture says "from here, something follows" — the editor
+   * answers with what may follow, and creates the element and the relationship together.
+   */
+  onMagic: (source: string, clientX: number, clientY: number, at: Position) => void
   /** Looser than "the type on the toolbar fits": anything at all between these two allows a drop. */
   canConnect: (source: string, target: string) => boolean
   onContextMenu: (key: string, clientX: number, clientY: number) => void
@@ -328,6 +333,24 @@ export default function Canvas(props: CanvasProps) {
       link.remove()
       if (source.id && target.id) {
         latest.current.onConnect(String(source.id), String(target.id))
+      }
+    })
+
+    // Released over nothing. `linkPinning: false` is about to throw the half-drawn link away, so
+    // the source and the drop point are read here, while they still exist.
+    view.on('link:pointerup', (linkView: joint.dia.LinkView, event: joint.dia.Event) => {
+      const link = linkView.model
+      const source = link.get('source') as { id?: string }
+      const target = link.get('target') as { id?: string }
+      if (source?.id && !target?.id) {
+        link.remove()
+        // In model coordinates as well as screen ones: the drop point is where the user said the
+        // new element goes, and placing it anywhere else ignores what the gesture just expressed.
+        const at = view.clientToLocalPoint({ x: event.clientX ?? 0, y: event.clientY ?? 0 })
+        latest.current.onMagic(String(source.id), event.clientX ?? 0, event.clientY ?? 0, {
+          x: Math.round(at.x),
+          y: Math.round(at.y),
+        })
       }
     })
 

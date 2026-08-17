@@ -938,6 +938,12 @@ code {
   font-size: 0.7rem;
 }
 
+/* The Magic Connector's menu: the same list, but it can be long, so it scrolls. */
+.ag-magic ul {
+  max-height: 22rem;
+  overflow-y: auto;
+}
+
 .ag-picker-empty {
   margin: 0.3rem 0 0;
   font-size: 0.8rem;

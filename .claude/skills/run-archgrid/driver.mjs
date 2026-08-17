@@ -514,6 +514,49 @@ async function interactions(page) {
   const edgesAfter = await page.locator('.ag-paper .ag-link').count()
   check('the relationship is drawn', edgesAfter > edgesBefore, `${edgesBefore} -> ${edgesAfter}`)
 
+  // --- the Magic Connector: a line into empty space makes what belongs there ---
+  const before = await page.locator('.ag-paper .ag-node').count()
+  // Downwards, not to the right: Ledger sits near the right edge, and a drop point outside the
+  // window is clamped by the browser, so the check would be measuring the clamp.
+  const from = await nodeAt(ledgerKey).locator('[joint-selector="handle-bottom"]').boundingBox()
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+  await page.mouse.down()
+  const dropX = from.x + from.width / 2
+  const dropY = from.y + 220
+  await page.mouse.move(dropX, dropY, { steps: 16 })
+  await page.mouse.up()
+  await page.waitForTimeout(900)
+  check('dropping a line on empty canvas offers what may follow', (await page.locator('.ag-magic').count()) > 0)
+
+  // Only what the metamodel permits from this source, never the full list of 11.
+  const offered = await page.locator('.ag-magic li button span').allTextContents()
+  check(
+    'the menu offers relationships, not a blank list',
+    offered.length > 0 && offered.length <= 11,
+    offered.join(', '),
+  )
+  await page.locator('.ag-magic li button', { hasText: 'Serving' }).first().click()
+  await page.waitForTimeout(400)
+  await page.locator('.ag-magic li button', { hasText: 'Application Service' }).first().click()
+  await page.waitForTimeout(3500)
+  const after = await page.locator('.ag-paper .ag-node').count()
+  check('it creates the element and the relationship together', after === before + 1, `${before} -> ${after}`)
+
+  // The drop point is where the user said it goes; a tidy grid slot elsewhere ignores the gesture.
+  const madeKey = await keyOf('Application Service')
+  // The body rect, not the node group: the group's box also covers the connection points and the
+  // resize grip, which shifts its centre by most of a handle.
+  const made = await nodeAt(madeKey).locator('.ag-body').boundingBox()
+  // Within a node of the drop, which is the claim worth making: it landed where the gesture
+  // pointed rather than in the next free slot of the tidy grid, which would be far away.
+  check(
+    'the new element lands where the line was dropped',
+    Math.abs(made.x + made.width / 2 - dropX) < 110 && Math.abs(made.y + made.height / 2 - dropY) < 110,
+    `centre ${Math.round(made.x + made.width / 2)},${Math.round(made.y + made.height / 2)} vs drop ${Math.round(dropX)},${Math.round(dropY)}`,
+  )
+  await page.keyboard.press('Escape')
+  await page.screenshot({ path: `${outDir}/33-magic.png` })
+
   report()
 }
 
