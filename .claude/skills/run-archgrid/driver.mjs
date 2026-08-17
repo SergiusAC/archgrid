@@ -194,15 +194,29 @@ async function smoke(page) {
   check('all nodes are inside the viewport after fitView', offscreen === 0, `${offscreen} off-screen`)
 
   // A node hidden behind another looks like it was never created at all, which is a worse
-  // failure than an untidy diagram.
+  // failure than an untidy diagram. Containment is the exception: a container is *supposed* to
+  // have its children drawn on top of it, so a box fully inside a container frame is not a
+  // collision.
   const overlaps = await page.evaluate(() => {
-    const boxes = [...document.querySelectorAll('.ag-node')].map((n) => n.getBoundingClientRect())
+    const nodes = [...document.querySelectorAll('.ag-node')].map((n) => ({
+      box: n.getBoundingClientRect(),
+      container: n.classList.contains('ag-node-container'),
+    }))
+    const encloses = (outer, inner) =>
+      outer.left <= inner.left && outer.top <= inner.top &&
+      outer.right >= inner.right && outer.bottom >= inner.bottom
     let count = 0
-    for (let i = 0; i < boxes.length; i++) {
-      for (let j = i + 1; j < boxes.length; j++) {
-        const a = boxes[i]
-        const b = boxes[j]
-        if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) count++
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i]
+        const b = nodes[j]
+        const intersects =
+          a.box.left < b.box.right && b.box.left < a.box.right &&
+          a.box.top < b.box.bottom && b.box.top < a.box.bottom
+        if (!intersects) continue
+        if (a.container && encloses(a.box, b.box)) continue
+        if (b.container && encloses(b.box, a.box)) continue
+        count++
       }
     }
     return count
@@ -298,12 +312,174 @@ async function smoke(page) {
   )
   await shot('05-explorer')
 
+  report()
+}
+
+function report() {
   const failed = findings.filter((f) => !f.ok)
   log(`--- ${findings.length - failed.length}/${findings.length} checks passed, screenshots in ${outDir}/`)
   if (failed.length > 0) {
     log('LOOK AT THE SCREENSHOTS. A passing count is not the same as a diagram that reads correctly.')
     exit(1)
   }
+}
+
+/**
+ * The canvas gestures, on a view this run creates for itself.
+ *
+ * Separate from `smoke` because these need a known-empty view: resizing, nesting and connecting
+ * all assert on geometry, and a view someone else has already arranged gives numbers that mean
+ * nothing. Every check here stands for a defect that shipped and was found by looking.
+ */
+async function interactions(page) {
+  await signIn(page)
+  log('signed in as', USER)
+  await openRepository(page)
+  mkdirSync(outDir, { recursive: true })
+
+  const viewName = `driver ${process.pid}`
+  page.once('dialog', (dialog) => dialog.accept(viewName))
+  await page.locator('.ag-block-button').first().click()
+  await page.waitForTimeout(2500)
+
+  const addElement = async (label, name) => {
+    await page.getByRole('tab', { name: /^Palette/ }).click()
+    await page.locator('.ag-palette-item', { hasText: new RegExp(`^${label}$`) }).first().click()
+    await page.waitForTimeout(2000)
+    if (await page.locator('.ag-node-name-input').count()) {
+      await page.locator('.ag-node-name-input').fill(name)
+      await page.keyboard.press('Enter')
+      await page.waitForTimeout(2500)
+    }
+  }
+  await addElement('Application Component', 'Payment System')
+  await addElement('Application Component', 'Payment API')
+
+  // --- connection points ---
+  const handles = await page.locator('.ag-node').first().locator('.react-flow__handle').count()
+  check('a node offers a connection point on every side', handles === 4, `${handles} handles`)
+
+  // --- resize, and its survival across a reload ---
+  await page.locator('.ag-node').first().click()
+  await page.waitForTimeout(400)
+  check('selecting an element shows resize handles', (await page.locator('.ag-resize-handle').count()) > 0)
+
+  // Flow units, not screen pixels: fitView changes the zoom, and DOM order is parents-first, so
+  // the node has to be addressed by id to still be the same node after a reload.
+  const resizedId = await page.locator('.react-flow__node').first().getAttribute('data-id')
+  const flowWidth = (id) =>
+    page.evaluate(
+      (key) => parseFloat(document.querySelector(`.react-flow__node[data-id="${key}"]`).style.width),
+      id,
+    )
+  const box = await page.locator('.ag-node').first().boundingBox()
+  await page.mouse.move(box.x + box.width - 2, box.y + box.height - 2)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width + 140, box.y + box.height + 90, { steps: 12 })
+  await page.mouse.up()
+  await page.waitForTimeout(1500)
+  const grown = await flowWidth(resizedId)
+  check('dragging a corner resizes the element', grown > 200, `flow width ${Math.round(grown)}`)
+
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await openRepository(page)
+  await page.locator('.ag-tree-item', { hasText: viewName }).first().click()
+  await page.waitForTimeout(3500)
+  const afterReload = await flowWidth(resizedId)
+  check('the size is persisted', Math.abs(afterReload - grown) < 5, `${Math.round(grown)} -> ${Math.round(afterReload)}`)
+
+  // --- panels ---
+  const sidebarWidth = (await page.locator('.ag-sidebar').boundingBox()).width
+  await page.locator('.ag-splitter-left .ag-splitter-toggle').click()
+  await page.waitForTimeout(400)
+  check('the left panel collapses', (await page.locator('.ag-sidebar').count()) === 0)
+  // A collapsed panel must give its space to the canvas. A grid track left behind when the panel
+  // unmounted shifted the canvas and both splitters one column along, filling the screen.
+  const canvas = await page.locator('.ag-canvas').boundingBox()
+  check('the canvas takes the space the panel gave up', canvas.x < 10 && canvas.width > 1000, `x=${Math.round(canvas.x)} w=${Math.round(canvas.width)}`)
+  await page.locator('.ag-splitter-left .ag-splitter-toggle').click()
+  await page.waitForTimeout(400)
+
+  const splitter = await page.locator('.ag-splitter-left').boundingBox()
+  await page.mouse.move(splitter.x + 3, splitter.y + 300)
+  await page.mouse.down()
+  await page.mouse.move(splitter.x + 150, splitter.y + 300, { steps: 10 })
+  await page.mouse.up()
+  await page.waitForTimeout(400)
+  const widened = (await page.locator('.ag-sidebar').boundingBox()).width
+  check('the left panel resizes by dragging', widened > sidebarWidth + 80, `${Math.round(sidebarWidth)} -> ${Math.round(widened)}`)
+
+  await page.locator('.ag-splitter-right .ag-splitter-toggle').click()
+  await page.waitForTimeout(400)
+  check('the right panel collapses', (await page.locator('.ag-properties').count()) === 0)
+  await page.screenshot({ path: `${outDir}/30-panels.png` })
+
+  // --- nesting ---
+  await page.locator('.ag-splitter-left .ag-splitter-toggle').click()
+  await page.waitForTimeout(300)
+  const nodes = page.locator('.ag-node')
+  const container = await nodes.first().boundingBox()
+  const child = await nodes.nth(1).boundingBox()
+  await page.mouse.move(child.x + child.width / 2, child.y + 12)
+  await page.mouse.down()
+  await page.mouse.move(container.x + container.width / 2, container.y + container.height / 2, { steps: 16 })
+  await page.mouse.up()
+  await page.waitForTimeout(3000)
+  check('dropping one element on another nests it', (await page.locator('.ag-node-container').count()) > 0)
+
+  // React Flow renders nodes as a flat list, so the child is a sibling in the DOM, not a descendant.
+  const frame = await page.locator('.react-flow__node:has(.ag-node-container)').first().boundingBox()
+  const inner = await page.locator('.react-flow__node:not(:has(.ag-node-container))').first().boundingBox()
+  check(
+    'the container frame encloses its child',
+    inner.x >= frame.x - 1 && inner.y >= frame.y - 1 &&
+      inner.x + inner.width <= frame.x + frame.width + 1 &&
+      inner.y + inner.height <= frame.y + frame.height + 1,
+    `child ${Math.round(inner.width)}x${Math.round(inner.height)} in frame ${Math.round(frame.width)}x${Math.round(frame.height)}`,
+  )
+  await page.screenshot({ path: `${outDir}/31-nested.png` })
+
+  // --- drawing a relationship ---
+  await page.locator('.ag-splitter-left .ag-splitter-toggle').click()
+  await page.waitForTimeout(300)
+  await addElement('Application Component', 'Ledger')
+  await page.locator('.ag-splitter-left .ag-splitter-toggle').click()
+  await page.waitForTimeout(500)
+  // A new element must not land on top of an existing one — least of all on its connection
+  // points, which made the element impossible to link to anything.
+  const ledger = await page.locator('.react-flow__node', { hasText: 'Ledger' }).first().boundingBox()
+  const grownFrame = await page.locator('.react-flow__node:has(.ag-node-container)').first().boundingBox()
+  const overlapsContainer =
+    ledger.x < grownFrame.x + grownFrame.width && grownFrame.x < ledger.x + ledger.width &&
+    ledger.y < grownFrame.y + grownFrame.height && grownFrame.y < ledger.y + ledger.height
+  check('a new element avoids the container it would otherwise cover', !overlapsContainer)
+
+  // Access is not permitted between two Application Components, which is the teaching path.
+  await page.locator('select').first().selectOption({ label: 'Access' })
+  await page.waitForTimeout(300)
+  const edgesBefore = await page.locator('.react-flow__edge').count()
+  const handle = await page
+    .locator('.react-flow__node:has(.ag-node-container) .ag-handle-right')
+    .first()
+    .boundingBox()
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2)
+  await page.mouse.down()
+  // Released over the middle of the target, not on its 10px dot: aiming at the element is enough.
+  await page.mouse.move(ledger.x + ledger.width / 2, ledger.y + ledger.height / 2, { steps: 14 })
+  await page.mouse.up()
+  await page.waitForTimeout(1200)
+
+  if (await page.locator('.ag-picker').count()) {
+    const focused = await page.evaluate(() => document.activeElement?.tagName)
+    check('the picker takes focus so a type can be chosen by keyboard', focused === 'BUTTON', `focus on ${focused}`)
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(2500)
+  }
+  await page.screenshot({ path: `${outDir}/32-relationship.png` })
+  const edgesAfter = await page.locator('.react-flow__edge').count()
+  check('the relationship is drawn', edgesAfter > edgesBefore, `${edgesBefore} -> ${edgesAfter}`)
+
+  report()
 }
 
 async function justScreenshot(page) {
@@ -326,10 +502,12 @@ page.on('console', (message) => {
 try {
   if (command === 'smoke') {
     await smoke(page)
+  } else if (command === 'interactions') {
+    await interactions(page)
   } else if (command === 'shot') {
     await justScreenshot(page)
   } else {
-    log(`unknown command '${command}'. Use: smoke | shot`)
+    log(`unknown command '${command}'. Use: smoke | interactions | shot`)
     exit(2)
   }
 } catch (error) {

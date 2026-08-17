@@ -77,7 +77,7 @@ Not two layers, three. This is the most load-bearing decision in the product:
 |---|---|---|
 | Semantic model — elements, relationships, types | Yes, by commit | Transaction + metamodel validation |
 | View definition — viewpoint, membership, filters | Yes, by commit | Transaction |
-| Layout — coordinates, waypoints, styles | No; mutable, optimistic lock | Last-write-wins |
+| Layout — coordinates, sizes, waypoints, styles | No; mutable, optimistic lock | Last-write-wins |
 
 Separating view definition from layout is what keeps the change log meaningful: dragging a
 box must never produce a commit. It is also what makes CRDT viable later for layout only,
@@ -86,6 +86,13 @@ without risking model correctness.
 Consequence to respect in any UI work: **an element exists independently of any diagram.**
 "Remove from this view" and "delete from the model" must stay distinct operations, the second
 showing where else the element is used.
+
+Dropping one element into another on the canvas is the single gesture that crosses the line: the
+containment goes through `move-element` and produces a commit, the coordinates and the container's
+new size do not. Keep those two halves separate — and note the ordering trap, which has already
+cost time: the commit refetches the view, so a debounced layout save still in flight is answered
+with the geometry the server held before the drop. Geometry travels to `saveLayout` as an explicit
+argument for exactly this reason, never read from component state at request time.
 
 ### Changes to a model are commands only (ADR-0004)
 

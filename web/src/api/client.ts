@@ -60,10 +60,11 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
     throw new ApiError(response.status, problem)
   }
 
-  if (response.status === 204) {
-    return undefined as T
-  }
-  return (await response.json()) as T
+  // An empty body, not only a 204: a handler returning void answers 200 with nothing in it, and
+  // calling json() on that throws. Harmless while nobody awaited the result — and the moment one
+  // caller did, the save that had "always worked" started failing the gesture around it.
+  const body = await response.text()
+  return (body ? JSON.parse(body) : undefined) as T
 }
 
 const encode = encodeURIComponent

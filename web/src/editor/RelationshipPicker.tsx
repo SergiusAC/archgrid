@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react'
+
 import type { RelationshipType } from '../api/types.ts'
 
 interface RelationshipPickerProps {
@@ -31,10 +33,36 @@ export default function RelationshipPicker({
   onPick,
   onCancel,
 }: RelationshipPickerProps) {
+  const list = useRef<HTMLDivElement>(null)
+
+  // The picker interrupts a drag, which is a mouse gesture, but it is still a list of options and
+  // arriving here should not mean reaching back for the mouse. Enter takes the first — the one the
+  // metamodel considers most likely — and Escape leaves the connection undrawn.
+  useEffect(() => {
+    list.current?.querySelector('button')?.focus()
+  }, [])
+
+  const onKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === 'Escape') {
+      onCancel()
+      return
+    }
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') {
+      return
+    }
+    event.preventDefault()
+    const buttons = [...(list.current?.querySelectorAll('button') ?? [])]
+    const at = buttons.indexOf(document.activeElement as HTMLButtonElement)
+    const next = event.key === 'ArrowDown' ? at + 1 : at - 1
+    buttons[(next + buttons.length) % buttons.length]?.focus()
+  }
+
   return (
     <>
       <div className="ag-context-backdrop" onClick={onCancel} />
       <div
+        ref={list}
+        onKeyDown={onKeyDown}
         className="ag-picker"
         style={{
           left: Math.min(x, window.innerWidth - 300),

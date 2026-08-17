@@ -19,6 +19,12 @@ function elk(): Promise<ElkInstance> {
 export const NODE_WIDTH = 180
 export const NODE_HEIGHT = 80
 
+/** Breathing room a container keeps around the children it grew to fit. */
+export const NEST_PADDING = 16
+
+/** The strip at the top of a container that its own name occupies, so children start below it. */
+export const NEST_HEADER = 52
+
 /**
  * Auto-layout with ELK's layered algorithm.
  *
@@ -80,8 +86,17 @@ export async function autoLayout(
  * somewhere else — a diagram that silently hides a box behind another is worse than an untidy
  * one, because the element looks like it was never created.
  */
-export function nextFreePosition(taken: Record<string, Position>): Position {
-  const occupied = Object.values(taken)
+export function nextFreePosition(
+  taken: Record<string, Position>,
+  sizes: Record<string, { width: number; height: number }> = {},
+): Position {
+  // Sizes matter, not just positions: a container that grew to hold its children, or any box the
+  // user resized, covers far more than the default. Ignoring that put a new element on top of a
+  // container — and on top of its connection points, so the element could not even be linked.
+  const occupied = Object.entries(taken).map(([key, position]) => ({
+    position,
+    size: sizes[key] ?? { width: NODE_WIDTH, height: NODE_HEIGHT },
+  }))
   const stepX = NODE_WIDTH + 48
   const stepY = NODE_HEIGHT + 48
   const columns = 8
@@ -90,9 +105,11 @@ export function nextFreePosition(taken: Record<string, Position>): Position {
     for (let column = 0; column < columns; column++) {
       const candidate = { x: 40 + column * stepX, y: 40 + row * stepY }
       const clashes = occupied.some(
-        (position) =>
-          Math.abs(position.x - candidate.x) < NODE_WIDTH + 16 &&
-          Math.abs(position.y - candidate.y) < NODE_HEIGHT + 16,
+        ({ position, size }) =>
+          candidate.x < position.x + size.width + 16 &&
+          position.x < candidate.x + NODE_WIDTH + 16 &&
+          candidate.y < position.y + size.height + 16 &&
+          position.y < candidate.y + NODE_HEIGHT + 16,
       )
       if (!clashes) {
         return candidate

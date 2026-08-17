@@ -1,4 +1,10 @@
-import { Handle, Position as HandlePosition, type NodeProps, type Node } from '@xyflow/react'
+import {
+  Handle,
+  NodeResizer,
+  Position as HandlePosition,
+  type Node,
+  type NodeProps,
+} from '@xyflow/react'
 import { useEffect, useRef, useState } from 'react'
 
 import type { Layer } from '../api/types.ts'
@@ -14,11 +20,21 @@ export type ArchimateNodeData = {
   connectState: 'idle' | 'source' | 'valid' | 'invalid'
   /** True right after creation, when the name is still the type's and wants replacing. */
   editing: boolean
+  /** True when this element contains others, so it is drawn as a container. */
+  container: boolean
   onCommitName: (key: string, name: string) => void
   onCancelEdit: () => void
 }
 
 export type ArchimateNode = Node<ArchimateNodeData, 'archimate'>
+
+/** Every side is a connection point, so a line can leave and arrive wherever it reads best. */
+const SIDES = [
+  { id: 'top', position: HandlePosition.Top },
+  { id: 'right', position: HandlePosition.Right },
+  { id: 'bottom', position: HandlePosition.Bottom },
+  { id: 'left', position: HandlePosition.Left },
+] as const
 
 /**
  * One element on the canvas.
@@ -34,13 +50,37 @@ export default function ArchimateNodeView({ data, selected }: NodeProps<Archimat
     `ag-layer-${data.layer}`,
     selected ? 'ag-node-selected' : '',
     `ag-connect-${data.connectState}`,
+    data.container ? 'ag-node-container' : '',
   ]
     .filter(Boolean)
     .join(' ')
 
   return (
     <div className={classes} title={data.typeLabel}>
-      <Handle type="target" position={HandlePosition.Left} className="ag-handle" />
+      {/* A container holds other elements, so it needs room; a leaf still has a sensible floor. */}
+      <NodeResizer
+        isVisible={selected}
+        minWidth={data.container ? 260 : 120}
+        minHeight={data.container ? 160 : 60}
+        lineClassName="ag-resize-line"
+        handleClassName="ag-resize-handle"
+      />
+
+      {/*
+        Four sides rather than two. With ConnectionMode.Loose each of these both starts and
+        receives a connection, so the user drags from whichever edge faces where they are going
+        instead of hunting for the one dot the editor happened to offer.
+      */}
+      {SIDES.map((side) => (
+        <Handle
+          key={side.id}
+          id={side.id}
+          type="source"
+          position={side.position}
+          className={`ag-handle ag-handle-${side.id}`}
+        />
+      ))}
+
       <div className="ag-node-type">
         {data.specialised && <span className="ag-stereotype">«{data.typeLabel}»</span>}
         {!data.specialised && data.typeLabel}
@@ -54,7 +94,6 @@ export default function ArchimateNodeView({ data, selected }: NodeProps<Archimat
       ) : (
         <div className="ag-node-label">{data.label}</div>
       )}
-      <Handle type="source" position={HandlePosition.Right} className="ag-handle" />
     </div>
   )
 }
@@ -63,8 +102,7 @@ export default function ArchimateNodeView({ data, selected }: NodeProps<Archimat
  * Names the element where it sits.
  *
  * A newly created element is named after its type, and sending the user to a side panel to fix
- * that made ten elements cost ten trips across the screen. Every diagram editor names in place;
- * its absence reads as the tool being broken rather than minimal.
+ * that made ten elements cost ten trips across the screen.
  */
 function NameEditor({
   initial,

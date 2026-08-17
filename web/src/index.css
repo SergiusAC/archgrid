@@ -456,14 +456,18 @@ code {
   }
 }
 
-.ag-layer-strategy { background: var(--layer-strategy); }
-.ag-layer-business { background: var(--layer-business); }
-.ag-layer-application { background: var(--layer-application); }
-.ag-layer-technology { background: var(--layer-technology); }
-.ag-layer-physical { background: var(--layer-physical); }
-.ag-layer-motivation { background: var(--layer-motivation); }
-.ag-layer-implementation-migration { background: var(--layer-implementation-migration); }
-.ag-layer-other { background: var(--layer-other); }
+/* Each layer publishes its colour as --layer so a variant can thin it out without losing it. */
+.ag-layer-strategy { --layer: var(--layer-strategy); background: var(--layer); }
+.ag-layer-business { --layer: var(--layer-business); background: var(--layer); }
+.ag-layer-application { --layer: var(--layer-application); background: var(--layer); }
+.ag-layer-technology { --layer: var(--layer-technology); background: var(--layer); }
+.ag-layer-physical { --layer: var(--layer-physical); background: var(--layer); }
+.ag-layer-motivation { --layer: var(--layer-motivation); background: var(--layer); }
+.ag-layer-implementation-migration {
+  --layer: var(--layer-implementation-migration);
+  background: var(--layer);
+}
+.ag-layer-other { --layer: var(--layer-other); background: var(--layer); }
 
 .ag-node-type {
   font-size: 0.65rem;
@@ -891,4 +895,104 @@ code {
 .react-flow__edge.ag-edge-derived .react-flow__edge-text {
   font-style: italic;
   font-size: 9px;
+}
+
+/* ---------------------------------------------------------------- splitters */
+
+.ag-splitter {
+  position: relative;
+  background: var(--line);
+  cursor: col-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ag-splitter:hover {
+  background: var(--accent);
+}
+
+body.ag-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.ag-splitter-toggle {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 5;
+  width: 14px;
+  height: 34px;
+  padding: 0;
+  font-size: 0.7rem;
+  line-height: 1;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.ag-splitter-width {
+  position: absolute;
+  top: 8px;
+  font-size: 0.6rem;
+  color: var(--muted);
+  writing-mode: vertical-rl;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.ag-splitter:hover .ag-splitter-width {
+  opacity: 1;
+}
+
+/* ---------------------------------------------------------------- nodes: sizing and nesting */
+
+.ag-node {
+  width: 100%;
+  height: 100%;
+}
+
+/*
+ * A container is drawn as a frame so its children read as being inside it, not on top of it —
+ * but it keeps its own layer colour, thinned. A grey frame would say the system belongs to no
+ * layer, which is the one thing the colour is there to tell you.
+ */
+.ag-node-container {
+  background: color-mix(in srgb, var(--layer, var(--layer-other)) 35%, var(--surface));
+  border-style: solid;
+  border-width: 2px;
+}
+
+.ag-node-container .ag-node-label {
+  /* The name belongs at the top edge; the middle is where the children go. */
+  align-self: flex-start;
+}
+
+.ag-resize-line {
+  border-color: var(--accent);
+}
+
+.ag-resize-handle {
+  background: var(--accent);
+  border: 1px solid var(--bg);
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+/* Four connection points, invisible until the node is worth connecting. */
+.ag-handle {
+  width: 10px;
+  height: 10px;
+  background: var(--accent);
+  border: 2px solid var(--bg);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.react-flow__node:hover .ag-handle,
+.react-flow__node.selected .ag-handle,
+.ag-connect-valid .ag-handle,
+.ag-connect-source .ag-handle {
+  opacity: 1;
 }

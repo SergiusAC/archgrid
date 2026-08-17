@@ -121,6 +121,40 @@ Screenshots land in `build/ui-check/`. **Open them.** Green checks say the DOM h
 attributes; only the image says the diagram reads correctly. The double-wrapped marker bug
 passed every attribute check that existed at the time.
 
+## Run: the canvas gestures
+
+`smoke` asserts on whatever view it finds. The gestures need known geometry, so they get their
+own mode and their own freshly created view:
+
+```powershell
+node .claude/skills/run-archgrid/driver.mjs interactions
+```
+
+Resizing an element and reloading to prove the size stuck, collapsing and dragging both side
+panels, dropping one element into another to nest it, checking the container frame actually
+encloses its child, and drawing a relationship by releasing over the middle of the target rather
+than on its handle. Verified output:
+
+```
+[archgrid] OK   a node offers a connection point on every side — 4 handles
+[archgrid] OK   dragging a corner resizes the element — flow width 251
+[archgrid] OK   the size is persisted — 251 -> 251
+[archgrid] OK   the left panel collapses
+[archgrid] OK   the canvas takes the space the panel gave up — x=6 w=1300
+[archgrid] OK   the left panel resizes by dragging — 240 -> 390
+[archgrid] OK   the right panel collapses
+[archgrid] OK   dropping one element on another nests it
+[archgrid] OK   the container frame encloses its child — child 360x160 in frame 502x299
+[archgrid] OK   a new element avoids the container it would otherwise cover
+[archgrid] OK   the picker takes focus so a type can be chosen by keyboard — focus on BUTTON
+[archgrid] OK   the relationship is drawn — 0 -> 1
+[archgrid] --- 13/13 checks passed, screenshots in build/ui-check/
+```
+
+Each line there stands for a defect that shipped: a panel that collapsed but left its grid track
+behind and pushed the canvas off screen, a size that saved and was immediately overwritten by the
+refetch, a new element dropped on top of a container's connection points.
+
 Other commands:
 
 ```powershell
@@ -177,6 +211,17 @@ docker compose -f deploy/docker-compose.yml down
   renders — so the diagram looks merely plain rather than broken.
 - **The minimap needs explicit `width`/`height` on nodes.** With CSS-only sizing it renders an
   empty rectangle.
+- **Measure node size in flow units, not screen pixels.** `fitView` picks a zoom to suit the
+  content, so the same node measures differently after a reload. Read `style.width` off
+  `.react-flow__node`, and address the node by `data-id` — DOM order is parents-before-children
+  and does not survive a re-render.
+- **A node's `data-id` comes from its type, not its name.** An element created from the palette
+  gets a key minted from the type ("application-component-7") and renaming never changes it.
+  Locate nodes in tests by their visible label.
+- **React Flow renders nodes as a flat list.** A nested child is a DOM *sibling* of its
+  container, not a descendant, so `.container .child` selectors find nothing.
+- **A container legitimately overlaps its children.** Any "no two nodes overlap" assertion has to
+  exempt a box that fully encloses another.
 - **`deleteKeyCode={null}` is deliberate.** React Flow's built-in delete would remove nodes
   without going through the command pipeline, leaving the canvas disagreeing with the model.
 - **Use `.\gradlew.bat`, not `gradlew.bat`.** PowerShell does not resolve the current directory.
