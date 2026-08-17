@@ -25,13 +25,10 @@ class WorkspaceController {
         return service.listAll().stream().map(WorkspaceResponse::from).toList();
     }
 
-    @GetMapping("/{key}")
-    ResponseEntity<WorkspaceResponse> byKey(@PathVariable String key) {
-        return service.findByKey(Slug.of(key))
-                .map(WorkspaceResponse::from)
-                .map(ResponseEntity::ok)
-                .orElseGet(() -> ResponseEntity.notFound().build());
-    }
+    // GET /api/workspaces/{key} deliberately lives in the model slice, not here. Since ADR-0008
+    // the workspace *is* the repository, so its detail response is the graph summary — name,
+    // head commit and element counts — and having two controllers answer the same path would be
+    // an ambiguous mapping resolved by whichever Spring happened to pick.
 
     /**
      * Wire format for a workspace.

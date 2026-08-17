@@ -27,17 +27,13 @@ final class ModelApiDtos {
 
     private ModelApiDtos() {}
 
-    record CreateModelRequest(
-            @NotBlank @Size(max = 64) String key,
-            @NotBlank @Size(max = 200) String name,
-            @Size(max = 2000) String description) {}
-
-    record ModelResponse(UUID id, String key, String name, String description, UUID headCommitId) {
-
-        static ModelResponse from(ModelRepository.ModelRow row) {
-            return new ModelResponse(row.id(), row.key().value(), row.name(), row.description(), row.headCommitId());
-        }
-    }
+    /**
+     * The workspace's graph.
+     *
+     * <p>Carries no model identifier: a workspace holds exactly one graph, and exposing an id
+     * for it would invite clients to start addressing several (ADR-0008).
+     */
+    record GraphResponse(String workspace, String name, UUID headCommitId, int elements, int relationships) {}
 
     record CommandRequest(
             UUID baseCommitId, @Size(max = 500) String message, @NotEmpty @Valid List<CommandDto> commands) {}

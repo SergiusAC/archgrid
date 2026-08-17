@@ -2,15 +2,14 @@ import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 
+import WorkspacePicker from './WorkspacePicker.tsx'
 import { createApi } from './api/client.ts'
 import Editor from './editor/Editor.tsx'
 import { Metamodel } from './metamodel/Metamodel.ts'
-import ModelPicker from './ModelPicker.tsx'
 
 export default function App() {
   const auth = useAuth()
   const [workspace, setWorkspace] = useState<string | null>(null)
-  const [model, setModel] = useState<string | null>(null)
 
   const token = auth.user?.access_token
   const api = useMemo(() => (token ? createApi(token) : null), [token])
@@ -24,9 +23,9 @@ export default function App() {
   })
 
   const profilesQuery = useQuery({
-    queryKey: ['profiles', workspace, model],
-    enabled: api != null && workspace != null && model != null,
-    queryFn: () => api!.profiles(workspace!, model!),
+    queryKey: ['profiles', workspace],
+    enabled: api != null && workspace != null,
+    queryFn: () => api!.profiles(workspace!),
   })
 
   if (auth.isLoading) {
@@ -60,10 +59,10 @@ export default function App() {
         {metamodelQuery.data && (
           <span className="ag-muted">ArchiMate {metamodelQuery.data.version} compatible</span>
         )}
-        {workspace && model && (
+        {workspace && (
           <span className="ag-breadcrumb">
-            {workspace} / {model}
-            <button type="button" className="ag-link" onClick={() => setModel(null)}>
+            {workspace}
+            <button type="button" className="ag-link" onClick={() => setWorkspace(null)}>
               change
             </button>
           </span>
@@ -83,24 +82,15 @@ export default function App() {
             <p className="muted">Loading the metamodel…</p>
           )}
         </main>
-      ) : workspace && model ? (
+      ) : workspace ? (
         <Editor
           api={api}
           workspace={workspace}
-          model={model}
           metamodel={metamodelQuery.data}
           profiles={profilesQuery.data ?? []}
         />
       ) : (
-        <ModelPicker
-          api={api}
-          workspace={workspace}
-          onWorkspace={setWorkspace}
-          onModel={(workspaceKey, modelKey) => {
-            setWorkspace(workspaceKey)
-            setModel(modelKey)
-          }}
-        />
+        <WorkspacePicker api={api} onPick={setWorkspace} />
       )}
     </div>
   )

@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  * free of feature knowledge. Spring applies both advices; this one is more specific and wins
  * for the exceptions it declares.
  */
-@RestControllerAdvice(assignableTypes = ModelController.class)
+@RestControllerAdvice(assignableTypes = GraphController.class)
 class ModelExceptionHandler {
 
     private static final URI INVALID_MODEL = URI.create("https://archgrid.dev/problems/model-would-be-invalid");

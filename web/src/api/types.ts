@@ -6,12 +6,19 @@ export interface Workspace {
   name: string
 }
 
-export interface Model {
-  id: string
-  key: string
+/**
+ * A workspace's architecture graph.
+ *
+ * There is exactly one per workspace and it carries no identifier of its own — the workspace
+ * is the repository (ADR-0008). Elements are shared across every view of it, which is what
+ * makes "where is this used" answer for the whole landscape rather than for one corner.
+ */
+export interface Graph {
+  workspace: string
   name: string
-  description: string | null
   headCommitId: string | null
+  elements: number
+  relationships: number
 }
 
 export type Layer =

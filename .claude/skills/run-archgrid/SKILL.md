@@ -74,7 +74,7 @@ while ((Get-Date) -lt $deadline) {
 ## Seed a workspace (first run only)
 
 The workspace API is read-only, so the first row goes in by hand. Without it the app shows
-"No workspaces" and the driver stops with instructions:
+"No repositories" and the driver stops with instructions:
 
 ```powershell
 docker exec archgrid-postgres psql -U archgrid -d archgrid -c "insert into workspace (id, ""key"", name) values (gen_random_uuid(), 'default', 'Default workspace') on conflict (""key"") do nothing"
@@ -87,8 +87,7 @@ $env:PLAYWRIGHT_BROWSERS_PATH = "0"
 node .claude/skills/run-archgrid/driver.mjs smoke
 ```
 
-Signs in as `architect`/`architect`, opens the first model (creating one if the workspace is
-empty), and checks: nodes render, every edge carries an arrowhead, every marker reference
+Signs in as `architect`/`architect`, opens the workspace's graph, and checks: nodes render, every edge carries an arrowhead, every marker reference
 resolves, the minimap draws one rectangle per node, nothing sits outside the viewport after
 `fitView`, the right-click menu offers both delete modes and stays on screen, Ctrl+Z and
 Ctrl+Shift+Z work, and Delete removes from the view while offering the element back.
@@ -98,28 +97,35 @@ Verified output:
 ```
 [archgrid] preflight ok: web, api and idp all answering
 [archgrid] signed in as architect
-[archgrid] OK   canvas renders nodes — 5 nodes, 4 edges
-[archgrid] OK   edges carry arrowheads — 4/4
-[archgrid] OK   every marker reference resolves
-[archgrid] OK   minimap draws nodes — 5 of 5
+[archgrid] OK   canvas renders nodes — 3 nodes, 0 edges
+[archgrid] SKIP notation checks - the repository has no relationships
+[archgrid] OK   minimap draws nodes — 3 of 3
 [archgrid] OK   all nodes are inside the viewport after fitView — 0 off-screen
+[archgrid] OK   no two nodes overlap — 0 overlapping pairs
 [archgrid] OK   context menu offers both delete modes
 [archgrid] OK   context menu stays inside the window
-[archgrid] OK   Ctrl+Z undoes a creation — 5 → 6 → 5
-[archgrid] OK   Ctrl+Shift+Z redoes it — 5 → 6
+[archgrid] OK   Ctrl+Z undoes a creation — 3 → 4 → 3
+[archgrid] OK   Ctrl+Shift+Z redoes it — 3 → 4
 [archgrid] OK   Delete removes from the view and offers it back — 2 restorable
-[archgrid] --- 10/10 checks passed, screenshots in build/ui-check/
+[archgrid] OK   renaming from the properties panel reaches the canvas — Renamed 5413
+[archgrid] OK   explorer lists every element in the repository — 4 of 4
+[archgrid] OK   elements off the view offer "add to view" — 1 addable
+[archgrid] OK   explorer search narrows the list — "Renamed 5413" matched 1 of 4
+[archgrid] --- 13/13 checks passed, screenshots in build/ui-check/
 ```
 
-Screenshots land in `build/ui-check/`. **Open them.** Ten green checks say the DOM has the
-right attributes; only the image says the diagram reads correctly. The double-wrapped marker
-bug passed every attribute check that existed at the time.
+The notation checks are skipped on an empty repository, which is a fresh database rather than a
+fault. Build something with relationships to exercise them.
+
+Screenshots land in `build/ui-check/`. **Open them.** Green checks say the DOM has the right
+attributes; only the image says the diagram reads correctly. The double-wrapped marker bug
+passed every attribute check that existed at the time.
 
 Other commands:
 
 ```powershell
 node .claude/skills/run-archgrid/driver.mjs smoke --headed          # watch it happen
-node .claude/skills/run-archgrid/driver.mjs smoke --model demo-2963 # a specific model
+node .claude/skills/run-archgrid/driver.mjs smoke --workspace acme    # a specific repository
 node .claude/skills/run-archgrid/driver.mjs shot --name palette     # one screenshot, no checks
 ```
 
@@ -140,7 +146,7 @@ Faster than the UI when the question is about the model rather than the canvas:
 $d = Invoke-RestMethod "http://localhost:8081/realms/archgrid/.well-known/openid-configuration"
 $t = Invoke-RestMethod -Method Post -Uri $d.token_endpoint -ContentType 'application/x-www-form-urlencoded' -Body @{ grant_type='password'; client_id='archgrid-web'; username='architect'; password='architect'; scope='openid' }
 $H = @{ Authorization = "Bearer " + $t.access_token; "Content-Type" = "application/json" }
-Invoke-RestMethod "http://localhost:8080/api/workspaces/default/models" -Headers $H
+Invoke-RestMethod "http://localhost:8080/api/workspaces/default" -Headers $H
 ```
 
 ## Shut down
@@ -184,6 +190,7 @@ docker compose -f deploy/docker-compose.yml down
 | `error during connect: … dockerDesktopLinuxEngine` | Docker Desktop is not running. Start it and wait ~1 min. |
 | `Bind for 0.0.0.0:5433 failed: port is already allocated` | Another container holds it. `docker ps` to find it, or set `ARCHGRID_DB_PORT`. |
 | Driver exits 2 with "no workspace exists" | Run the seeding statement above. |
+| Flyway fails with `Cannot enforce one graph per workspace` | The database predates ADR-0008 and holds several models in one workspace. Development instance: drop the volume (`docker compose ... down -v`). |
 | Driver exits 2 at preflight | One of the three processes is not up. Check `$env:TEMP\archgrid\boot.log` and `vite.log`. |
 | App loads but every mutation returns 403 | Role mapping. Realm roles are lower case and are upper-cased into authorities; check `RealmRoleGrantedAuthoritiesConverter` and its tests. |
 | Keycloak login form never appears | Realm not imported. `docker compose … down` then `up -d` re-runs `--import-realm`. |

@@ -33,12 +33,11 @@ const nodeTypes = { archimate: ArchimateNodeView }
 interface EditorProps {
   api: Api
   workspace: string
-  model: string
   metamodel: Metamodel
   profiles: Profile[]
 }
 
-export default function Editor({ api, workspace, model, metamodel, profiles }: EditorProps) {
+export default function Editor({ api, workspace, metamodel, profiles }: EditorProps) {
   const queryClient = useQueryClient()
   const [viewpoint, setViewpoint] = useState('layered')
   const [relationshipType, setRelationshipType] = useState('Serving')
@@ -60,20 +59,20 @@ export default function Editor({ api, workspace, model, metamodel, profiles }: E
   const history = useHistoryStore()
 
   const snapshot = useQuery({
-    queryKey: ['model', workspace, model],
+    queryKey: ['graph', workspace],
     queryFn: async () => {
-      const [meta, elements, relationships] = await Promise.all([
-        api.getModel(workspace, model),
-        api.elements(workspace, model),
-        api.relationships(workspace, model),
+      const [graph, elements, relationships] = await Promise.all([
+        api.graph(workspace),
+        api.elements(workspace),
+        api.relationships(workspace),
       ])
-      return { meta, elements, relationships }
+      return { graph, elements, relationships }
     },
   })
 
   const elements = useMemo(() => snapshot.data?.elements ?? [], [snapshot.data])
   const relationships = useMemo(() => snapshot.data?.relationships ?? [], [snapshot.data])
-  const headCommitId = snapshot.data?.meta.headCommitId ?? null
+  const headCommitId = snapshot.data?.graph.headCommitId ?? null
 
   const byKey = useMemo(
     () => Object.fromEntries(elements.map((element) => [element.key, element])) as Record<string, ModelElement>,
@@ -133,13 +132,13 @@ export default function Editor({ api, workspace, model, metamodel, profiles }: E
   const apply = useMutation({
     mutationFn: async ({ commands, label }: { commands: Command[]; label: string }) => {
       const inverse = invert(commands, { elements: byKey, relationships: relationshipsByKey })
-      await api.applyCommands(workspace, model, { baseCommitId: headCommitId, message: label, commands })
+      await api.applyCommands(workspace, { baseCommitId: headCommitId, message: label, commands })
       return { inverse, commands, label }
     },
     onSuccess: async ({ inverse, commands, label }) => {
       history.push({ forward: commands, inverse, label })
       setMessage(null)
-      await queryClient.invalidateQueries({ queryKey: ['model', workspace, model] })
+      await queryClient.invalidateQueries({ queryKey: ['graph', workspace] })
     },
     onError: (error: unknown) => setMessage({ kind: 'error', text: describe(error) }),
   })
@@ -148,16 +147,16 @@ export default function Editor({ api, workspace, model, metamodel, profiles }: E
   const applySilently = useCallback(
     async (commands: Command[], label: string) => {
       try {
-        await api.applyCommands(workspace, model, { baseCommitId: headCommitId, message: label, commands })
+        await api.applyCommands(workspace, { baseCommitId: headCommitId, message: label, commands })
         setMessage(null)
-        await queryClient.invalidateQueries({ queryKey: ['model', workspace, model] })
+        await queryClient.invalidateQueries({ queryKey: ['graph', workspace] })
         return true
       } catch (error) {
         setMessage({ kind: 'error', text: describe(error) })
         return false
       }
     },
-    [api, workspace, model, headCommitId, queryClient],
+    [api, workspace, headCommitId, queryClient],
   )
 
   const nodes: ArchimateNode[] = useMemo(
@@ -450,7 +449,7 @@ export default function Editor({ api, workspace, model, metamodel, profiles }: E
             className={sidebar === 'model' ? 'ag-tab ag-tab-active' : 'ag-tab'}
             onClick={() => setSidebar('model')}
           >
-            Model ({elements.length})
+            Repository ({elements.length})
           </button>
         </div>
 

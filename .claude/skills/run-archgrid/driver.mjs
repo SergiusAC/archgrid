@@ -2,7 +2,7 @@
 /**
  * ArchGrid UI driver.
  *
- * Signs in through Keycloak, opens a model, and drives the editor. Exists because three real
+ * Signs in through Keycloak, opens the workspace's graph, and drives the editor. Exists because three real
  * defects — arrowheads that never rendered, an empty minimap, a context menu falling off the
  * window edge — were invisible to `tsc`, to oxlint and to all 55 server tests. The only thing
  * that finds that class of bug is opening the app and looking.
@@ -10,7 +10,7 @@
  * Usage, from the repository root:
  *
  *   node .claude/skills/run-archgrid/driver.mjs smoke
- *   node .claude/skills/run-archgrid/driver.mjs smoke --headed --model demo
+ *   node .claude/skills/run-archgrid/driver.mjs smoke --headed --workspace acme
  *   node .claude/skills/run-archgrid/driver.mjs shot --name my-check
  *
  * Requires PLAYWRIGHT_BROWSERS_PATH=0 — Chromium lives under web/node_modules, not in the
@@ -34,7 +34,7 @@ const args = argv.slice(2)
 const command = args[0] ?? 'smoke'
 const headed = args.includes('--headed')
 const outDir = valueOf('--out') ?? 'build/ui-check'
-const wantedModel = valueOf('--model')
+const wantedWorkspace = valueOf('--workspace')
 const shotName = valueOf('--name') ?? 'shot'
 
 function valueOf(flag) {
@@ -83,28 +83,33 @@ async function signIn(page) {
   await page.waitForURL(new RegExp(WEB.replace(/^https?:\/\//, '').replace('.', '\\.')), { timeout: 30_000 })
 }
 
-async function openModel(page) {
-  await page.waitForSelector('text=Models', { timeout: 20_000 }).catch(() => {})
+/**
+ * Opens the workspace's graph.
+ *
+ * A workspace is the repository and holds exactly one graph (ADR-0008), so there is nothing to
+ * pick or create once inside — a single workspace lands straight in the editor.
+ */
+async function openRepository(page) {
+  // A single workspace auto-selects, but only once the list has loaded — so give the canvas a
+  // chance to appear before concluding that someone has to pick. Checking immediately raced the
+  // auto-select and looked for a chooser that was about to disappear.
+  const straightIn = await page.waitForSelector('.ag-canvas', { timeout: 10_000 }).catch(() => null)
 
-  if (await page.locator('text=No workspaces').count()) {
-    log('FAIL no workspace exists. The workspace API is read-only; seed one:')
-    log('     docker exec archgrid-postgres psql -U archgrid -d archgrid \\')
-    log('       -c "insert into workspace (id, \\"key\\", name) values (gen_random_uuid(), \'default\', \'Default\')"')
-    exit(2)
+  if (!straightIn) {
+    if (await page.locator('text=No repositories').count()) {
+      log('FAIL no workspace exists. Creating one is not exposed yet; seed it:')
+      log('     docker exec archgrid-postgres psql -U archgrid -d archgrid \\')
+      log('       -c "insert into workspace (id, \\"key\\", name) values (gen_random_uuid(), \'default\', \'Default\')"')
+      exit(2)
+    }
+    const chips = page.locator('.ag-chiprow .ag-chip')
+    if (wantedWorkspace) {
+      await chips.filter({ hasText: wantedWorkspace }).first().click()
+    } else {
+      await chips.first().click()
+    }
+    await page.waitForSelector('.ag-canvas', { timeout: 20_000 })
   }
-
-  const links = page.locator('.shell ul li button.ag-link')
-  const count = await links.count()
-  if (wantedModel) {
-    await links.filter({ hasText: wantedModel }).first().click()
-  } else if (count > 0) {
-    await links.first().click()
-  } else {
-    await page.fill('input[aria-label="New model name"]', 'UI check')
-    await page.getByRole('button', { name: 'Create' }).click()
-  }
-
-  await page.waitForSelector('.ag-canvas', { timeout: 20_000 })
   // Auto-layout resolves asynchronously through ELK, then the view refits. Asserting before
   // that settles gives node counts that are right and positions that are all zero.
   await page.waitForTimeout(3000)
@@ -113,14 +118,14 @@ async function openModel(page) {
 async function smoke(page) {
   await signIn(page)
   log('signed in as', USER)
-  await openModel(page)
+  await openRepository(page)
 
   mkdirSync(outDir, { recursive: true })
   const shot = (name) => page.screenshot({ path: `${outDir}/${name}.png` })
 
   let nodes = await page.locator('.ag-node').count()
   if (nodes === 0) {
-    log('model is empty, adding two elements so there is something to look at')
+    log('repository is empty, adding two elements so there is something to look at')
     for (const label of ['Application Component', 'System Software']) {
       await page.locator('.ag-palette-item', { hasText: new RegExp(`^${label}$`) }).first().click()
       await page.waitForTimeout(1500)
@@ -153,7 +158,7 @@ async function smoke(page) {
     // draws. Nothing looks broken until you read the DOM.
     check('every marker reference resolves', markers.unresolved.length === 0, markers.unresolved.join(', '))
   } else {
-    log('SKIP notation checks — model has no relationships')
+    log('SKIP notation checks - the repository has no relationships')
   }
 
   // --- minimap ---
@@ -247,7 +252,7 @@ async function smoke(page) {
   await shot('04-properties')
 
   // --- explorer lists the whole model, including what is off the view ---
-  await page.getByRole('tab', { name: /^Model/ }).click()
+  await page.getByRole('tab', { name: /^Repository/ }).click()
   await page.waitForSelector('.ag-explorer', { timeout: 5000 })
   const explorer = await page.evaluate(() => ({
     items: document.querySelectorAll('.ag-explorer-item').length,
@@ -256,13 +261,20 @@ async function smoke(page) {
   const modelSize = await page.evaluate(
     () => Number(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.match(/\d+/)?.[0] ?? 0),
   )
-  check('explorer lists every element in the model', explorer.items === modelSize, `${explorer.items} of ${modelSize}`)
+  check('explorer lists every element in the repository', explorer.items === modelSize, `${explorer.items} of ${modelSize}`)
   check('elements off the view offer "add to view"', explorer.addable > 0, `${explorer.addable} addable`)
 
-  await page.locator('.ag-explorer input').fill('kafka')
+  // Search for the name this run just set, rather than for something the repository may or may
+  // not contain — a check that depends on pre-existing data reports a product defect when the
+  // only thing wrong is an empty database.
+  await page.locator('.ag-explorer input').fill(renamed)
   await page.waitForTimeout(400)
   const filtered = await page.locator('.ag-explorer-item').count()
-  check('explorer search narrows the list', filtered > 0 && filtered < explorer.items, `${filtered} match`)
+  check(
+    'explorer search narrows the list',
+    filtered > 0 && filtered < explorer.items,
+    `"${renamed}" matched ${filtered} of ${explorer.items}`,
+  )
   await shot('05-explorer')
 
   const failed = findings.filter((f) => !f.ok)
@@ -275,7 +287,7 @@ async function smoke(page) {
 
 async function justScreenshot(page) {
   await signIn(page)
-  await openModel(page)
+  await openRepository(page)
   mkdirSync(outDir, { recursive: true })
   await page.screenshot({ path: `${outDir}/${shotName}.png` })
   log(`screenshot written to ${outDir}/${shotName}.png`)

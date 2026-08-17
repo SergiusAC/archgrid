@@ -10,9 +10,12 @@ principle, from which most design decisions follow:
 > The architecture graph is the source of truth. Diagrams are views of it, documentation is
 > a projection of it, AI proposes changes to it and never writes to it directly.
 
-The project is at **phase 0 (foundation) complete** on a nine-phase plan. There is no
-metamodel and no editor yet. Before proposing work, read `docs/03-roadmap.md` to see which
-phase the request belongs to — much of what looks "missing" is deliberately deferred.
+The project is at **phase 3 (editor) in progress** on a nine-phase plan: foundation, the
+ArchiMate metamodel, the command pipeline and a working canvas exist; views, history UI,
+import, AI and enterprise readiness do not. Before proposing work, read `docs/03-roadmap.md`
+to see which phase the request belongs to — much of what looks "missing" is deliberately
+deferred. `docs/04-domain-model.md` explains the entities and, in particular, the four levels
+of "type-ness" that are easy to conflate.
 
 Decisions are recorded in `docs/adr/`. `docs/01-tech-stack-review.md` explains what was
 rejected from the original idea and why. Do not re-introduce a rejected component without
@@ -96,6 +99,18 @@ product's value. `ApiExceptionHandler` establishes the RFC 9457 shape for that.
 
 `commit_id` already exists in the schema even though history UI arrives in phase 5.
 Retrofitting versioning later would mean rewriting every query.
+
+### The workspace is the repository (ADR-0008)
+
+A workspace holds **exactly one connected graph**, enforced by `unique (workspace_id)` on
+`model` since V4. Elements are shared by every view of it; there is no model segment in the
+API and nothing for a user to create or name below the workspace. The many named things an
+architect makes are views, arriving in phase 4.
+
+This corrects an earlier design that allowed several models per workspace. The damage was not
+the missing reuse — it was that "where is this used", impact analysis and the phase 6 drift
+report would have answered from inside one model and been silently wrong about the rest of the
+landscape. Do not reintroduce a model selector.
 
 ### Persistence
 

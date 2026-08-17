@@ -2,8 +2,8 @@ import type {
   Commit,
   CommitResult,
   CommandRequest,
+  Graph,
   MetamodelDto,
-  Model,
   ModelElement,
   ModelRelationship,
   ProblemDetail,
@@ -71,35 +71,22 @@ export function createApi(token: string) {
     /** Cached hard by the server; the whole language including the permitted matrix. */
     metamodel: () => request<MetamodelDto>('/api/metamodel', token),
 
-    listModels: (workspace: string) => request<Model[]>(`/api/workspaces/${encode(workspace)}/models`, token),
+    /** The workspace's graph: name, head commit and how much is in it. Provisioned on first read. */
+    graph: (workspace: string) => request<Graph>(`/api/workspaces/${encode(workspace)}`, token),
 
-    createModel: (workspace: string, body: { key: string; name: string; description?: string }) =>
-      request<Model>(`/api/workspaces/${encode(workspace)}/models`, token, {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }),
+    elements: (workspace: string) =>
+      request<ModelElement[]>(`/api/workspaces/${encode(workspace)}/elements`, token),
 
-    getModel: (workspace: string, model: string) =>
-      request<Model>(`/api/workspaces/${encode(workspace)}/models/${encode(model)}`, token),
+    relationships: (workspace: string) =>
+      request<ModelRelationship[]>(`/api/workspaces/${encode(workspace)}/relationships`, token),
 
-    elements: (workspace: string, model: string) =>
-      request<ModelElement[]>(`/api/workspaces/${encode(workspace)}/models/${encode(model)}/elements`, token),
+    profiles: (workspace: string) => request<Profile[]>(`/api/workspaces/${encode(workspace)}/profiles`, token),
 
-    relationships: (workspace: string, model: string) =>
-      request<ModelRelationship[]>(
-        `/api/workspaces/${encode(workspace)}/models/${encode(model)}/relationships`,
-        token,
-      ),
+    commits: (workspace: string) => request<Commit[]>(`/api/workspaces/${encode(workspace)}/commits`, token),
 
-    profiles: (workspace: string, model: string) =>
-      request<Profile[]>(`/api/workspaces/${encode(workspace)}/models/${encode(model)}/profiles`, token),
-
-    commits: (workspace: string, model: string) =>
-      request<Commit[]>(`/api/workspaces/${encode(workspace)}/models/${encode(model)}/commits`, token),
-
-    /** The only call that changes a model. Everything else here reads. */
-    applyCommands: (workspace: string, model: string, body: CommandRequest) =>
-      request<CommitResult>(`/api/workspaces/${encode(workspace)}/models/${encode(model)}/commands`, token, {
+    /** The only call that changes the graph. Everything else here reads. */
+    applyCommands: (workspace: string, body: CommandRequest) =>
+      request<CommitResult>(`/api/workspaces/${encode(workspace)}/commands`, token, {
         method: 'POST',
         body: JSON.stringify(body),
       }),
