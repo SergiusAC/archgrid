@@ -72,6 +72,10 @@ export function createApi(token: string) {
   return {
     listWorkspaces: () => request<Workspace[]>('/api/workspaces', token),
 
+    /** Admin-only: a repository is a tenancy boundary with its own history and access control. */
+    createWorkspace: (body: { key: string; name: string }) =>
+      request<Workspace>('/api/workspaces', token, { method: 'POST', body: JSON.stringify(body) }),
+
     /** Cached hard by the server; the whole language including the permitted matrix. */
     metamodel: () => request<MetamodelDto>('/api/metamodel', token),
 

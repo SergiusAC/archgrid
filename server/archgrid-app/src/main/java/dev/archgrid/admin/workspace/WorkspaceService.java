@@ -29,4 +29,14 @@ public class WorkspaceService {
     public Optional<Workspace> findByKey(Slug key) {
         return repository.findByKey(key);
     }
+
+    /**
+     * Creates a repository. Its graph is provisioned on first read, so nothing else is set up
+     * here — a workspace that exists but has never been opened is a perfectly valid state.
+     */
+    @Transactional
+    Workspace create(Slug key, String name) {
+        repository.create(key, name);
+        return repository.findByKey(key).orElseThrow();
+    }
 }

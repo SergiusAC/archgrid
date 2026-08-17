@@ -10,6 +10,9 @@ import { Metamodel } from './metamodel/Metamodel.ts'
 export default function App() {
   const auth = useAuth()
   const [workspace, setWorkspace] = useState<string | null>(null)
+  // Distinguishes "nothing chosen yet" from "chose to switch": with one repository the picker
+  // auto-selects, and without this the switch link would bounce straight back in.
+  const [switching, setSwitching] = useState(false)
 
   const token = auth.user?.access_token
   const api = useMemo(() => (token ? createApi(token) : null), [token])
@@ -90,7 +93,14 @@ export default function App() {
           profiles={profilesQuery.data ?? []}
         />
       ) : (
-        <WorkspacePicker api={api} onPick={setWorkspace} />
+        <WorkspacePicker
+          api={api}
+          explicit={switching}
+          onPick={(key) => {
+            setWorkspace(key)
+            setSwitching(false)
+          }}
+        />
       )}
     </div>
   )

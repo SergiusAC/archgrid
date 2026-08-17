@@ -41,7 +41,7 @@
       "firstName": "Ada",
       "lastName": "Architect",
       "credentials": [{ "type": "password", "value": "architect", "temporary": false }],
-      "realmRoles": ["viewer", "contributor", "owner"]
+      "realmRoles": ["viewer", "contributor", "owner", "admin"]
     },
     {
       "username": "reader",

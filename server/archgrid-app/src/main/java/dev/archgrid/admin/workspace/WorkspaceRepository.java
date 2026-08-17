@@ -40,6 +40,14 @@ class WorkspaceRepository {
                 .optional();
     }
 
+    void create(Slug key, String name) {
+        jdbc.sql("insert into workspace (id, \"key\", name) values (:id, :key, :name)")
+                .param("id", java.util.UUID.randomUUID())
+                .param("key", key.value())
+                .param("name", name)
+                .update();
+    }
+
     private static Workspace mapRow(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
         return new Workspace(
                 WorkspaceId.of(rs.getObject("id", UUID.class)),
