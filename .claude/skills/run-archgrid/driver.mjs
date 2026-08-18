@@ -378,17 +378,36 @@ async function interactions(page) {
       label,
     )
   const nodeAt = (key) => page.locator(`.ag-paper .ag-node[data-key="${key}"]`)
+  /*
+   * Clicks an element with the mouse rather than through the locator.
+   *
+   * Playwright's actionability check refuses a click whose point is covered by anything — and a
+   * container is covered by the element nested in it, which is the normal state of a diagram. The
+   * mouse is what a person uses, and JointJS reads the same event either way.
+   */
+  const clickNode = async (key, where = 'corner') => {
+    const box = await nodeAt(key).locator('.ag-body').boundingBox()
+    await page.mouse.click(
+      where === 'corner' ? box.x + 14 : box.x + box.width / 2,
+      where === 'corner' ? box.y + 12 : box.y + box.height / 2,
+    )
+  }
+
   const system = await keyOf('Payment System')
   const api = await keyOf('Payment API')
 
-  // --- connection points ---
-  const handles = await nodeAt(system).locator('.ag-handle').count()
-  check('a node offers a connection point on every side', handles === 4, `${handles} handles`)
+  // --- no handles on the element: connecting is a tool, as in Archi ---
+  check('an element carries no connection dots', (await page.locator('.ag-paper .ag-handle').count()) === 0)
 
   // --- resize, and its survival across a reload ---
-  await nodeAt(system).click()
+  await clickNode(system)
   await page.waitForTimeout(400)
-  check('selecting an element shows resize handles', (await page.locator('.ag-resize-handle').count()) > 0)
+  // Eight, as Archi has: one corner grip means widening a box on the left is two operations.
+  check(
+    'selecting an element shows all eight resize grips',
+    (await page.locator('.ag-resize-handle').count()) === 8,
+    `${await page.locator('.ag-resize-handle').count()} grips`,
+  )
 
   // Model units, not screen pixels: the fit picks a zoom to suit the content, so the same element
   // measures differently after a reload.
@@ -401,8 +420,8 @@ async function interactions(page) {
         ),
       id,
     )
-  // The grip itself, rather than a guess at where the corner is.
-  const grip = await page.locator('.ag-resize-handle').first().boundingBox()
+  // The bottom-right grip by name: the grips are in a fixed order and the first one shrinks.
+  const grip = await page.locator('.ag-resize-handle[data-grip="bottom-right"]').boundingBox()
   await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
   await page.mouse.down()
   await page.mouse.move(grip.x + 220, grip.y + 140, { steps: 12 })
@@ -511,12 +530,11 @@ async function interactions(page) {
   await page.locator('select').first().selectOption({ label: 'Access' })
   await page.waitForTimeout(300)
   const edgesBefore = await page.locator('.ag-paper .ag-link').count()
-  const handle = await nodeAt(system).locator('[joint-selector="handle-right"]').boundingBox()
-  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2)
-  await page.mouse.down()
-  // Released over the middle of the target, not on its 10px dot: aiming at the element is enough.
-  await page.mouse.move(ledger.x + ledger.width / 2, ledger.y + ledger.height / 2, { steps: 14 })
-  await page.mouse.up()
+  // Click the tool, click the source, click the target — Archi's sequence.
+  await page.getByRole('button', { name: /^Connect/ }).click()
+  await clickNode(system)
+  await page.waitForTimeout(300)
+  await clickNode(ledgerKey, 'centre')
   await page.waitForTimeout(1200)
 
   if (await page.locator('.ag-picker').count()) {
@@ -531,15 +549,14 @@ async function interactions(page) {
 
   // --- the Magic Connector: a line into empty space makes what belongs there ---
   const before = await page.locator('.ag-paper .ag-node').count()
-  // Downwards, not to the right: Ledger sits near the right edge, and a drop point outside the
-  // window is clamped by the browser, so the check would be measuring the clamp.
-  const from = await nodeAt(ledgerKey).locator('[joint-selector="handle-bottom"]').boundingBox()
-  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
-  await page.mouse.down()
+  // The connector tool again, but the second click lands on empty canvas.
+  const from = await nodeAt(ledgerKey).locator('.ag-body').boundingBox()
+  await page.getByRole('button', { name: /^Connect/ }).click()
+  await clickNode(ledgerKey, 'centre')
+  await page.waitForTimeout(300)
   const dropX = from.x + from.width / 2
   const dropY = from.y + 220
-  await page.mouse.move(dropX, dropY, { steps: 16 })
-  await page.mouse.up()
+  await page.mouse.click(dropX, dropY)
   await page.waitForTimeout(900)
   check('dropping a line on empty canvas offers what may follow', (await page.locator('.ag-magic').count()) > 0)
 
@@ -596,8 +613,10 @@ async function interactions(page) {
         if (n.length < 4) return 'none'
         const [x1, y1] = n
         const [x2, y2] = n.slice(-2)
-        if (Math.abs(x1 - x2) < 0.5) return 'vertical'
-        if (Math.abs(y1 - y2) < 0.5) return 'horizontal'
+        // A unit and a half, not half a unit: a click's position comes from screen coordinates
+        // through the zoom, so two elements the eye reads as aligned can differ by a fraction.
+        if (Math.abs(x1 - x2) < 1.5) return 'vertical'
+        if (Math.abs(y1 - y2) < 1.5) return 'horizontal'
         return 'diagonal'
       }),
   )
@@ -695,13 +714,18 @@ async function interactions(page) {
     shapes.every((shape) => shape.icon > 0),
     `${shapes.filter((s) => s.icon > 0).length} of ${shapes.length}`,
   )
-  // A service is a pill and a component is a box. If both come back square, the shape vocabulary
-  // is not being applied and the diagram has quietly become a flowchart again.
+  /*
+   * Every element is a rectangle and the glyph says what it is, which is Archi's default figure.
+   *
+   * An earlier version varied the outline — a pill for services, rounded for behaviour. It reads
+   * as a different *kind* of thing rather than a different type of the same thing, and Archi does
+   * not do it. This check exists so the vocabulary does not creep back in.
+   */
   const service = shapes.find((shape) => shape.name === 'Application Service')
   const component = shapes.find((shape) => shape.name === 'Payment System')
   check(
-    'a service is drawn as a pill, a component as a box',
-    service && component && service.radius > component.radius + 20,
+    'a service and a component are drawn as the same rectangle',
+    service && component && service.radius <= 4 && component.radius <= 4,
     `service rx=${service?.radius}, component rx=${component?.radius}`,
   )
   await page.screenshot({ path: `${outDir}/34-notation.png` })

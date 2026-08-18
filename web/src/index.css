@@ -1038,3 +1038,36 @@ body.ag-resizing {
   stroke-dasharray: 4 3;
   vector-effect: non-scaling-stroke;
 }
+
+/* The selected relationship, so deleting one is aimed rather than hoped. */
+.ag-link-selected {
+  color: var(--accent);
+}
+
+.ag-link-selected .ag-link-line {
+  stroke-width: 2.6;
+}
+
+/* The connector tool: on, and aiming. */
+.ag-tool-active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.ag-connecting .ag-paper {
+  cursor: crosshair;
+}
+
+.ag-node-connect-source .ag-body {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  stroke-dasharray: 5 3;
+}
+
+/* Labels are for reading, not for hitting: the click belongs to the element under them. */
+.ag-node-label,
+.ag-node-type {
+  pointer-events: none;
+  user-select: none;
+}

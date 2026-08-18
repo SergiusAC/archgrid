@@ -1,39 +1,26 @@
 /**
- * The shape vocabulary of ArchiMate: body outline and the type glyph in the corner.
+ * The type glyph that goes in an element's top-right corner.
  *
- * Half of what the notation carries is geometric. A reader tells a service from a component
- * before reading a single word, because one is a rounded pill and the other a box with two tabs.
- * Drawing every concept as the same rectangle throws that away and leaves a flowchart.
- *
- * The glyph is chosen by the *kind* of concept, not by its layer, which is how ArchiMate itself
- * works: Business Service, Application Service and Technology Service share one icon and differ
- * only in colour.
+ * Archi draws every element as a rectangle and lets the icon say what it is, and that is what we
+ * do. The glyph is chosen by the *kind* of concept, not by its layer, which is how ArchiMate
+ * itself works: Business Service, Application Service and Technology Service share one icon and
+ * differ only in colour.
  */
 
-export type BodyShape = 'sharp' | 'rounded' | 'stadium' | 'dot'
+export type BodyShape = 'sharp' | 'dot'
 
 /**
- * Behaviour is rounded, structure is square, a service is a pill, a junction is a dot.
+ * Every element is a rectangle with its glyph in the corner, which is Archi's default figure.
  *
- * Motivation elements are octagons in the specification; they are drawn rounded here until the
- * body can be a polygon, and that is a known gap rather than a decision.
+ * An earlier version varied the outline — rounded for behaviour, a pill for services. It is
+ * defensible from the specification's figures, but it is not what Archi draws, and a landscape
+ * where a service reads as a different *kind* of thing from a component is harder to scan, not
+ * easier. The glyph already says which it is.
+ *
+ * A junction is the exception: it is a connector, not a box.
  */
 export function bodyShape(concept: string): BodyShape {
-  if (concept === 'Junction') {
-    return 'dot'
-  }
-  if (concept.endsWith('Service')) {
-    return 'stadium'
-  }
-  if (
-    concept.endsWith('Process') ||
-    concept.endsWith('Function') ||
-    concept.endsWith('Interaction') ||
-    concept.endsWith('Event')
-  ) {
-    return 'rounded'
-  }
-  return 'sharp'
+  return concept === 'Junction' ? 'dot' : 'sharp'
 }
 
 /**

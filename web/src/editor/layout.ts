@@ -19,6 +19,15 @@ function elk(): Promise<ElkInstance> {
 export const NODE_WIDTH = 180
 export const NODE_HEIGHT = 80
 
+/**
+ * The one grid everything steps by: moving, resizing and placing.
+ *
+ * Archi uses a single step for all three, and that is what keeps a diagram aligned without
+ * anybody aligning it. Two of ours snapped and creation did not, so a new element landed a
+ * fraction off and the line to it was a hair from vertical.
+ */
+export const GRID = 10
+
 /** Breathing room a container keeps around the children it grew to fit. */
 export const NEST_PADDING = 16
 
@@ -97,8 +106,9 @@ export function nextFreePosition(
     position,
     size: sizes[key] ?? { width: NODE_WIDTH, height: NODE_HEIGHT },
   }))
-  const stepX = NODE_WIDTH + 48
-  const stepY = NODE_HEIGHT + 48
+  // Multiples of the grid, so anything placed here lines up with anything dragged.
+  const stepX = 240
+  const stepY = 130
   const columns = 8
 
   for (let row = 0; row < 500; row++) {

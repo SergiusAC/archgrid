@@ -2,7 +2,7 @@ import * as joint from '@joint/core'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { ConnectionRouter, Layer } from '../api/types.ts'
-import { NEST_PADDING } from './layout.ts'
+import { GRID, NEST_PADDING } from './layout.ts'
 import { notationFor } from './notation.ts'
 import { bodyShape, iconFor, iconPlacement } from './shapes.ts'
 import type { Position } from './store.ts'
@@ -45,6 +45,9 @@ interface CanvasProps {
   /** The element whose name is being typed in place, straight after creation. */
   editingKey: string | null
   onSelect: (keys: string[]) => void
+  /** The relationship the user has picked, so it can be inspected or deleted. */
+  onSelectLink: (key: string | null) => void
+  selectedLink: string | null
   /** Fired continuously while dragging or resizing; the caller debounces the save. */
   onGeometry: (geometry: Geometry) => void
   onGeometryStart: () => void
@@ -56,14 +59,23 @@ interface CanvasProps {
    * layout save still in flight would be answered with what the server held before the drop.
    */
   onNest: (key: string, parent: string | null, geometry: Geometry) => void
-  onConnect: (source: string, target: string) => void
   /**
-   * A line dragged into empty space. The gesture says "from here, something follows" — the editor
-   * answers with what may follow, and creates the element and the relationship together.
+   * Connecting is a tool, not a handle on the element.
+   *
+   * Archi has no dots on the edges of a box: you pick the connector from the palette, click the
+   * source and click the target. Handles put the mechanism of drawing lines on every element,
+   * whether or not anyone is drawing one, and made a hover over a box look like an invitation to
+   * do something other than read it.
+   */
+  connecting: boolean
+  /** The element clicked first while the connector tool is active. */
+  connectFrom: string | null
+  onConnectPick: (key: string) => void
+  /**
+   * The connector tool clicked on empty canvas. The gesture says "from here, something follows" —
+   * the editor answers with what may follow, and creates the element and the relationship.
    */
   onMagic: (source: string, clientX: number, clientY: number, at: Position) => void
-  /** Looser than "the type on the toolbar fits": anything at all between these two allows a drop. */
-  canConnect: (source: string, target: string) => boolean
   onContextMenu: (key: string, clientX: number, clientY: number) => void
   onBlankClick: () => void
   onCommitName: (key: string, name: string) => void
@@ -86,10 +98,15 @@ interface CanvasProps {
 
 const MIN_WIDTH = 120
 const MIN_HEIGHT = 60
-const GRID = 10
 
-/** How near counts as aligned, in model units. */
-const GUIDE_TOLERANCE = 6
+/**
+ * How near counts as aligned, in model units.
+ *
+ * Wider than the grid step on purpose. Dragging snaps to the grid first, so an element can only
+ * land on multiples of it — with a tolerance below the step, a near-miss is always exactly one
+ * step away and the guide never fires. The guide has to be able to reach across it.
+ */
+const GUIDE_TOLERANCE = 12
 
 /** The six lines of a box worth lining up with, and how to read each one. */
 const GUIDE_AXES = [
@@ -109,22 +126,6 @@ const GUIDE_AXES = [
  * worse diagram than one that never nested at all.
  */
 const CONTAINER_INSET = { top: 60, left: NEST_PADDING, right: NEST_PADDING, bottom: NEST_PADDING }
-
-/**
- * Every side is a connection point, so a line can leave from whichever edge faces where it is
- * going. They start a connection; the body of any element receives one.
- *
- * Positions are JointJS calc() expressions, never SVG percentages: a percentage on `cx` resolves
- * against the *viewport*, not the element, so the handles fly off to the middle of the canvas,
- * silently inflate every element's bounding box, and every line is then drawn to that phantom
- * box instead of to the element.
- */
-const SIDES = [
-  { id: 'top', x: 'calc(0.5*w)', y: 0 },
-  { id: 'right', x: 'calc(w)', y: 'calc(0.5*h)' },
-  { id: 'bottom', x: 'calc(0.5*w)', y: 'calc(h)' },
-  { id: 'left', x: 0, y: 'calc(0.5*h)' },
-] as const
 
 /**
  * An ArchiMate box: the type in small caps at the top, the name below it, both inside the shape.
@@ -152,15 +153,15 @@ const ArchimateShape = joint.dia.Element.define(
         y: 14,
         textAnchor: 'middle',
         textVerticalAnchor: 'top',
-        fontSize: 9,
-        letterSpacing: 0.4,
+        fontSize: 8,
+        letterSpacing: 0.3,
         class: 'ag-node-type',
       },
       name: {
         x: 'calc(0.5*w)',
         textAnchor: 'middle',
-        fontSize: 12,
-        fontWeight: 600,
+        fontSize: 11,
+        fontWeight: 400,
         class: 'ag-node-label',
       },
       icon: { class: 'ag-node-icon' },
@@ -172,7 +173,6 @@ const ArchimateShape = joint.dia.Element.define(
       { tagName: 'text', selector: 'type' },
       { tagName: 'text', selector: 'name' },
       { tagName: 'path', selector: 'icon' },
-      ...SIDES.map((side) => ({ tagName: 'circle', selector: `handle-${side.id}` })),
     ],
   },
 )
@@ -203,23 +203,69 @@ function tuckIn(child: joint.dia.Element, parent: joint.dia.Element) {
   }
 }
 
-/** A corner grip that resizes the element. JointJS keeps free transform in its paid tier. */
-const ResizeControl = joint.elementTools.Control.extend({
-  children: [
-    {
-      tagName: 'rect',
-      selector: 'handle',
-      attributes: { width: 9, height: 9, x: -4.5, y: -4.5, rx: 2, class: 'ag-resize-handle' },
+/**
+ * The eight grips of a selection box, snapping to the same grid a drag does.
+ *
+ * One grip in the bottom-right corner meant every resize also moved the element's other two
+ * edges out of alignment — to make a box wider on the left you had to widen it on the right and
+ * then drag it back. Archi offers all eight, and resizing steps by the same amount as moving, so
+ * a diagram that was aligned stays aligned.
+ */
+const GRIPS = [
+  { id: 'top-left', x: 0, y: 0, cursor: 'nwse-resize' },
+  { id: 'top', x: 0.5, y: 0, cursor: 'ns-resize' },
+  { id: 'top-right', x: 1, y: 0, cursor: 'nesw-resize' },
+  { id: 'right', x: 1, y: 0.5, cursor: 'ew-resize' },
+  { id: 'bottom-right', x: 1, y: 1, cursor: 'nwse-resize' },
+  { id: 'bottom', x: 0.5, y: 1, cursor: 'ns-resize' },
+  { id: 'bottom-left', x: 0, y: 1, cursor: 'nesw-resize' },
+  { id: 'left', x: 0, y: 0.5, cursor: 'ew-resize' },
+] as const
+
+const toGrid = (value: number) => Math.round(value / GRID) * GRID
+
+/**
+ * Builds the tool for one grip.
+ *
+ * `resize` takes a direction, and JointJS then holds the opposite corner still — which is what
+ * makes dragging the left edge widen the box leftwards instead of moving it.
+ */
+function gripTool(grip: (typeof GRIPS)[number]) {
+  return joint.elementTools.Control.extend({
+    children: [
+      {
+        tagName: 'rect',
+        selector: 'handle',
+        attributes: {
+          width: 8,
+          height: 8,
+          x: -4,
+          y: -4,
+          class: 'ag-resize-handle',
+          cursor: grip.cursor,
+          'data-grip': grip.id,
+        },
+      },
+    ],
+    getPosition(view: joint.dia.ElementView) {
+      const size = view.model.size()
+      return { x: size.width * grip.x, y: size.height * grip.y }
     },
-  ],
-  getPosition(view: joint.dia.ElementView) {
-    const size = view.model.size()
-    return { x: size.width, y: size.height }
-  },
-  setPosition(view: joint.dia.ElementView, coordinates: { x: number; y: number }) {
-    view.model.resize(Math.max(MIN_WIDTH, coordinates.x), Math.max(MIN_HEIGHT, coordinates.y))
-  },
-}) as unknown as new (options?: object) => joint.dia.ToolView
+    setPosition(view: joint.dia.ElementView, coordinates: { x: number; y: number }) {
+      const { width, height } = view.model.size()
+      // Each grip moves only the edges it touches; the rest of the box is left alone.
+      const next = {
+        width: grip.x === 1 ? toGrid(coordinates.x) : grip.x === 0 ? width - toGrid(coordinates.x) : width,
+        height: grip.y === 1 ? toGrid(coordinates.y) : grip.y === 0 ? height - toGrid(coordinates.y) : height,
+      }
+      view.model.resize(Math.max(MIN_WIDTH, next.width), Math.max(MIN_HEIGHT, next.height), {
+        direction: grip.id,
+      })
+    },
+  }) as unknown as new (options?: object) => joint.dia.ToolView
+}
+
+const GRIP_TOOLS = GRIPS.map(gripTool)
 
 /**
  * The canvas, and the only place that knows there is a diagramming library at all (ADR-0010).
@@ -297,10 +343,6 @@ export default function Canvas(props: CanvasProps) {
        * the requirement rather than a port of a documented algorithm.
        */
       defaultAnchor: { name: 'midSide', args: { padding: 0 } },
-      // Aim at the element, not at a 10px dot.
-      snapLinks: { radius: 120 },
-      markAvailable: true,
-      linkPinning: false,
       embeddingMode: true,
       findParentBy: 'bbox',
       frontParentOnly: false,
@@ -311,18 +353,6 @@ export default function Canvas(props: CanvasProps) {
       validateEmbedding: (childView, parentView) =>
         // Never into your own descendant, which would detach the subtree from the diagram.
         !parentView.model.isEmbeddedIn(childView.model),
-      validateConnection: (sourceView, _sm, targetView, _tm, end) => {
-        const source = sourceView?.model?.id
-        const target = targetView?.model?.id
-        if (!source || !target || source === target || end !== 'target') {
-          return false
-        }
-        return latest.current.canConnect(String(source), String(target))
-      },
-      defaultLink: () =>
-        new joint.shapes.standard.Link({
-          attrs: { line: { class: 'ag-link-line', stroke: 'currentColor', strokeWidth: 1.6 } },
-        }),
     })
     element.appendChild(view.el)
     graph.current = model
@@ -330,16 +360,38 @@ export default function Canvas(props: CanvasProps) {
 
     // -------------------------------------------------------------- selection
     view.on('element:pointerclick', (elementView: joint.dia.ElementView, event: joint.dia.Event) => {
+      latest.current.onSelectLink(null)
       const key = String(elementView.model.id)
+      // With the connector tool active a click means "this end of the line", not "select this".
+      if (latest.current.connecting) {
+        latest.current.onConnectPick(key)
+        return
+      }
       const additive = event.shiftKey || event.ctrlKey || event.metaKey
       const current = latest.current.selected
       latest.current.onSelect(
         additive ? (current.includes(key) ? current.filter((k) => k !== key) : [...current, key]) : [key],
       )
     })
-    view.on('blank:pointerclick', () => {
+    view.on('blank:pointerclick', (event: joint.dia.Event, x: number, y: number) => {
+      // A source picked and then empty canvas clicked: that is the Magic Connector asking for a
+      // new element at that spot, rather than a plain deselect.
+      if (latest.current.connecting && latest.current.connectFrom) {
+        latest.current.onMagic(latest.current.connectFrom, event.clientX ?? 0, event.clientY ?? 0, {
+          x: Math.round(x),
+          y: Math.round(y),
+        })
+        return
+      }
       latest.current.onSelect([])
+      latest.current.onSelectLink(null)
       latest.current.onBlankClick()
+    })
+    // A line is a thing in the model too. Until it could be selected there was no way to delete
+    // one at all, which left the only way to unsay something being to delete an element.
+    view.on('link:pointerclick', (linkView: joint.dia.LinkView) => {
+      latest.current.onSelect([])
+      latest.current.onSelectLink(String(linkView.model.id))
     })
     view.on('element:contextmenu', (elementView: joint.dia.ElementView, event: joint.dia.Event) => {
       event.preventDefault()
@@ -385,33 +437,6 @@ export default function Canvas(props: CanvasProps) {
     })
 
     // -------------------------------------------------------------- connecting
-    view.on('link:connect', (linkView: joint.dia.LinkView) => {
-      const link = linkView.model
-      const source = link.get('source') as { id?: string }
-      const target = link.get('target') as { id?: string }
-      link.remove()
-      if (source.id && target.id) {
-        latest.current.onConnect(String(source.id), String(target.id))
-      }
-    })
-
-    // Released over nothing. `linkPinning: false` is about to throw the half-drawn link away, so
-    // the source and the drop point are read here, while they still exist.
-    view.on('link:pointerup', (linkView: joint.dia.LinkView, event: joint.dia.Event) => {
-      const link = linkView.model
-      const source = link.get('source') as { id?: string }
-      const target = link.get('target') as { id?: string }
-      if (source?.id && !target?.id) {
-        link.remove()
-        // In model coordinates as well as screen ones: the drop point is where the user said the
-        // new element goes, and placing it anywhere else ignores what the gesture just expressed.
-        const at = view.clientToLocalPoint({ x: event.clientX ?? 0, y: event.clientY ?? 0 })
-        latest.current.onMagic(String(source.id), event.clientX ?? 0, event.clientY ?? 0, {
-          x: Math.round(at.x),
-          y: Math.round(at.y),
-        })
-      }
-    })
 
     // -------------------------------------------------------------- alignment guides
     /*
@@ -604,6 +629,7 @@ export default function Canvas(props: CanvasProps) {
             `ag-layer-${element.layer}`,
             container ? 'ag-node-container' : '',
             props.selected.includes(element.key) ? 'ag-node-selected' : '',
+            props.connectFrom === element.key ? 'ag-node-connect-source' : '',
           ]
             .filter(Boolean)
             .join(' '),
@@ -612,9 +638,8 @@ export default function Canvas(props: CanvasProps) {
         // Behaviour is rounded, a service is a pill, everything else is square — the geometry is
         // half of what the notation says, and a reader takes it in before any word.
         body: (() => {
-          const shape = bodyShape(element.concept)
-          const radius =
-            shape === 'stadium' ? Math.min(element.height, element.width) / 2 : shape === 'rounded' ? 12 : 4
+          // A junction is a dot; everything else is a rectangle, as Archi draws it.
+          const radius = bodyShape(element.concept) === 'dot' ? Math.min(element.width, element.height) / 2 : 2
           return { rx: radius, ry: radius }
         })(),
         icon: { d: iconFor(element.concept), transform: iconPlacement(element.width) },
@@ -632,12 +657,6 @@ export default function Canvas(props: CanvasProps) {
           // A container's name is capped so long names cannot eat the room its children need.
           textWrap: { width: 'calc(w-20)', height: container ? 32 : 'calc(h-38)', ellipsis: true },
         },
-        ...Object.fromEntries(
-          SIDES.map((side) => [
-            `handle-${side.id}`,
-            { cx: side.x, cy: side.y, r: 5, magnet: true, class: 'ag-handle', 'data-side': side.id },
-          ]),
-        ),
       })
     }
 
@@ -652,7 +671,7 @@ export default function Canvas(props: CanvasProps) {
       }
     }
     applying.current = false
-  }, [props.elements, props.selected, props.geometryVersion, ready])
+  }, [props.elements, props.selected, props.connectFrom, props.geometryVersion, ready])
 
   // ------------------------------------------------------------------ relationships
   useEffect(() => {
@@ -705,7 +724,10 @@ export default function Canvas(props: CanvasProps) {
       // object literal binds to that instead of to the selectors overload.
       const attrs = {
         root: {
-          class: `joint-cell joint-link joint-theme-default ag-link${link.derived ? ' ag-link-derived' : ''}`,
+          class:
+            `joint-cell joint-link joint-theme-default ag-link` +
+            (link.derived ? ' ag-link-derived' : '') +
+            (props.selectedLink === link.key ? ' ag-link-selected' : ''),
           'data-key': link.key,
         },
         line,
@@ -737,7 +759,7 @@ export default function Canvas(props: CanvasProps) {
         cell.addTo(model)
       }
     }
-  }, [props.links, props.router, ready])
+  }, [props.links, props.router, props.selectedLink, ready])
 
   // The minimap is a second paper over the same graph, so it needs its own refit whenever the
   // content changes — otherwise it shows the top-left corner at full size, which reads as a
@@ -775,7 +797,7 @@ export default function Canvas(props: CanvasProps) {
     }
     if (only) {
       const elementView = model.getCell(only)?.findView(view) as joint.dia.ElementView | undefined
-      elementView?.addTools(new joint.dia.ToolsView({ tools: [new ResizeControl()] }))
+      elementView?.addTools(new joint.dia.ToolsView({ tools: GRIP_TOOLS.map((Tool) => new Tool()) }))
     }
     toolsOn.current = only
   }, [props.selected, ready])
@@ -832,7 +854,7 @@ export default function Canvas(props: CanvasProps) {
   }
 
   return (
-    <div className="ag-paper-wrap">
+    <div className={props.connecting ? 'ag-paper-wrap ag-connecting' : 'ag-paper-wrap'}>
       <div className="ag-paper" ref={host} />
 
       {editorBox && props.editingKey && (

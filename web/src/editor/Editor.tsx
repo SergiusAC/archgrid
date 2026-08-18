@@ -22,7 +22,7 @@ import Palette from './Palette.tsx'
 import Properties from './Properties.tsx'
 import Splitter from './Splitter.tsx'
 import RelationshipPicker from './RelationshipPicker.tsx'
-import { NODE_HEIGHT, NODE_WIDTH, autoLayout, nextFreePosition } from './layout.ts'
+import { GRID, NODE_HEIGHT, NODE_WIDTH, autoLayout, nextFreePosition } from './layout.ts'
 import { invert, useHistoryStore, type Position } from './store.ts'
 
 interface EditorProps {
@@ -44,6 +44,11 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   const [relationshipType, setRelationshipType] = useState('Serving')
   const [message, setMessage] = useState<{ kind: 'error' | 'info'; text: string } | null>(null)
   const [selected, setSelected] = useState<string[]>([])
+  // A relationship can be selected too, and until it could there was no way to delete one.
+  const [selectedLink, setSelectedLink] = useState<string | null>(null)
+  // The connector tool: active, and the element clicked as the source of the next line.
+  const [connecting, setConnecting] = useState(false)
+  const [connectFrom, setConnectFrom] = useState<string | null>(null)
   const [context, setContext] = useState<ContextTarget | null>(null)
   const [sidebar, setSidebar] = useState<'views' | 'palette' | 'repository'>('views')
   // The element whose name is being typed in place, straight after creation.
@@ -424,22 +429,6 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     [byKey, apply, saveLayout],
   )
 
-  /**
-   * Whether a connection may be dropped at all.
-   *
-   * Deliberately looser than "the type on the toolbar is permitted": if anything at all can
-   * connect these two, the drop is allowed and the picker sorts out which. Refusing the drop
-   * would throw away the user's gesture in order to make them change a dropdown first.
-   */
-  const canConnect = useCallback(
-    (sourceKey: string, targetKey: string) => {
-      const source = byKey[sourceKey]
-      const target = byKey[targetKey]
-      return Boolean(source && target && metamodel.permittedBetween(source.conceptType, target.conceptType).length > 0)
-    },
-    [byKey, metamodel],
-  )
-
   const connect = useCallback(
     (sourceKey: string, targetKey: string, type: string) => {
       const source = byKey[sourceKey]
@@ -510,6 +499,34 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     [api, workspace, viewKey, positions, sizes, queryClient],
   )
 
+  /**
+   * One click of the connector tool.
+   *
+   * The first names the source, the second the target — Archi's own sequence, and the reason
+   * there are no dots on the edges of a box. The tool stays on the toolbar rather than on every
+   * element, so nothing about drawing lines is in the way while reading a diagram.
+   */
+  const onConnectPick = useCallback(
+    (key: string) => {
+      if (!connectFrom) {
+        setConnectFrom(key)
+        setMessage({ kind: 'info', text: `Connecting from ${byKey[key]?.name ?? key}. Click the other end, or Escape.` })
+        return
+      }
+      if (connectFrom === key) {
+        setConnectFrom(null)
+        setMessage(null)
+        return
+      }
+      const source = connectFrom
+      setConnectFrom(null)
+      setConnecting(false)
+      setMessage(null)
+      onConnect(source, key)
+    },
+    [connectFrom, byKey, onConnect],
+  )
+
   /** New elements join the repository and land on the current view in one commit. */
   const createElement = useCallback(
     (typeRef: string, displayName: string) => {
@@ -542,7 +559,10 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       const key = uniqueKey(type.name, byKey)
       // Centred on where the line was dropped, not hung off it by a corner: the cursor was
       // pointing at where the element should be, not at its top-left pixel.
-      placeAt.current[key] = { x: Math.round(at.x - NODE_WIDTH / 2), y: Math.round(at.y - NODE_HEIGHT / 2) }
+      // Snapped to the same grid a drag steps by: a new element half a unit off the one it came
+      // from turns the line between them from vertical into very nearly vertical.
+      const snap = (value: number) => Math.round(value / GRID) * GRID
+      placeAt.current[key] = { x: snap(at.x - NODE_WIDTH / 2), y: snap(at.y - NODE_HEIGHT / 2) }
       const relationshipKey = uniqueKey(`${sourceKey}-${relationship.toLowerCase()}-${key}`, relationshipsByKey)
       apply.mutate({
         commands: [
@@ -570,6 +590,34 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       })
     },
     [viewKey, byKey, apply],
+  )
+
+  /**
+   * Deletes a relationship from the model.
+   *
+   * There is no "remove from view" for a line: a view shows the relationships whose ends are both
+   * on it (ADR-0009), so the only way to take one off a diagram is to take one of its ends off,
+   * or to say the relationship does not exist. Both are honest; hiding a line the model asserts
+   * would not be.
+   */
+  const deleteRelationship = useCallback(
+    (key: string) => {
+      const relationship = relationshipsByKey[key]
+      if (!relationship) {
+        return
+      }
+      const source = byKey[relationship.source]?.name ?? relationship.source
+      const target = byKey[relationship.target]?.name ?? relationship.target
+      if (!window.confirm(`Delete the ${relationship.type} from ${source} to ${target}?`)) {
+        return
+      }
+      setSelectedLink(null)
+      apply.mutate({
+        commands: [{ op: 'delete-relationship', key }],
+        label: `Delete ${relationship.type} from ${source} to ${target}`,
+      })
+    },
+    [relationshipsByKey, byKey, apply],
   )
 
   /** Off this diagram only. The element stays in the repository and on every other view. */
@@ -689,6 +737,9 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       } else if (mod && ((key === 'z' && event.shiftKey) || key === 'y')) {
         event.preventDefault()
         void redo()
+      } else if ((event.key === 'Delete' || event.key === 'Backspace') && selectedLink) {
+        event.preventDefault()
+        deleteRelationship(selectedLink)
       } else if ((event.key === 'Delete' || event.key === 'Backspace') && selected.length > 0) {
         // The easiest key to hit by accident takes things off the diagram, never out of the
         // repository.
@@ -696,11 +747,13 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         removeFromView(selected)
       } else if (event.key === 'Escape') {
         setContext(null)
+        setConnecting(false)
+        setConnectFrom(null)
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [undo, redo, selected, removeFromView])
+  }, [undo, redo, selected, selectedLink, deleteRelationship, removeFromView])
 
   const viewItems: TreeItem[] = useMemo(
     () =>
@@ -853,6 +906,19 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
               ))}
             </select>
           </label>
+          <button
+            type="button"
+            className={connecting ? 'ag-tool-active' : ''}
+            onClick={() => {
+              setConnecting((on) => !on)
+              setConnectFrom(null)
+              setMessage(null)
+            }}
+            disabled={!viewKey}
+            title="Connect: click the source, then the target. Click empty space to make a new element."
+          >
+            {connecting ? 'Connecting…' : 'Connect'}
+          </button>
           <label className="ag-field ag-inline">
             <span>Lines</span>
             <select
@@ -888,6 +954,15 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           </button>
           <button
             type="button"
+            className="ag-danger"
+            onClick={() => selectedLink && deleteRelationship(selectedLink)}
+            disabled={!selectedLink}
+            title="Delete the selected relationship from the model"
+          >
+            Delete relationship
+          </button>
+          <button
+            type="button"
             onClick={() => removeFromView(selected)}
             disabled={selected.length === 0 || !viewKey}
             title="Delete — takes it off this view only"
@@ -918,13 +993,21 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
               selected={selected}
               editingKey={editingKey}
               onSelect={setSelected}
+              onSelectLink={setSelectedLink}
+              selectedLink={selectedLink}
               onGeometry={onGeometry}
               onGeometryStart={onGeometryStart}
               onGeometryEnd={onGeometryEnd}
               onNest={(key, parent, next) => void onNest(key, parent, next)}
-              onConnect={onConnect}
-              onMagic={(source, x, y, at) => setMagic({ source, x, y, at })}
-              canConnect={canConnect}
+              connecting={connecting}
+              connectFrom={connectFrom}
+              onConnectPick={onConnectPick}
+              onMagic={(source, x, y, at) => {
+                setConnectFrom(null)
+                setConnecting(false)
+                setMessage(null)
+                setMagic({ source, x, y, at })
+              }}
               onContextMenu={(elementKey, x, y) => setContext({ elementKey, x, y })}
               onBlankClick={() => setContext(null)}
               onCommitName={(key, name) => {
