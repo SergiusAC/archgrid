@@ -4,6 +4,7 @@ import type {
   CommandRequest,
   Folder,
   Graph,
+  ConnectionRouter,
   LayoutNode,
   MetamodelDto,
   ModelElement,
@@ -97,10 +98,12 @@ export function createApi(token: string) {
       request<ViewDetail>(`/api/workspaces/${encode(workspace)}/views/${encode(view)}`, token),
 
     /** A PUT, not a command: coordinates are the one layer outside the commit log (ADR-0003). */
-    saveLayout: (workspace: string, view: string, nodes: LayoutNode[]) =>
+    saveLayout: (workspace: string, view: string, nodes: LayoutNode[], router?: ConnectionRouter) =>
       request<void>(`/api/workspaces/${encode(workspace)}/views/${encode(view)}/layout`, token, {
         method: 'PUT',
-        body: JSON.stringify({ nodes }),
+        // `router` only when it is being changed: a drag saves coordinates several times a second
+        // and must not carry an opinion about routing with it.
+        body: JSON.stringify(router ? { nodes, router } : { nodes }),
       }),
 
     folders: (workspace: string, kind: 'elements' | 'views') =>

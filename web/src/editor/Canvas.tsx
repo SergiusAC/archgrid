@@ -1,7 +1,7 @@
 import * as joint from '@joint/core'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import type { Layer } from '../api/types.ts'
+import type { ConnectionRouter, Layer } from '../api/types.ts'
 import { NEST_PADDING } from './layout.ts'
 import { notationFor } from './notation.ts'
 import { bodyShape, iconFor, iconPlacement } from './shapes.ts'
@@ -68,6 +68,11 @@ interface CanvasProps {
   onBlankClick: () => void
   onCommitName: (key: string, name: string) => void
   onCancelEdit: () => void
+  /**
+   * How this view routes its connections. Straight lines take bendpoints; orthogonal runs do not,
+   * which is Archi's rule and a sound one — otherwise the user is fighting the algorithm.
+   */
+  router: ConnectionRouter
   /** Changing this refits the content; the caller changes it when a view opens. */
   fitToken: string | null
   /**
@@ -281,6 +286,17 @@ export default function Canvas(props: CanvasProps) {
       // line up, and a small hop wherever two lines cross.
       defaultRouter: { name: 'normal' },
       defaultConnector: { name: 'jumpover', args: { size: 6, jump: 'arc' } },
+      /*
+       * Archi calls this "orthogonal connection anchors", and it is what makes a diagram look
+       * drafted rather than assembled: the line leaves from the middle of the side facing where it
+       * is going. Two elements that line up are then joined by an exactly horizontal or vertical
+       * line without anyone arranging it, and two that do not are joined side-to-side rather than
+       * corner-to-corner.
+       *
+       * The help does not describe how Archi computes the anchor, so this is our own reading of
+       * the requirement rather than a port of a documented algorithm.
+       */
+      defaultAnchor: { name: 'midSide', args: { padding: 0 } },
       // Aim at the element, not at a 10px dot.
       snapLinks: { radius: 120 },
       markAvailable: true,
@@ -461,6 +477,9 @@ export default function Canvas(props: CanvasProps) {
     // Bendpoints appear on hover and belong to the line, not to the selection: the architect drew
     // it, so the architect routes it. Wired once — re-registering per render stacked the handlers.
     view.on('link:mouseenter', (linkView: joint.dia.LinkView) => {
+      if (latest.current.router === 'orthogonal') {
+        return
+      }
       linkView.addTools(
         new joint.dia.ToolsView({
           tools: [new joint.linkTools.Vertices(), new joint.linkTools.Segments()],
@@ -692,6 +711,10 @@ export default function Canvas(props: CanvasProps) {
         line,
       } as joint.dia.Cell.Selectors
       cell.attr(attrs)
+      // Per view, not per link: the choice belongs to the diagram, and Archi puts it in the same
+      // place. Orthogonal routing drops any bendpoints the line already had, which is why the
+      // tools that create them are only offered on the straight router.
+      cell.router(props.router === 'orthogonal' ? { name: 'rightAngle' } : { name: 'normal' })
       cell.labels([
         {
           position: 0.5,
@@ -714,7 +737,7 @@ export default function Canvas(props: CanvasProps) {
         cell.addTo(model)
       }
     }
-  }, [props.links, ready])
+  }, [props.links, props.router, ready])
 
   // The minimap is a second paper over the same graph, so it needs its own refit whenever the
   // content changes — otherwise it shows the top-left corner at full size, which reads as a

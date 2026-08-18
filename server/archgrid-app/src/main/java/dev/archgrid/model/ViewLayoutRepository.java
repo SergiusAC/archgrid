@@ -50,6 +50,24 @@ class ViewLayoutRepository {
         return nodes;
     }
 
+    /** How this view routes its connections. Presentation, so it lives beside the coordinates. */
+    String router(UUID modelId, String viewKey) {
+        return jdbc.sql("select router from view where model_id = :modelId and \"key\" = :viewKey")
+                .param("modelId", modelId)
+                .param("viewKey", viewKey)
+                .query(String.class)
+                .optional()
+                .orElse("straight");
+    }
+
+    void saveRouter(UUID modelId, String viewKey, String router) {
+        jdbc.sql("update view set router = :router where model_id = :modelId and \"key\" = :viewKey")
+                .param("router", router)
+                .param("modelId", modelId)
+                .param("viewKey", viewKey)
+                .update();
+    }
+
     /**
      * Upserts positions.
      *

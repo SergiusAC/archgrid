@@ -201,7 +201,8 @@ class GraphController {
                 layout.load(graphId, viewKey).stream()
                         .map(node -> new ModelApiDtos.LayoutNodeResponse(
                                 node.elementKey(), node.x(), node.y(), node.width(), node.height()))
-                        .toList());
+                        .toList(),
+                layout.router(graphId, viewKey));
     }
 
     /**
@@ -216,13 +217,24 @@ class GraphController {
             @PathVariable String workspaceKey,
             @PathVariable String viewKey,
             @Valid @RequestBody ModelApiDtos.LayoutRequest request) {
+        UUID graphId = graphId(workspaceKey);
         layout.save(
-                graphId(workspaceKey),
+                graphId,
                 viewKey,
                 request.nodes().stream()
                         .map(node -> new dev.archgrid.model.ViewLayoutRepository.LayoutNode(
                                 node.element(), node.x(), node.y(), node.width(), node.height()))
                         .toList());
+        // Only when asked. A drag saves coordinates several times a second and must not carry an
+        // opinion about routing with it.
+        if (request.router() != null) {
+            if (!request.router().equals("straight") && !request.router().equals("orthogonal")) {
+                throw new ResponseStatusException(
+                        HttpStatus.UNPROCESSABLE_CONTENT,
+                        "Unknown connection router '" + request.router() + "'. Use 'straight' or 'orthogonal'.");
+            }
+            layout.saveRouter(graphId, viewKey, request.router());
+        }
     }
 
     // ------------------------------------------------------------------ folders

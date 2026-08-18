@@ -31,4 +31,14 @@ class ViewLayoutService {
     void save(UUID graphId, String viewKey, List<ViewLayoutRepository.LayoutNode> nodes) {
         repository.save(graphId, viewKey, nodes);
     }
+
+    @Transactional(readOnly = true)
+    String router(UUID graphId, String viewKey) {
+        return repository.router(graphId, viewKey);
+    }
+
+    @Transactional
+    void saveRouter(UUID graphId, String viewKey, String router) {
+        repository.saveRouter(graphId, viewKey, router);
+    }
 }

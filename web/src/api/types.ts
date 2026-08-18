@@ -97,6 +97,9 @@ export interface ViewSummary {
   elements: number
 }
 
+/** Straight lines with bendpoints, or orthogonal runs without them — Archi's own two options. */
+export type ConnectionRouter = 'straight' | 'orthogonal'
+
 export interface LayoutNode {
   element: string
   x: number
@@ -130,6 +133,8 @@ export interface ViewDetail {
   /** Implied by chains through elements this view does not show. Also never stored. */
   derived: DerivedRelationship[]
   layout: LayoutNode[]
+  /** How this view draws its connections. Presentation only, never versioned (ADR-0003). */
+  router: ConnectionRouter
 }
 
 /** Organisation only. A folder means nothing to the metamodel and is not versioned. */

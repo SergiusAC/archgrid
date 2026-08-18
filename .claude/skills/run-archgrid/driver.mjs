@@ -582,6 +582,32 @@ async function interactions(page) {
   await page.screenshot({ path: `${outDir}/33-magic.png` })
 
   /*
+   * --- orthogonal anchors: aligned elements are joined by a straight run ---
+   *
+   * The line leaves from the middle of the side facing where it is going, so two elements that
+   * line up are joined by an exactly horizontal or vertical line with nobody arranging it. That
+   * is the whole claim, and it is checked on the path data rather than by eye.
+   */
+  const runs = await page.evaluate(() =>
+    [...document.querySelectorAll('.ag-paper .ag-link .ag-link-line')]
+      .map((path) => (path.getAttribute('d') ?? '').trim().replace(/\s+/g, ' '))
+      .map((d) => {
+        const n = d.match(/-?[\d.]+/g)?.map(Number) ?? []
+        if (n.length < 4) return 'none'
+        const [x1, y1] = n
+        const [x2, y2] = n.slice(-2)
+        if (Math.abs(x1 - x2) < 0.5) return 'vertical'
+        if (Math.abs(y1 - y2) < 0.5) return 'horizontal'
+        return 'diagonal'
+      }),
+  )
+  check(
+    'elements that line up are joined by a straight run',
+    runs.some((run) => run === 'vertical' || run === 'horizontal'),
+    runs.join(', '),
+  )
+
+  /*
    * --- editing quickly must not look like someone else editing ---
    *
    * The optimistic check refuses a command whose base is not the current head. Nothing waits for
@@ -624,6 +650,36 @@ async function interactions(page) {
     'the element snaps flush rather than nearly',
     Math.abs(snapped.x - target.x) < 1.5,
     `left edges ${Math.round(snapped.x)} vs ${Math.round(target.x)}`,
+  )
+
+  /*
+   * --- the connection router is a property of the view ---
+   *
+   * Archi's two options and Archi's default: straight lines that take bendpoints, or orthogonal
+   * runs that do not. Chosen per view and saved for everyone, because a colleague opening the
+   * diagram should see it as it was drawn.
+   */
+  const routerSelect = page.locator('.ag-router-select')
+  check('the view opens on straight lines, as Archi does', (await routerSelect.inputValue()) === 'straight')
+  await routerSelect.selectOption('orthogonal')
+  await page.waitForTimeout(2500)
+  const bent = await page.evaluate(
+    () =>
+      [...document.querySelectorAll('.ag-paper .ag-link .ag-link-line')]
+        .map((path) => ((path.getAttribute('d') ?? '').match(/L/g) ?? []).length)
+        .filter((segments) => segments > 1).length,
+  )
+  check('orthogonal routing bends the diagonals into runs', bent > 0, `${bent} lines with corners`)
+  await page.screenshot({ path: `${outDir}/36-orthogonal.png` })
+
+  // Saved, not merely applied: reopening the view must show the same routing.
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await openRepository(page)
+  await page.locator('.ag-tree-item', { hasText: viewName }).first().click()
+  await page.waitForTimeout(3000)
+  check(
+    'the choice survives a reload',
+    (await page.locator('.ag-router-select').inputValue()) === 'orthogonal',
   )
 
   // --- notation: the shape says what it is before any word is read ---

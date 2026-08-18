@@ -3,7 +3,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { Api } from '../api/client.ts'
 import { ApiError } from '../api/client.ts'
-import type { Command, ElementType, Graph, ModelElement, ModelRelationship, Profile } from '../api/types.ts'
+import type {
+  Command,
+  ConnectionRouter,
+  ElementType,
+  Graph,
+  ModelElement,
+  ModelRelationship,
+  Profile,
+} from '../api/types.ts'
 import { Metamodel } from '../metamodel/Metamodel.ts'
 import Canvas, { type CanvasElement, type CanvasLink, type Geometry } from './Canvas.tsx'
 import ContextMenu, { type ContextTarget } from './ContextMenu.tsx'
@@ -222,18 +230,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    * the size it had a moment ago.
    */
   const saveLayout = useMutation({
-    mutationFn: ({ positions: next, sizes: nextSizes }: Geometry) =>
-      api.saveLayout(
-        workspace,
-        viewKey!,
-        Object.entries(next).map(([element, position]) => ({
-          element,
-          x: position.x,
-          y: position.y,
-          width: nextSizes[element]?.width ?? NODE_WIDTH,
-          height: nextSizes[element]?.height ?? NODE_HEIGHT,
-        })),
-      ),
+    mutationFn: (geometry: Geometry) => api.saveLayout(workspace, viewKey!, layoutNodes(geometry)),
   })
 
   const pendingSave = useRef<number | null>(null)
@@ -492,6 +489,25 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       })
     },
     [byKey, metamodel, relationshipType, connect],
+  )
+
+  /**
+   * How this view routes its connections.
+   *
+   * Presentation, so it travels with the layout rather than as a command: switching a diagram to
+   * orthogonal routing is not a documentation decision anybody needs attributed (ADR-0003). Saved
+   * for everyone rather than kept in this browser, because a colleague opening the view should see
+   * the diagram as it was drawn.
+   */
+  const setRouter = useCallback(
+    async (router: ConnectionRouter) => {
+      if (!viewKey) {
+        return
+      }
+      await api.saveLayout(workspace, viewKey, layoutNodes({ positions, sizes }), router)
+      await queryClient.invalidateQueries({ queryKey: ['view', workspace] })
+    },
+    [api, workspace, viewKey, positions, sizes, queryClient],
   )
 
   /** New elements join the repository and land on the current view in one commit. */
@@ -837,6 +853,18 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
               ))}
             </select>
           </label>
+          <label className="ag-field ag-inline">
+            <span>Lines</span>
+            <select
+              className="ag-router-select"
+              value={view.data?.router ?? 'straight'}
+              disabled={!viewKey}
+              onChange={(event) => void setRouter(event.target.value as ConnectionRouter)}
+            >
+              <option value="straight">Straight</option>
+              <option value="orthogonal">Orthogonal</option>
+            </select>
+          </label>
           <button
             type="button"
             onClick={() =>
@@ -906,6 +934,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
                 }
               }}
               onCancelEdit={() => setEditingKey(null)}
+              router={view.data?.router ?? 'straight'}
               fitToken={fitToken}
               geometryVersion={geometryVersion}
             />
@@ -1016,6 +1045,17 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       )}
     </div>
   )
+}
+
+/** Geometry as the layout endpoint wants it. Missing sizes fall back to the default box. */
+function layoutNodes({ positions, sizes }: Geometry) {
+  return Object.entries(positions).map(([element, position]) => ({
+    element,
+    x: position.x,
+    y: position.y,
+    width: sizes[element]?.width ?? NODE_WIDTH,
+    height: sizes[element]?.height ?? NODE_HEIGHT,
+  }))
 }
 
 function slugify(value: string): string {
