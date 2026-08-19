@@ -950,6 +950,35 @@ async function interactions(page) {
    * A palette that has gone monochrome, a notice that cannot be dismissed, a rename that commits
    * because you clicked elsewhere, a relationship you can read but not remove.
    */
+  /*
+   * --- filing something in a folder keeps it there ---
+   *
+   * Reported from use: elements would not move into folders. The assignment was stored and the
+   * endpoint answered 204, but the elements listing never carried a folder field — so the tree
+   * drew everything at the root and the move looked like it had not happened.
+   */
+  await page.getByRole('tab', { name: /^Repository/ }).click()
+  await page.waitForTimeout(600)
+  if ((await page.locator('.ag-tree-row.ag-tree-folder').count()) === 0) {
+    page.once('dialog', (dialog) => dialog.accept(`filed ${process.pid}`))
+    await page.locator('.ag-tree-toolbar button').click()
+    await page.waitForTimeout(2000)
+  }
+  const firstLeaf = page.locator('.ag-tree-row.ag-tree-item').first()
+  const filedKey = await firstLeaf.locator('.ag-tree-label').textContent()
+  await firstLeaf.hover()
+  const options = await firstLeaf.locator('.ag-tree-move option').count()
+  if (options > 1) {
+    await firstLeaf.locator('.ag-tree-move').selectOption({ index: 1 })
+    await page.waitForTimeout(2500)
+    const filedUnder = await page.evaluate((label) => {
+      const rows = [...document.querySelectorAll('.ag-tree-row')]
+      const row = rows.find((r) => r.querySelector('.ag-tree-label')?.textContent?.trim() === label)
+      return row ? Number(row.querySelectorAll('.ag-tree-guide').length) : -1
+    }, filedKey?.trim())
+    check('an element filed in a folder is drawn inside it', filedUnder > 0, `depth ${filedUnder}`)
+  }
+
   // The tree is a tree: rows walk with the arrow keys, as they do in a file browser.
   await page.getByRole('tab', { name: /^Views/ }).click()
   await page.waitForTimeout(400)

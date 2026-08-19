@@ -120,9 +120,15 @@ final class ModelApiDtos {
             String name,
             String documentation,
             Map<String, String> properties,
-            String parent) {
+            String parent,
+            /** Which folder it is filed under. Organisation only, unversioned (ADR-0009). */
+            String folder) {
 
         static ElementResponse from(Element element) {
+            return from(element, null);
+        }
+
+        static ElementResponse from(Element element, String folder) {
             return new ElementResponse(
                     element.key().value(),
                     element.displayType(),
@@ -131,7 +137,8 @@ final class ModelApiDtos {
                     element.name(),
                     element.documentation(),
                     element.properties(),
-                    element.parentKey().map(Slug::value).orElse(null));
+                    element.parentKey().map(Slug::value).orElse(null),
+                    folder);
         }
     }
 

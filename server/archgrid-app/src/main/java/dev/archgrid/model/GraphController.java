@@ -102,8 +102,13 @@ class GraphController {
 
     @GetMapping("/elements")
     List<ModelApiDtos.ElementResponse> elements(@PathVariable String workspaceKey) {
-        return commands.current(graphId(workspaceKey)).elements().stream()
-                .map(ModelApiDtos.ElementResponse::from)
+        UUID graphId = graphId(workspaceKey);
+        // Filing is read alongside rather than from the graph: a folder is organisation and is not
+        // part of the model (ADR-0009). It was being stored and never returned, so the repository
+        // tree always drew everything at the root and moving something appeared to do nothing.
+        Map<String, String> folderOf = folders.elementFolders(graphId);
+        return commands.current(graphId).elements().stream()
+                .map(element -> ModelApiDtos.ElementResponse.from(element, folderOf.get(element.key().value())))
                 .toList();
     }
 
