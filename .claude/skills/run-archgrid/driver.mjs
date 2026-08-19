@@ -430,6 +430,10 @@ async function interactions(page) {
   const grown = await flowWidth(resizedId)
   check('dragging a corner resizes the element', grown > 200, `flow width ${Math.round(grown)}`)
 
+  // A draft survives a reload on its own, so save first: the claim being checked is that the
+  // *server* kept the size, not that the browser remembered it.
+  await page.keyboard.press('Control+s')
+  await page.waitForTimeout(2000)
   await page.reload({ waitUntil: 'domcontentloaded' })
   await openRepository(page)
   await page.locator('.ag-tree-item', { hasText: viewName }).first().click()
@@ -741,6 +745,8 @@ async function interactions(page) {
   await page.screenshot({ path: `${outDir}/36-orthogonal.png` })
 
   // Saved, not merely applied: reopening the view must show the same routing.
+  await page.keyboard.press('Control+s')
+  await page.waitForTimeout(2000)
   await page.reload({ waitUntil: 'domcontentloaded' })
   await openRepository(page)
   await page.locator('.ag-tree-item', { hasText: viewName }).first().click()
@@ -821,6 +827,46 @@ async function interactions(page) {
   )
   check('and at the sizes they were given', (await geometryOf()) === asLeft.sizes, 'sizes')
   await page.screenshot({ path: `${outDir}/37-reopened.png` })
+
+  /*
+   * --- saving is something the user does ---
+   *
+   * Layout used to be written a few hundred milliseconds after every drag: invisible, and the
+   * origin of every ordering trap this editor has hit. It is now a draft in the browser until
+   * Save, which is what makes it survivable and what makes it obvious whether it is safe.
+   */
+  const savedLabel = await page.getByRole('button', { name: /^(Save|Saved)/ }).textContent()
+  check('a saved view says so', savedLabel?.trim() === 'Saved', savedLabel ?? '')
+  const moved = await nodeAt(ledgerKey).locator('.ag-body').boundingBox()
+  await page.mouse.move(moved.x + moved.width / 2, moved.y + moved.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(moved.x + moved.width / 2, moved.y + moved.height / 2 + 160, { steps: 10 })
+  await page.mouse.up()
+  await page.waitForTimeout(600)
+  check(
+    'an edit marks the view unsaved rather than writing it',
+    (await page.getByRole('button', { name: /^Save/ }).textContent())?.includes('*'),
+  )
+
+  // The draft outlives the page, which is the point of keeping it in the browser.
+  const draftPlaces = await transformsOf()
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await openRepository(page)
+  await page.locator('.ag-tree-item', { hasText: viewName }).first().click()
+  await page.waitForTimeout(3500)
+  check('unsaved work survives a reload', (await transformsOf()) === draftPlaces, 'positions')
+  check(
+    'and is still marked unsaved',
+    (await page.getByRole('button', { name: /^Save/ }).textContent())?.includes('*'),
+  )
+
+  await page.keyboard.press('Control+s')
+  await page.waitForTimeout(2500)
+  check(
+    'Ctrl+S saves it',
+    (await page.getByRole('button', { name: /^(Save|Saved)/ }).textContent())?.trim() === 'Saved',
+  )
+  await page.screenshot({ path: `${outDir}/39-saving.png` })
 
   report()
 }

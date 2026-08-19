@@ -24,6 +24,7 @@ import Properties from './Properties.tsx'
 import Splitter from './Splitter.tsx'
 import RelationshipPicker from './RelationshipPicker.tsx'
 import { GRID, NODE_HEIGHT, NODE_WIDTH, autoLayout, nextFreePosition } from './layout.ts'
+import { clearDraft, readDraft, writeDraft } from './draft.ts'
 import { invert, useHistoryStore, type Position } from './store.ts'
 
 interface EditorProps {
@@ -162,6 +163,13 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    * scrambled, and the damage was permanent.
    */
   const [geometryFor, setGeometryFor] = useState<string | null>(null)
+  /** How this view draws its lines, as the user has it — saved with everything else. */
+  const [router, setRouter] = useState<ConnectionRouter>('straight')
+  // Readable synchronously, for the same reason the nesting is: a debounced write runs after the
+  // render that scheduled it and would otherwise record the routing as it was before the change.
+  const routerRef = useRef<ConnectionRouter>('straight')
+  /** Whether the arrangement in hand differs from the one the server holds. */
+  const [dirty, setDirty] = useState(false)
   const rememberParents = useCallback((next: Record<string, string | null>) => {
     parentsRef.current = next
     setParents(next)
@@ -172,7 +180,13 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   const [leftCollapsed, setLeftCollapsed] = useState(false)
   const [rightCollapsed, setRightCollapsed] = useState(false)
 
-  // Server layout is the truth; local positions mirror it so dragging feels immediate.
+  /**
+   * What the view looks like: the server's arrangement with the local draft laid over it.
+   *
+   * Per element rather than wholesale, so an element created since the draft was made still gets
+   * the position the server or the placement rule gave it, while everything the user has moved
+   * keeps where they put it.
+   */
   useEffect(() => {
     if (!view.data) {
       return
@@ -187,12 +201,16 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         storedSizes[node.element] = { width: node.width, height: node.height }
       }
     }
-    setPositions(stored)
-    setSizes(storedSizes)
-    rememberParents(storedParents)
+    const draft = readDraft(workspace, view.data.key)
+    setPositions(draft ? { ...stored, ...draft.positions } : stored)
+    setSizes(draft ? { ...storedSizes, ...draft.sizes } : storedSizes)
+    rememberParents(draft ? { ...storedParents, ...draft.parents } : storedParents)
+    setRouter(draft?.router ?? view.data.router)
+    routerRef.current = draft?.router ?? view.data.router
+    setDirty(draft != null)
     setGeometryFor(view.data.key)
     setGeometryVersion((version) => version + 1)
-  }, [view.data, rememberParents])
+  }, [view.data, workspace, rememberParents])
 
   const refresh = useCallback(async () => {
     await Promise.all([
@@ -273,37 +291,74 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     [api, workspace, currentHead, advanceHead, refresh],
   )
 
-  /**
-   * Coordinates go straight to their own endpoint, never through a command (ADR-0003).
-   *
-   * Geometry travels as one argument rather than positions here and sizes read from state. A
-   * caller that changes both in the same gesture would otherwise race its own re-render and save
-   * the size it had a moment ago.
-   */
+  /** Coordinates go to their own endpoint, never through a command (ADR-0003). */
   const saveLayout = useMutation({
-    mutationFn: (geometry: Geometry) => api.saveLayout(workspace, viewKey!, layoutNodes(geometry)),
+    mutationFn: (geometry: Geometry & { router: ConnectionRouter }) =>
+      api.saveLayout(workspace, viewKey!, layoutNodes(geometry), geometry.router),
   })
 
   const pendingSave = useRef<number | null>(null)
-  const scheduleLayoutSave = useCallback(
+
+  /**
+   * Records a change locally. Nothing reaches the server until the user saves.
+   *
+   * Debounced against the browser's own store only: a drag emits a position per frame, and
+   * serialising the whole arrangement on each one would be wasteful for no gain.
+   */
+  const rememberChange = useCallback(
     (
       next: Record<string, { x: number; y: number }>,
       nextSizes?: Record<string, Size>,
       nextParents?: Record<string, string | null>,
+      nextRouter?: ConnectionRouter,
     ) => {
       if (!viewKey) {
         return
       }
-      const geometry = { positions: next, sizes: nextSizes ?? sizes, parents: nextParents ?? parentsRef.current }
-      // Debounced: a drag emits a position per frame, and one request per frame would be
-      // both wasteful and a guaranteed source of out-of-order writes.
+      const geometry = {
+        positions: next,
+        sizes: nextSizes ?? sizes,
+        parents: nextParents ?? parentsRef.current,
+        router: nextRouter ?? routerRef.current,
+      }
+      setDirty(true)
       if (pendingSave.current) {
         window.clearTimeout(pendingSave.current)
       }
-      pendingSave.current = window.setTimeout(() => saveLayout.mutate(geometry), 500)
+      pendingSave.current = window.setTimeout(() => writeDraft(workspace, viewKey, geometry), 250)
     },
-    [viewKey, saveLayout, sizes],
+    [workspace, viewKey, sizes],
   )
+
+  /**
+   * Ctrl+S, or the button. The arrangement in hand becomes the one the server holds.
+   *
+   * Only layout: model changes were committed as they were made, because a command is validated
+   * and attributed at the moment it is issued (ADR-0004).
+   */
+  const save = useCallback(async () => {
+    if (!viewKey || !dirty) {
+      return
+    }
+    if (pendingSave.current) {
+      window.clearTimeout(pendingSave.current)
+      pendingSave.current = null
+    }
+    await saveLayout.mutateAsync({ positions, sizes, parents: parentsRef.current, router })
+    clearDraft(workspace, viewKey)
+    setDirty(false)
+    setMessage({ kind: 'info', text: 'View saved.' })
+  }, [viewKey, dirty, saveLayout, positions, sizes, router, workspace])
+
+  /** Throws the local draft away and goes back to what the server holds. */
+  const discard = useCallback(async () => {
+    if (!viewKey || !window.confirm('Discard the unsaved changes to this view?')) {
+      return
+    }
+    clearDraft(workspace, viewKey)
+    setDirty(false)
+    await queryClient.invalidateQueries({ queryKey: ['view', workspace] })
+  }, [viewKey, workspace, queryClient])
 
   // Place anything on the view that has no stored coordinates yet.
   useEffect(() => {
@@ -318,7 +373,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     if (Object.keys(positions).length === 0) {
       void autoLayout(onView, view.data.relationships).then((laid) => {
         setPositions(laid)
-        scheduleLayoutSave(laid)
+        rememberChange(laid)
       })
     } else {
       let taken = positions
@@ -333,9 +388,9 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       }
       const next = { ...positions, ...placed }
       setPositions(next)
-      scheduleLayoutSave(next)
+      rememberChange(next)
     }
-  }, [view.data, onView, positions, sizes, geometryFor, scheduleLayoutSave])
+  }, [view.data, onView, positions, sizes, geometryFor, rememberChange])
 
   // Fitting waits for real coordinates. Auto-layout resolves through ELK after the canvas mounts,
   // and refitting before that opens the view zoomed into an empty corner.
@@ -440,9 +495,9 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     (next: Geometry) => {
       setPositions(next.positions)
       setSizes(next.sizes)
-      scheduleLayoutSave(next.positions, next.sizes)
+      rememberChange(next.positions, next.sizes)
     },
-    [scheduleLayoutSave],
+    [rememberChange],
   )
 
   /**
@@ -461,7 +516,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       dragOrigin.current = null
       setPositions(next.positions)
       setSizes(next.sizes)
-      scheduleLayoutSave(next.positions, next.sizes)
+      rememberChange(next.positions, next.sizes)
       if (!before || !viewKey) {
         return
       }
@@ -472,7 +527,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         history.push({ kind: 'layout', view: viewKey, before, after: next.positions, label: 'Move' })
       }
     },
-    [viewKey, history, scheduleLayoutSave],
+    [viewKey, history, rememberChange],
   )
 
   /**
@@ -484,19 +539,14 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    * the editor asks whether it should, exactly as Archi's ARM does.
    */
   const onNest = useCallback(
-    async (key: string, parent: string | null, next: Geometry) => {
+    (key: string, parent: string | null, next: Geometry) => {
       setPositions(next.positions)
       setSizes(next.sizes)
       rememberParents(next.parents)
-      // Nothing queued by the drag may land after this and undo it.
-      if (pendingSave.current) {
-        window.clearTimeout(pendingSave.current)
-        pendingSave.current = null
-      }
-      // Saved at once rather than debounced: nesting is a decision, not a frame of a drag, and
-      // the relationship offered next refetches the view — which would answer with the layout as
-      // it was before the drop and undo the nesting a moment after it was made.
-      await saveLayout.mutateAsync(next)
+      // Recorded like any other change. The refetch that the offered relationship triggers no
+      // longer threatens it: the draft is laid over whatever the server returns, so the nesting
+      // survives without having to be raced to the server first.
+      rememberChange(next.positions, next.sizes, next.parents)
       if (!parent) {
         return
       }
@@ -531,7 +581,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         permitted,
       })
     },
-    [byKey, allRelationships, metamodel, saveLayout, rememberParents],
+    [byKey, allRelationships, metamodel, rememberChange, rememberParents],
   )
 
   const connect = useCallback(
@@ -588,20 +638,17 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   /**
    * How this view routes its connections.
    *
-   * Presentation, so it travels with the layout rather than as a command: switching a diagram to
-   * orthogonal routing is not a documentation decision anybody needs attributed (ADR-0003). Saved
-   * for everyone rather than kept in this browser, because a colleague opening the view should see
-   * the diagram as it was drawn.
+   * Part of the arrangement, so it goes into the draft with everything else and reaches the
+   * server on save. It is a property of the diagram rather than of this browser — a colleague
+   * opening the view should see it as it was drawn — which is why it is saved at all.
    */
-  const setRouter = useCallback(
-    async (router: ConnectionRouter) => {
-      if (!viewKey) {
-        return
-      }
-      await api.saveLayout(workspace, viewKey, layoutNodes({ positions, sizes, parents }), router)
-      await queryClient.invalidateQueries({ queryKey: ['view', workspace] })
+  const chooseRouter = useCallback(
+    (next: ConnectionRouter) => {
+      routerRef.current = next
+      setRouter(next)
+      rememberChange(positions, sizes, parentsRef.current, next)
     },
-    [api, workspace, viewKey, positions, sizes, parents, queryClient],
+    [positions, sizes, rememberChange],
   )
 
   /**
@@ -787,10 +834,10 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   const restoreLayout = useCallback(
     (positionsToRestore: Record<string, Position>) => {
       setPositions(positionsToRestore)
-      scheduleLayoutSave(positionsToRestore)
+      rememberChange(positionsToRestore)
       return true
     },
-    [scheduleLayoutSave],
+    [rememberChange],
   )
 
   /**
@@ -836,7 +883,11 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       }
       const mod = event.ctrlKey || event.metaKey
       const key = event.key.toLowerCase()
-      if (mod && key === 'z' && !event.shiftKey) {
+      if (mod && key === 's') {
+        // The browser's own save dialog is never what someone editing a diagram wants.
+        event.preventDefault()
+        void save()
+      } else if (mod && key === 'z' && !event.shiftKey) {
         event.preventDefault()
         void undo()
       } else if (mod && ((key === 'z' && event.shiftKey) || key === 'y')) {
@@ -858,7 +909,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [undo, redo, selected, selectedLink, deleteRelationship, removeFromView])
+  }, [undo, redo, save, selected, selectedLink, deleteRelationship, removeFromView])
 
   const viewItems: TreeItem[] = useMemo(
     () =>
@@ -1013,6 +1064,23 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           </label>
           <button
             type="button"
+            className={dirty ? 'ag-tool-active' : ''}
+            onClick={() => void save()}
+            disabled={!dirty || saveLayout.isPending}
+            title="Save this view's arrangement (Ctrl+S)"
+          >
+            {saveLayout.isPending ? 'Saving…' : dirty ? 'Save *' : 'Saved'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void discard()}
+            disabled={!dirty}
+            title="Throw away the unsaved arrangement and go back to the saved one"
+          >
+            Discard
+          </button>
+          <button
+            type="button"
             className={connecting ? 'ag-tool-active' : ''}
             onClick={() => {
               setConnecting((on) => !on)
@@ -1028,9 +1096,9 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
             <span>Lines</span>
             <select
               className="ag-router-select"
-              value={view.data?.router ?? 'straight'}
+              value={router}
               disabled={!viewKey}
-              onChange={(event) => void setRouter(event.target.value as ConnectionRouter)}
+              onChange={(event) => chooseRouter(event.target.value as ConnectionRouter)}
             >
               <option value="straight">Straight</option>
               <option value="orthogonal">Orthogonal</option>
@@ -1042,7 +1110,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
               view.data &&
               void autoLayout(onView, view.data.relationships).then((laid) => {
                 setPositions(laid)
-                scheduleLayoutSave(laid)
+                rememberChange(laid)
                 setGeometryVersion((version) => version + 1)
                 setFitToken(`auto:${Date.now()}`)
               })
@@ -1103,7 +1171,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
               onGeometry={onGeometry}
               onGeometryStart={onGeometryStart}
               onGeometryEnd={onGeometryEnd}
-              onNest={(key, parent, next) => void onNest(key, parent, next)}
+              onNest={onNest}
               connecting={connecting}
               connectFrom={connectFrom}
               onConnectPick={onConnectPick}
@@ -1122,7 +1190,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
                 }
               }}
               onCancelEdit={() => setEditingKey(null)}
-              router={view.data?.router ?? 'straight'}
+              router={router}
               fitToken={fitToken}
               geometryVersion={geometryVersion}
             />
