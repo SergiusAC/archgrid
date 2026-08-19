@@ -7,9 +7,16 @@ interface PaletteProps {
   metamodel: Metamodel
   viewpoint: string
   onViewpointChange: (code: string) => void
-  onCreate: (type: ElementType) => void
+  /**
+   * Picked up rather than clicked.
+   *
+   * A click has to invent a position for the new element, and the one it invents is never the one
+   * the user had in mind — they then move it, every time. Carrying it to the spot says where it
+   * goes as part of the same gesture that says what it is.
+   */
+  onPickUp: (type: ElementType) => void
   profiles: { name: string; conceptType: string }[]
-  onCreateProfiled: (profileName: string) => void
+  onPickUpProfile: (profileName: string) => void
   busy: boolean
 }
 
@@ -24,9 +31,9 @@ export default function Palette({
   metamodel,
   viewpoint,
   onViewpointChange,
-  onCreate,
+  onPickUp,
   profiles,
-  onCreateProfiled,
+  onPickUpProfile,
   busy,
 }: PaletteProps) {
   const grouped = useMemo(() => {
@@ -67,8 +74,8 @@ export default function Palette({
                 type="button"
                 className="ag-palette-item ag-profiled"
                 disabled={busy}
-                title={`${profile.name} — a kind of ${profile.conceptType}`}
-                onClick={() => onCreateProfiled(profile.name)}
+                title={`${profile.name} — a kind of ${profile.conceptType}. Drag onto the canvas.`}
+                onPointerDown={() => onPickUpProfile(profile.name)}
               >
                 «{profile.name}»
               </button>
@@ -87,8 +94,8 @@ export default function Palette({
                 type="button"
                 className={`ag-palette-item ag-layer-${type.layer}`}
                 disabled={busy}
-                title={type.name}
-                onClick={() => onCreate(type)}
+                title={`${type.name} — drag onto the canvas`}
+                onPointerDown={() => onPickUp(type)}
               >
                 {type.name}
               </button>

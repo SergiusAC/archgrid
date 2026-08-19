@@ -78,6 +78,14 @@ interface CanvasProps {
    * the editor answers with what may follow, and creates the element and the relationship.
    */
   onMagic: (source: string, clientX: number, clientY: number, at: Position) => void
+  /**
+   * A type carried over from the palette and released on the canvas.
+   *
+   * The canvas reports where in model coordinates; what to create with it is the editor's
+   * business. Set while a drag is in progress so the canvas knows to expect a drop at all.
+   */
+  dropping: boolean
+  onDropHere: (at: Position) => void
   onContextMenu: (key: string, clientX: number, clientY: number) => void
   onBlankClick: () => void
   onCommitName: (key: string, name: string) => void
@@ -102,12 +110,12 @@ const MIN_WIDTH = 120
 const MIN_HEIGHT = 60
 
 /**
- * How near counts as aligned: exactly the grid step.
+ * How near an edge has to be for the guide to point it out: one grid step.
  *
- * It has to reach a whole step, because dragging snaps to the grid first and a near miss is
- * therefore always exactly one step away — a smaller tolerance never fires at all. It must not
- * reach further either: everything now lands on the lattice, so anything beyond one step is a
- * deliberate gap and grabbing at it is the editor arguing with the user.
+ * The guide advises and does not act. It used to pull the element flush, which sounds helpful and
+ * is not: the editor decides where the box goes and the user is left fighting it for the few
+ * pixels it disagrees about. Dragging already steps by the grid, so anyone aiming at an alignment
+ * lands on it — the line is there to say when they have.
  */
 const GUIDE_TOLERANCE = GRID
 
@@ -479,7 +487,6 @@ export default function Canvas(props: CanvasProps) {
       }
       const span = model.getBBox() ?? box
 
-      const shift: { x?: number; y?: number } = {}
       for (const axis of GUIDE_AXES) {
         const mine = axis.of(box)
         // The nearest candidate, not the last one that happened to be in range: iterating and
@@ -496,11 +503,6 @@ export default function Canvas(props: CanvasProps) {
         if (!best) {
           continue
         }
-        if (axis.vertical) {
-          shift.x = box.x + (best.line - mine)
-        } else {
-          shift.y = box.y + (best.line - mine)
-        }
         const line = document.createElementNS('http://www.w3.org/2000/svg', 'line')
         const from = axis.vertical ? span.y - 200 : span.x - 200
         const to = axis.vertical ? span.y + span.height + 200 : span.x + span.width + 200
@@ -510,9 +512,6 @@ export default function Canvas(props: CanvasProps) {
         line.setAttribute('y2', String(axis.vertical ? to : best.line))
         line.setAttribute('class', 'ag-guide')
         guides.appendChild(line)
-      }
-      if (shift.x !== undefined || shift.y !== undefined) {
-        moved.position(shift.x ?? box.x, shift.y ?? box.y)
       }
     })
     view.on('element:pointerup blank:pointerdown', clearGuides)
@@ -559,6 +558,17 @@ export default function Canvas(props: CanvasProps) {
       view.translate(translate.tx + event.clientX - after.x, translate.ty + event.clientY - after.y)
       void box
     }
+    // A drop from the palette. Listened for on the paper rather than on the window so it is
+    // handled before the editor's own pointerup ends the drag.
+    const onDrop = (event: PointerEvent) => {
+      if (!latest.current.dropping) {
+        return
+      }
+      const at = view.clientToLocalPoint({ x: event.clientX, y: event.clientY })
+      latest.current.onDropHere({ x: Math.round(at.x), y: Math.round(at.y) })
+    }
+    element.addEventListener('pointerup', onDrop)
+
     window.addEventListener('pointermove', onPointerMove)
     window.addEventListener('pointerup', onPointerUp)
     element.addEventListener('wheel', onWheel, { passive: false })
@@ -593,6 +603,7 @@ export default function Canvas(props: CanvasProps) {
       window.removeEventListener('pointermove', onPointerMove)
       window.removeEventListener('pointerup', onPointerUp)
       element.removeEventListener('wheel', onWheel)
+      element.removeEventListener('pointerup', onDrop)
       minimap.current?.remove()
       view.remove()
       // Explicitly, and not only through the view: React's double-invoked effects left the first

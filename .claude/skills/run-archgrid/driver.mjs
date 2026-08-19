@@ -127,6 +127,26 @@ async function openRepository(page) {
   await page.waitForTimeout(3000)
 }
 
+/**
+ * Carries a type from the palette onto the canvas.
+ *
+ * The palette is picked up and put down rather than clicked, so the element lands where it was
+ * released. Pointer events, not HTML5 drag-and-drop, which is what the editor implements.
+ */
+async function dragFromPalette(page, label, at) {
+  await page.getByRole('tab', { name: /^Palette/ }).click()
+  const item = page.locator('.ag-palette-item', { hasText: new RegExp(`^${label}$`) }).first()
+  // The palette scrolls: a type in the technology layer sits below the fold, and its box is then
+  // a point outside the window that the mouse cannot reach.
+  await item.scrollIntoViewIfNeeded()
+  const from = await item.boundingBox()
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(at.x, at.y, { steps: 12 })
+  await page.mouse.up()
+  await page.waitForTimeout(2500)
+}
+
 async function repositoryCount(page) {
   const label = await page.getByRole('tab', { name: /^Repository/ }).textContent()
   return Number(label?.match(/\d+/)?.[0] ?? 0)
@@ -151,11 +171,15 @@ async function smoke(page) {
   page.once('dialog', (dialog) => dialog.accept(`smoke ${process.pid}`))
   await page.locator('.ag-block-button').first().click()
   await page.waitForTimeout(2500)
-  await page.getByRole('tab', { name: /^Palette/ }).click()
+  const canvasBox = await page.locator('.ag-canvas').boundingBox()
+  let column = 0
   for (const label of ['Application Component', 'System Software']) {
-    await page.locator('.ag-palette-item', { hasText: new RegExp(`^${label}$`) }).first().click()
-    await page.waitForTimeout(2000)
+    await dragFromPalette(page, label, {
+      x: canvasBox.x + 260 + column * 300,
+      y: canvasBox.y + 260,
+    })
     await page.keyboard.press('Escape')
+    column += 1
   }
   await page.waitForTimeout(1500)
 
@@ -274,9 +298,8 @@ async function smoke(page) {
   // --- undo / redo through the keyboard ---
   const before = await page.locator('.ag-paper .ag-node').count()
   // The palette lives behind its own tab now that views have one too.
-  await page.getByRole('tab', { name: /^Palette/ }).click()
-  await page.locator('.ag-palette-item', { hasText: /^Application Service$/ }).first().click()
-  await page.waitForTimeout(2500)
+  const room = await page.locator('.ag-canvas').boundingBox()
+  await dragFromPalette(page, 'Application Service', { x: room.x + 700, y: room.y + 560 })
   const created = await page.locator('.ag-paper .ag-node').count()
   // Escape, not a click at a fixed spot: a new element opens its name editor over itself, and
   // the canvas now centres its content, so a fixed point lands *in that input* — where Ctrl+Z
@@ -376,10 +399,14 @@ async function interactions(page) {
   await page.locator('.ag-block-button').first().click()
   await page.waitForTimeout(2500)
 
+  let dropColumn = 0
   const addElement = async (label, name) => {
-    await page.getByRole('tab', { name: /^Palette/ }).click()
-    await page.locator('.ag-palette-item', { hasText: new RegExp(`^${label}$`) }).first().click()
-    await page.waitForTimeout(2000)
+    const canvas = await page.locator('.ag-canvas').boundingBox()
+    await dragFromPalette(page, label, {
+      x: canvas.x + 220 + (dropColumn % 3) * 320,
+      y: canvas.y + 200 + Math.floor(dropColumn / 3) * 220,
+    })
+    dropColumn += 1
     if (await page.locator('.ag-node-name-input').count()) {
       await page.locator('.ag-node-name-input').fill(name)
       await page.keyboard.press('Enter')
@@ -577,15 +604,18 @@ async function interactions(page) {
   const wantCentre = frameBox.x + frameBox.width / 2
   await page.mouse.move(childBox.x + childBox.width / 2, childBox.y + childBox.height / 2)
   await page.mouse.down()
-  // Aim a few pixels off centre: near enough for the guide to finish the job.
-  await page.mouse.move(wantCentre + 5, childBox.y + childBox.height / 2, { steps: 12 })
+  await page.mouse.move(wantCentre, childBox.y + childBox.height / 2, { steps: 12 })
   await page.waitForTimeout(250)
+  check('centring a child shows the guide that says so', (await page.locator('.ag-guide').count()) > 0)
   await page.mouse.up()
   await page.waitForTimeout(1200)
   const centred = await nodeAt(api).locator('.ag-body').boundingBox()
+  // Within half a grid step: aiming at the centre lands on it, and nothing drags it off again.
+  // The guide advises now — it used to pull the element flush, which made centring impossible
+  // because every other element nearby was pulling too.
   check(
-    'a child snaps to the centre of its container',
-    Math.abs(centred.x + centred.width / 2 - wantCentre) < 1.5,
+    'and the child lands where it was aimed',
+    Math.abs(centred.x + centred.width / 2 - wantCentre) <= 6,
     `child centre ${Math.round(centred.x + centred.width / 2)} vs container centre ${Math.round(wantCentre)}`,
   )
   await page.screenshot({ path: `${outDir}/38-centred.png` })
@@ -716,11 +746,12 @@ async function interactions(page) {
    */
   await page.locator('.ag-splitter-left .ag-splitter-toggle').click()
   await page.waitForTimeout(400)
-  await page.getByRole('tab', { name: /^Palette/ }).click()
+  const spread = await page.locator('.ag-canvas').boundingBox()
+  let slot = 0
   for (const label of ['Business Actor', 'Business Process', 'Business Object', 'Application Function']) {
-    await page.locator('.ag-palette-item', { hasText: new RegExp(`^${label}$`) }).first().click()
-    await page.waitForTimeout(250)
+    await dragFromPalette(page, label, { x: spread.x + 200 + slot * 240, y: spread.y + 620 })
     await page.keyboard.press('Escape')
+    slot += 1
   }
   await page.waitForTimeout(3000)
   const conflict = await page.locator('.ag-banner-error').count()
@@ -744,11 +775,13 @@ async function interactions(page) {
   await page.mouse.up()
   await page.waitForTimeout(1200)
   check('guides clear once the drag ends', (await page.locator('.ag-guide').count()) === 0)
-  const snapped = await nodeAt(ledgerKey).locator('.ag-body').boundingBox()
+  // Advice, not action: the guide says when an edge lines up and leaves the element alone. It
+  // used to pull the box flush, which meant the editor spent the last few pixels arguing.
+  const settled = await nodeAt(ledgerKey).locator('.ag-body').boundingBox()
   check(
-    'the element snaps flush rather than nearly',
-    Math.abs(snapped.x - target.x) < 1.5,
-    `left edges ${Math.round(snapped.x)} vs ${Math.round(target.x)}`,
+    'the guide advises without moving the element',
+    Math.abs(settled.x - (target.x + 5)) < 12,
+    `left edge ${Math.round(settled.x)}, aimed at ${Math.round(target.x + 5)}`,
   )
 
   /*

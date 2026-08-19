@@ -170,6 +170,16 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   const routerRef = useRef<ConnectionRouter>('straight')
   /** Whether the arrangement in hand differs from the one the server holds. */
   const [dirty, setDirty] = useState(false)
+  /**
+   * The type being carried from the palette, and where the cursor is holding it.
+   *
+   * Carried rather than clicked: a click has to invent a position, and the one it invents is
+   * never the one the user had in mind. Pointer events rather than HTML5 drag-and-drop, because
+   * the canvas needs the drop point in its own coordinates and a native drag image would have to
+   * be fought rather than used.
+   */
+  const [dropping, setDropping] = useState<{ type: ElementType; profile?: string } | null>(null)
+  const [dropAt, setDropAt] = useState<{ x: number; y: number } | null>(null)
   const rememberParents = useCallback((next: Record<string, string | null>) => {
     parentsRef.current = next
     setParents(next)
@@ -693,6 +703,24 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     [connectFrom, byKey, onConnect],
   )
 
+  useEffect(() => {
+    if (!dropping) {
+      return
+    }
+    const onMove = (event: PointerEvent) => setDropAt({ x: event.clientX, y: event.clientY })
+    // The canvas has its own pointerup on the paper and runs first; this only ends the gesture.
+    const onUp = () => {
+      setDropping(null)
+      setDropAt(null)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+  }, [dropping])
+
   /** New elements join the repository and land on the current view in one commit. */
   const createElement = useCallback(
     (typeRef: string, displayName: string) => {
@@ -1029,9 +1057,11 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
             onViewpointChange={(code) =>
               viewKey && apply.mutate({ commands: [{ op: 'set-viewpoint', key: viewKey, viewpoint: code }], label: 'Change viewpoint' })
             }
-            onCreate={(type: ElementType) => createElement(type.concept, type.name)}
+            onPickUp={(type: ElementType) => setDropping({ type })}
             profiles={profiles}
-            onCreateProfiled={(name) => createElement(name, name)}
+            onPickUpProfile={(name) =>
+              setDropping({ type: metamodel.elementTypes[0], profile: name })
+            }
             busy={apply.isPending}
           />
         )}
@@ -1212,6 +1242,26 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
               }}
               onCancelEdit={() => setEditingKey(null)}
               router={router}
+              dropping={dropping != null}
+              onDropHere={(at) => {
+                if (!dropping) {
+                  return
+                }
+                // Centred on the cursor: it was pointing at where the element should be, not at
+                // the pixel its top-left corner should occupy.
+                const snap = (value: number) => Math.round(value / GRID) * GRID
+                placeAt.current[uniqueKey(dropping.profile ?? dropping.type.name, byKey)] = {
+                  x: snap(at.x - NODE_WIDTH / 2),
+                  y: snap(at.y - NODE_HEIGHT / 2),
+                }
+                if (dropping.profile) {
+                  createElement(dropping.profile, dropping.profile)
+                } else {
+                  createElement(dropping.type.concept, dropping.type.name)
+                }
+                setDropping(null)
+                setDropAt(null)
+              }}
               fitToken={fitToken}
               geometryVersion={geometryVersion}
             />
@@ -1270,6 +1320,12 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         onSelect={(key) => setSelected([key])}
         onDeleteRelationship={deleteRelationship}
       />
+      )}
+
+      {dropping && dropAt && (
+        <div className="ag-drag-ghost" style={{ left: dropAt.x + 12, top: dropAt.y + 12 }}>
+          {dropping.profile ?? dropping.type.name}
+        </div>
       )}
 
       {magic && byKey[magic.source] && (
