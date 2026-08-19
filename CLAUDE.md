@@ -10,9 +10,10 @@ principle, from which most design decisions follow:
 > The architecture graph is the source of truth. Diagrams are views of it, documentation is
 > a projection of it, AI proposes changes to it and never writes to it directly.
 
-The project is at **phase 3 (editor) in progress** on a nine-phase plan: foundation, the
-ArchiMate metamodel, the command pipeline and a working canvas exist; views, history UI,
-import, AI and enterprise readiness do not. Before proposing work, read `docs/03-roadmap.md`
+The project is at **phase 4 (views, derivation, projections) in progress** on a nine-phase plan:
+foundation, the ArchiMate metamodel, the command pipeline, views with folders and an editor of
+roughly Archi's capability exist; C4 projections, view filters, history UI, import, AI and
+enterprise readiness do not. Before proposing work, read `docs/03-roadmap.md`
 to see which phase the request belongs to — much of what looks "missing" is deliberately
 deferred. `docs/04-domain-model.md` explains the entities and, in particular, the four levels
 of "type-ness" that are easy to conflate.
@@ -77,7 +78,7 @@ Not two layers, three. This is the most load-bearing decision in the product:
 |---|---|---|
 | Semantic model — elements, relationships, types | Yes, by commit | Transaction + metamodel validation |
 | View definition — viewpoint, membership, filters | Yes, by commit | Transaction |
-| Layout — coordinates, sizes, waypoints, styles | No; mutable, optimistic lock | Last-write-wins |
+| Layout — coordinates, sizes, nesting, line router | No; mutable, optimistic lock | Last-write-wins |
 
 Separating view definition from layout is what keeps the change log meaningful: dragging a
 box must never produce a commit. It is also what makes CRDT viable later for layout only,
@@ -87,12 +88,15 @@ Consequence to respect in any UI work: **an element exists independently of any 
 "Remove from this view" and "delete from the model" must stay distinct operations, the second
 showing where else the element is used.
 
-Dropping one element into another on the canvas is the single gesture that crosses the line: the
-containment goes through `move-element` and produces a commit, the coordinates and the container's
-new size do not. Keep those two halves separate — and note the ordering trap, which has already
-cost time: the commit refetches the view, so a debounced layout save still in flight is answered
-with the geometry the server held before the drop. Geometry travels to `saveLayout` as an explicit
-argument for exactly this reason, never read from component state at request time.
+**Nesting is presentation, not structure (ADR-0011).** Dropping one element into another changes
+where it is drawn on *that* view and nothing else — it is layout, produces no commit, and the same
+element may stand alone on the next view. What the nesting *means* is a separate question, so the
+editor offers to create a structural relationship; the relationship then lives in the model like
+any other and its line is merely hidden where the nesting already says it.
+
+`element.parent` still exists in the domain, in `move-element` and in the schema, and
+`RelationshipDerivation` still reads it as composition — so derivation leans on a field the UI no
+longer fills. That is the unfinished half of ADR-0011, not a design.
 
 ### Changes to a model are commands only (ADR-0004)
 
@@ -132,12 +136,17 @@ Four layers now, and what is versioned matters:
 |---|---|
 | Elements, relationships | yes, by commit |
 | View name, viewpoint, membership | yes, by commit |
-| Layout coordinates | **no** — own endpoint, `PUT .../views/{key}/layout` |
+| Layout: coordinates, sizes, nesting, router | **no** — own endpoint, `PUT .../views/{key}/layout` |
 | Folders | **no** — plain REST |
 
 **A folder means nothing to the metamodel.** It does not affect validation, derivation or C4
-depth; that is `element.parent` (ArchiMate composition), which is a different thing entirely.
-Confusing them gives a product where filing something elsewhere changes what a diagram shows.
+depth; a Composition relationship does, and drawing one element inside another is a third thing
+again — presentation of that relationship on one view (ADR-0011). Confusing them gives a product
+where filing something elsewhere changes what a diagram shows.
+
+Filing is read alongside the graph rather than from it, which is easy to forget: a listing that
+returns elements without their folder makes the tree draw everything at the root, and moving
+something then appears to do nothing at all.
 Two separate trees, `elements` and `views`. Deleting a folder moves its contents up rather
 than deleting them.
 
@@ -305,14 +314,30 @@ Non-obvious breakages already hit and fixed — do not re-introduce:
   `AuthenticationException` or `ErrorResponseException`.** They must reach Spring Security's
   filter and Spring's status resolver, otherwise every 403 and 404 is reported as 500. This
   already happened once; `ApiExceptionHandler` rethrows them and tests pin both statuses.
-- **React Flow wraps `markerEnd`/`markerStart` in `url(#…)` itself** — pass the bare marker id.
-  Wrapping it yourself yields `url(#url(#id))`, the arrowhead silently does not render, and the
-  line still draws so nothing looks broken enough to notice without opening the DOM.
-- React Flow needs explicit `width`/`height` on nodes for the minimap to draw them, and
-  `deleteKeyCode={null}` so its built-in delete cannot remove nodes without going through a
-  command.
-- `fitView` runs at mount, before async auto-layout has produced positions. Refit once the
-  first real positions land or the model opens zoomed into a corner.
+- **The canvas is JointJS, not React Flow** (ADR-0010). Everything below `Canvas.tsx` is
+  imperative and lives outside React's control; the traps are all on that boundary and none of
+  them is visible to `tsc` or the linter:
+  - **Never pass React's own `div` as the paper's `el`.** JointJS views are Backbone views and
+    `remove()` deletes the element it was given — under double-invoked effects the second paper
+    then renders into a node no longer in the document, and the canvas is silently blank.
+    Construct the paper without `el` and append `view.el`.
+  - **SVG percentages resolve against the viewport, not the element.** `cx: '50%'` puts a handle
+    in the middle of the canvas, inflates the element's bounding box and drags every line to that
+    phantom box. Use JointJS `calc()` expressions.
+  - **`attrs.root.class` replaces the class attribute**, so JointJS's own `joint-element` /
+    `joint-link` have to be repeated or the library stops finding its views.
+  - **`sourceMarker: null` renders `marker-start="undefined"`** — a reference to nothing. The line
+    still draws, so the diagram merely looks plain. Pass a marker or the string `'none'`.
+  - **Element tools cannot be rebuilt on every render.** A resize emits geometry each frame; if
+    that re-render replaces the grip, the gesture dies on the first frame.
+  - **Geometry belongs to the canvas while it is mounted.** Pushing positions from props on every
+    render races the drag with values one render out of date. External changes — auto-layout, undo
+    — arrive through an explicit `geometryVersion`.
+- **Layout is saved when the user asks, not automatically.** Changes live as a draft in
+  `localStorage` and reach the server on Save or Ctrl+S. The old debounce was the origin of every
+  ordering trap here: a save in flight racing a refetch, a write landing after the change it was
+  meant to record. Model commands are *not* drafted — a command is validated and committed when
+  it is issued (ADR-0004).
 - Java compiles with `-Werror` and a curated `-Xlint` set; TypeScript runs with
   `erasableSyntaxOnly`, so constructor parameter properties are rejected.
 

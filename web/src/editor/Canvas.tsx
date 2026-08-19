@@ -347,13 +347,17 @@ export default function Canvas(props: CanvasProps) {
       defaultConnector: { name: 'jumpover', args: { size: 6, jump: 'arc' } },
       /*
        * Archi calls this "orthogonal connection anchors", and it is what makes a diagram look
-       * drafted rather than assembled: the line leaves from the middle of the side facing where it
-       * is going. Two elements that line up are then joined by an exactly horizontal or vertical
-       * line without anyone arranging it, and two that do not are joined side-to-side rather than
-       * corner-to-corner.
+       * drafted rather than assembled.
        *
-       * The help does not describe how Archi computes the anchor, so this is our own reading of
-       * the requirement rather than a port of a documented algorithm.
+       * `perpendicular` slides the anchor along the facing side so the line meets it at a right
+       * angle wherever the two boxes overlap in a band, and falls back to the centre when they do
+       * not. So two elements anywhere within each other's width are joined by an exactly vertical
+       * line, not only two whose centres happen to agree — which is the behaviour Archi has and
+       * the reason it beats `midSide`, which aims at one fixed point per side and leaves a slight
+       * diagonal whenever the boxes are offset at all.
+       *
+       * The help does not describe how Archi computes the anchor, so this is a reading of the
+       * behaviour rather than a port of a documented algorithm.
        */
       defaultAnchor: { name: 'perpendicular', args: { padding: 0 } },
       embeddingMode: true,
