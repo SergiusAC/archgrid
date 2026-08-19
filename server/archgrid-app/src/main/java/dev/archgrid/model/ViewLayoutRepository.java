@@ -75,6 +75,58 @@ class ViewLayoutRepository {
     }
 
     /**
+     * Relationships this view declines to draw.
+     *
+     * <p>The model still asserts them; hiding is a statement about one diagram, not about the
+     * architecture (ADR-0011). Kept beside the coordinates for the same reason they are: nothing
+     * here belongs in the history.
+     */
+    List<String> hidden(UUID modelId, String viewKey) {
+        return jdbc.sql(
+                        """
+                        select r."key"
+                        from view_hidden_relationship h
+                        join view v on v.id = h.view_id
+                        join relationship r on r.id = h.relationship_id
+                        where v.model_id = :modelId and v."key" = :viewKey
+                        """)
+                .param("modelId", modelId)
+                .param("viewKey", viewKey)
+                .query(String.class)
+                .list();
+    }
+
+    /** Replaces the set wholesale: the client sends what the view hides, not a change to it. */
+    void saveHidden(UUID modelId, String viewKey, List<String> relationshipKeys) {
+        jdbc.sql(
+                        """
+                        delete from view_hidden_relationship h
+                        using view v
+                        where v.id = h.view_id and v.model_id = :modelId and v."key" = :viewKey
+                        """)
+                .param("modelId", modelId)
+                .param("viewKey", viewKey)
+                .update();
+        for (String key : relationshipKeys) {
+            // Silently ignores a relationship that no longer exists, for the same reason `save`
+            // ignores an element that has left the view: a race here costs a line being drawn.
+            jdbc.sql(
+                            """
+                            insert into view_hidden_relationship (view_id, relationship_id)
+                            select v.id, r.id
+                            from view v
+                            join relationship r on r.model_id = v.model_id and r."key" = :relationshipKey
+                            where v.model_id = :modelId and v."key" = :viewKey
+                            on conflict do nothing
+                            """)
+                    .param("relationshipKey", key)
+                    .param("modelId", modelId)
+                    .param("viewKey", viewKey)
+                    .update();
+        }
+    }
+
+    /**
      * Upserts positions.
      *
      * <p>Silently ignores an element that is not on the view: a drag that races a removal should

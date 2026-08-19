@@ -184,6 +184,8 @@ final class ModelApiDtos {
             List<RelationshipResponse> relationships,
             List<DerivedRelationshipResponse> derived,
             List<LayoutNodeResponse> layout,
+            /** Relationships this view does not draw. Presentation only; the model still holds them. */
+            List<String> hidden,
             /** How this view draws its connections: 'straight' or 'orthogonal'. Presentation only. */
             String router) {}
 
@@ -203,8 +205,11 @@ final class ModelApiDtos {
             @NotBlank String element, double x, double y, Double width, Double height, String parent, Integer z) {}
 
     /** Coordinates never travel as commands: moving a box is not a model change (ADR-0003). */
-    /** `router` is optional: a plain drag saves coordinates and must not disturb the routing. */
-    record LayoutRequest(@Valid List<LayoutNodeRequest> nodes, String router) {}
+    /**
+     * `router` and `hidden` are optional: a plain drag saves coordinates and must not carry an
+     * opinion about routing, or about which lines this view leaves out.
+     */
+    record LayoutRequest(@Valid List<LayoutNodeRequest> nodes, String router, List<String> hidden) {}
 
     record FolderRequest(@NotBlank @Size(max = 120) String name, String parent) {}
 

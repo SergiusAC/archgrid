@@ -208,6 +208,7 @@ class GraphController {
                                 node.elementKey(), node.x(), node.y(), node.width(), node.height(),
                                 node.parentKey(), node.z()))
                         .toList(),
+                layout.hidden(graphId, viewKey),
                 layout.router(graphId, viewKey));
     }
 
@@ -241,6 +242,9 @@ class GraphController {
                         "Unknown connection router '" + request.router() + "'. Use 'straight' or 'orthogonal'.");
             }
             layout.saveRouter(graphId, viewKey, request.router());
+        }
+        if (request.hidden() != null) {
+            layout.saveHidden(graphId, viewKey, request.hidden());
         }
     }
 

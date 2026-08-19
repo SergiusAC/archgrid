@@ -78,7 +78,7 @@ Not two layers, three. This is the most load-bearing decision in the product:
 |---|---|---|
 | Semantic model — elements, relationships, types | Yes, by commit | Transaction + metamodel validation |
 | View definition — viewpoint, membership, filters | Yes, by commit | Transaction |
-| Layout — coordinates, sizes, nesting, stacking order, line router | No; mutable, optimistic lock | Last-write-wins |
+| Layout — coordinates, sizes, nesting, stacking order, hidden lines, line router | No; mutable, optimistic lock | Last-write-wins |
 
 Separating view definition from layout is what keeps the change log meaningful: dragging a
 box must never produce a commit. It is also what makes CRDT viable later for layout only,
@@ -136,7 +136,7 @@ Four layers now, and what is versioned matters:
 |---|---|
 | Elements, relationships | yes, by commit |
 | View name, viewpoint, membership | yes, by commit |
-| Layout: coordinates, sizes, nesting, stacking order, router | **no** — own endpoint, `PUT .../views/{key}/layout` |
+| Layout: coordinates, sizes, nesting, stacking order, hidden lines, router | **no** — own endpoint, `PUT .../views/{key}/layout` |
 | Folders | **no** — plain REST |
 
 **A folder means nothing to the metamodel.** It does not affect validation, derivation or C4

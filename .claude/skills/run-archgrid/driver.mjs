@@ -1099,6 +1099,86 @@ async function interactions(page) {
   check('the stacking order is kept by Save', reloaded.indexOf(ledgerKey) === 0, reloaded.join(' '))
   await page.screenshot({ path: `${outDir}/40-stacking.png` })
 
+  /*
+   * --- a view may leave a line out ---
+   *
+   * A view draws the relationships whose endpoints are both on it, and until now the only way to
+   * be rid of one was to delete it from the model — a diagram-level wish answered with a
+   * repository-level change. Hiding is presentation (ADR-0011); the model keeps asserting it.
+   */
+  // A point on the line itself: a diagonal's bounding-box centre is empty space, so clicking the
+  // element's box would miss the stroke and land on the canvas.
+  const pointOnLink = () =>
+    page.evaluate(() => {
+      const path = document.querySelector('.ag-paper .ag-link:not(.ag-link-derived) .ag-link-line')
+      if (!path) return null
+      const middle = path.getPointAtLength(path.getTotalLength() / 2)
+      const at = new DOMPoint(middle.x, middle.y).matrixTransform(path.getScreenCTM())
+      return { x: at.x, y: at.y, key: path.closest('.ag-link').getAttribute('data-key') }
+    })
+
+  const linkAt = await pointOnLink()
+  if (linkAt) {
+    const linesBefore = await page.locator('.ag-paper .ag-link').count()
+
+    await page.mouse.click(linkAt.x, linkAt.y, { button: 'right' })
+    await page.waitForSelector('.ag-context-link', { timeout: 5000 })
+    const linkActions = await page.evaluate(() =>
+      [...document.querySelectorAll('.ag-context-link .ag-context-actions > button')].map((b) =>
+        b.textContent.replace(/\s+/g, ' ').trim(),
+      ),
+    )
+    check(
+      'a line offers hiding and deleting as different things',
+      linkActions.length === 2 && linkActions[0].startsWith('Hide on this view'),
+      linkActions.join(' | '),
+    )
+    await page.screenshot({ path: `${outDir}/41-link-menu.png` })
+
+    await page.locator('.ag-context-link button', { hasText: 'Hide on this view' }).click()
+    await page.waitForTimeout(800)
+    check(
+      'hiding takes the line off the view',
+      (await page.locator('.ag-paper .ag-link').count()) === linesBefore - 1,
+      `${linesBefore} -> ${await page.locator('.ag-paper .ag-link').count()}`,
+    )
+    check('and the view admits it is holding something back', (await page.locator('.ag-hidden-count').count()) === 1)
+
+    await page.keyboard.press('Control+s')
+    await page.waitForTimeout(2500)
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await openRepository(page)
+    await page.locator('.ag-tree-item', { hasText: viewName }).first().click()
+    await page.waitForTimeout(3500)
+    check(
+      'the view still hides it after a reload',
+      (await page.locator('.ag-hidden-count').textContent())?.includes('1'),
+      (await page.locator('.ag-hidden-count').textContent()) ?? 'no counter',
+    )
+
+    // And what was hidden can be found and put back.
+    await page.locator('.ag-hidden-count').click()
+    await page.waitForTimeout(400)
+    check('the hidden lines can be read', (await page.locator('.ag-hidden-list li').count()) === 1)
+    // Named endpoints, not a bare key: the row is drawn from the relationship the model still
+    // holds, so seeing it here is the evidence that hiding did not delete anything.
+    const row = (await page.locator('.ag-hidden-list li span').first().textContent())?.trim() ?? ''
+    check('and the model still holds what the view hides', row.includes('→') && !row.includes(linkAt.key), row)
+    await page.screenshot({ path: `${outDir}/42-hidden-list.png` })
+    await page.locator('.ag-hidden-list li .ag-link').first().click()
+    await page.waitForTimeout(800)
+    check(
+      'showing it again draws it',
+      (await page.locator('.ag-paper .ag-link').count()) === linesBefore &&
+        (await page.locator('.ag-hidden-count').count()) === 0,
+      `${await page.locator('.ag-paper .ag-link').count()} lines`,
+    )
+    await page.keyboard.press('Control+s')
+    await page.waitForTimeout(2000)
+  } else {
+    check('a line offers hiding and deleting as different things', false, 'no line on the view to try it on')
+  }
+
   report()
 }
 

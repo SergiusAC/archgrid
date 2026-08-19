@@ -23,6 +23,8 @@ export interface LayoutDraft {
   parents: Record<string, string | null>
   /** Which element is drawn over which — presentation, exactly like the coordinates. */
   order: Record<string, number>
+  /** Relationships this view declines to draw. Also presentation (ADR-0011). */
+  hidden: string[]
   router: ConnectionRouter
   /** When it was last touched, so a stale draft can be reasoned about later. */
   at: number

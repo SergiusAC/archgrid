@@ -16,6 +16,7 @@ import type {
 import { Metamodel } from '../metamodel/Metamodel.ts'
 import Canvas, { type CanvasElement, type CanvasLink, type Geometry } from './Canvas.tsx'
 import ContextMenu, { type ContextTarget } from './ContextMenu.tsx'
+import LinkMenu, { type LinkTarget } from './LinkMenu.tsx'
 import Explorer from './Explorer.tsx'
 import FolderTree, { type TreeItem } from './FolderTree.tsx'
 import MagicMenu from './MagicMenu.tsx'
@@ -59,6 +60,8 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   const [connecting, setConnecting] = useState(false)
   const [connectFrom, setConnectFrom] = useState<string | null>(null)
   const [context, setContext] = useState<ContextTarget | null>(null)
+  const [linkContext, setLinkContext] = useState<LinkTarget | null>(null)
+  const [hiddenOpen, setHiddenOpen] = useState(false)
   const [sidebar, setSidebar] = useState<'views' | 'palette' | 'repository'>('views')
   // The element whose name is being typed in place, straight after creation.
   const [editingKey, setEditingKey] = useState<string | null>(null)
@@ -153,6 +156,15 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   const orderRef = useRef<Record<string, number>>({})
   const [restack, setRestack] = useState<{ keys: string[]; to: 'front' | 'back'; token: number } | null>(null)
   /**
+   * Relationships this view declines to draw.
+   *
+   * Not deleted: the model still asserts them and every other view still draws them. A diagram is
+   * allowed to leave something out — nesting already does exactly that (ADR-0011) — but it has to
+   * say so, which is what the counter in the toolbar is for.
+   */
+  const [hidden, setHidden] = useState<string[]>([])
+  const hiddenRef = useRef<string[]>([])
+  /**
    * Which view the geometry in `positions` belongs to.
    *
    * State, not a ref, and that is the whole point. Both the effect that loads a view's layout and
@@ -192,6 +204,10 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     orderRef.current = next
     setOrder(next)
   }, [])
+  const rememberHidden = useCallback((next: string[]) => {
+    hiddenRef.current = next
+    setHidden(next)
+  }, [])
   // Panel widths are pure presentation, so they live in the browser and nowhere else.
   const [leftWidth, setLeftWidth] = useState(240)
   const [rightWidth, setRightWidth] = useState(288)
@@ -228,12 +244,13 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     setSizes(draft ? { ...storedSizes, ...draft.sizes } : storedSizes)
     rememberParents(draft ? { ...storedParents, ...draft.parents } : storedParents)
     rememberOrder(draft ? { ...storedOrder, ...draft.order } : storedOrder)
+    rememberHidden(draft?.hidden ?? view.data.hidden)
     setRouter(draft?.router ?? view.data.router)
     routerRef.current = draft?.router ?? view.data.router
     setDirty(draft != null)
     setGeometryFor(view.data.key)
     setGeometryVersion((version) => version + 1)
-  }, [view.data, workspace, rememberParents, rememberOrder])
+  }, [view.data, workspace, rememberParents, rememberOrder, rememberHidden])
 
   const refresh = useCallback(async () => {
     await Promise.all([
@@ -316,8 +333,8 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
 
   /** Coordinates go to their own endpoint, never through a command (ADR-0003). */
   const saveLayout = useMutation({
-    mutationFn: (geometry: Geometry & { router: ConnectionRouter }) =>
-      api.saveLayout(workspace, viewKey!, layoutNodes(geometry), geometry.router),
+    mutationFn: (geometry: Geometry & { router: ConnectionRouter; hidden: string[] }) =>
+      api.saveLayout(workspace, viewKey!, layoutNodes(geometry), geometry.router, geometry.hidden),
   })
 
   const pendingSave = useRef<number | null>(null)
@@ -343,6 +360,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         sizes: nextSizes ?? sizes,
         parents: nextParents ?? parentsRef.current,
         order: orderRef.current,
+        hidden: hiddenRef.current,
         router: nextRouter ?? routerRef.current,
       }
       setDirty(true)
@@ -368,7 +386,14 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       window.clearTimeout(pendingSave.current)
       pendingSave.current = null
     }
-    await saveLayout.mutateAsync({ positions, sizes, parents: parentsRef.current, order: orderRef.current, router })
+    await saveLayout.mutateAsync({
+      positions,
+      sizes,
+      parents: parentsRef.current,
+      order: orderRef.current,
+      hidden: hiddenRef.current,
+      router,
+    })
     clearDraft(workspace, viewKey)
     setDirty(false)
     setMessage({ kind: 'info', text: 'View saved.' })
@@ -504,15 +529,30 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     [parents, metamodel],
   )
 
+  /**
+   * What the counter reports: lines this view would draw right now if it were not hiding them.
+   *
+   * The stored set is deliberately wider — a relationship whose endpoint has left the view, or
+   * whose element is temporarily elsewhere, keeps its hidden state for when it comes back. Only
+   * counting what is actually being withheld keeps "2 hidden" from meaning a relationship someone
+   * deleted from the model last week.
+   */
+  const hiddenOnView = useMemo(
+    () => hidden.filter((key) => (view.data?.relationships ?? []).some((r) => r.key === key)),
+    [hidden, view.data],
+  )
+
   const canvasLinks: CanvasLink[] = useMemo(() => {
-    const explicit = (view.data?.relationships ?? []).filter((r) => !expressedByNesting(r)).map((relationship) => ({
-      key: relationship.key,
-      source: relationship.source,
-      target: relationship.target,
-      label: relationship.name ?? relationship.type,
-      type: relationship.type,
-      derived: false,
-    }))
+    const explicit = (view.data?.relationships ?? [])
+      .filter((r) => !expressedByNesting(r) && !hidden.includes(r.key))
+      .map((relationship) => ({
+        key: relationship.key,
+        source: relationship.source,
+        target: relationship.target,
+        label: relationship.name ?? relationship.type,
+        type: relationship.type,
+        derived: false,
+      }))
 
     // Derived lines keep the notation of the relationship they stand for but are drawn faintly
     // and labelled as such. An architect must be able to see at a glance which lines the model
@@ -527,7 +567,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     }))
 
     return [...explicit, ...derived]
-  }, [view.data, expressedByNesting])
+  }, [view.data, expressedByNesting, hidden])
 
   /** Live geometry from a drag or resize. The save is debounced; the state is not. */
   const onGeometry = useCallback(
@@ -557,6 +597,29 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     restackToken.current += 1
     setRestack({ keys, to, token: restackToken.current })
   }, [])
+
+  /**
+   * Leaves a line off this view without unsaying it.
+   *
+   * Layout, so it goes into the draft and reaches the server on Save, like the coordinates it
+   * travels with (ADR-0003). The relationship stays in the model and on every other view.
+   */
+  const hideLink = useCallback(
+    (key: string) => {
+      rememberHidden([...hiddenRef.current.filter((k) => k !== key), key])
+      rememberChange(positions)
+      setSelectedLink(null)
+    },
+    [rememberHidden, rememberChange, positions],
+  )
+
+  const showLink = useCallback(
+    (key: string | null) => {
+      rememberHidden(key === null ? [] : hiddenRef.current.filter((k) => k !== key))
+      rememberChange(positions)
+    },
+    [rememberHidden, rememberChange, positions],
+  )
 
   const onGeometryStart = useCallback(() => {
     dragOrigin.current = positions
@@ -1231,6 +1294,59 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           </div>
 
           <span className="ag-toolbar-spacer" />
+
+          {/*
+            A diagram that leaves something out has to admit it. Hiding a line is legitimate —
+            nesting hides one too — but a reader who cannot tell is being shown an incomplete
+            picture as if it were the whole one.
+          */}
+          {hiddenOnView.length > 0 && (
+            <div className="ag-menu">
+              <button
+                type="button"
+                className="ag-hidden-count"
+                onClick={() => setHiddenOpen((open) => !open)}
+                title="Relationships this view does not draw"
+              >
+                {hiddenOnView.length} hidden
+              </button>
+              {hiddenOpen && (
+                <>
+                  <div className="ag-context-backdrop" onClick={() => setHiddenOpen(false)} />
+                  <div className="ag-menu-popover ag-hidden-list" role="menu">
+                    <h4>Not drawn on this view</h4>
+                    <ul>
+                      {hiddenOnView.map((key) => {
+                        const relationship = relationshipsByKey[key]
+                        return (
+                          <li key={key}>
+                            <span>
+                              {byKey[relationship?.source ?? '']?.name ?? relationship?.source ?? key}
+                              <span className="ag-muted"> {relationship?.type ?? ''} → </span>
+                              {byKey[relationship?.target ?? '']?.name ?? relationship?.target ?? ''}
+                            </span>
+                            <button type="button" className="ag-link" onClick={() => showLink(key)}>
+                              show
+                            </button>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        showLink(null)
+                        setHiddenOpen(false)
+                      }}
+                    >
+                      Show all
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           <span className="ag-muted">
             {onView.length} on view · {allElements.length} in repository
           </span>
@@ -1269,6 +1385,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
                 setMagic({ source, x, y, at })
               }}
               onContextMenu={(elementKey, x, y) => setContext({ elementKey, x, y })}
+              onLinkContextMenu={(key, x, y) => setLinkContext({ key, x, y })}
               onBlankClick={() => setContext(null)}
               onCommitName={(key, name) => {
                 setEditingKey(null)
@@ -1419,6 +1536,24 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
             connect(source, target, type)
           }}
           onCancel={() => setPicker(null)}
+        />
+      )}
+
+      {linkContext && relationshipsByKey[linkContext.key] && (
+        <LinkMenu
+          target={linkContext}
+          relationship={relationshipsByKey[linkContext.key]}
+          elementsByKey={byKey}
+          onClose={() => setLinkContext(null)}
+          onHide={() => {
+            hideLink(linkContext.key)
+            setLinkContext(null)
+          }}
+          onDelete={() => {
+            const key = linkContext.key
+            setLinkContext(null)
+            void deleteRelationship(key)
+          }}
         />
       )}
 

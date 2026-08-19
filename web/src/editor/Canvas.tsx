@@ -91,6 +91,7 @@ interface CanvasProps {
   dropping: boolean
   onDropHere: (at: Position) => void
   onContextMenu: (key: string, clientX: number, clientY: number) => void
+  onLinkContextMenu: (key: string, clientX: number, clientY: number) => void
   onBlankClick: () => void
   onCommitName: (key: string, name: string) => void
   onCancelEdit: () => void
@@ -423,6 +424,13 @@ export default function Canvas(props: CanvasProps) {
     view.on('link:pointerclick', (linkView: joint.dia.LinkView) => {
       latest.current.onSelect([])
       latest.current.onSelectLink(String(linkView.model.id))
+    })
+    // A line has the same two readings an element does: off this diagram, or out of the model.
+    view.on('link:contextmenu', (linkView: joint.dia.LinkView, event: joint.dia.Event) => {
+      event.preventDefault()
+      latest.current.onSelect([])
+      latest.current.onSelectLink(String(linkView.model.id))
+      latest.current.onLinkContextMenu(String(linkView.model.id), event.clientX ?? 0, event.clientY ?? 0)
     })
     view.on('element:contextmenu', (elementView: joint.dia.ElementView, event: joint.dia.Event) => {
       event.preventDefault()

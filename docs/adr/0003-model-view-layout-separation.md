@@ -15,7 +15,7 @@
 |---|---|---|---|
 | Semantic model | Элементы, связи, типы, свойства | Коммитами | Транзакция + валидация |
 | View definition | Viewpoint, состав элементов и связей, фильтры | Коммитами | Транзакция |
-| Layout | Координаты, размеры, вложенность ([ADR-0011](0011-nesting-is-presentation.md)), порядок наложения, waypoints, стили | Нет; мутабельно, optimistic lock | Last-write-wins |
+| Layout | Координаты, размеры, вложенность ([ADR-0011](0011-nesting-is-presentation.md)), порядок наложения, скрытые связи, waypoints, стили | Нет; мутабельно, optimistic lock | Last-write-wins |
 
 ## Обоснование
 

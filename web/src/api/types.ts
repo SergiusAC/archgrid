@@ -137,6 +137,13 @@ export interface ViewDetail {
   /** Implied by chains through elements this view does not show. Also never stored. */
   derived: DerivedRelationship[]
   layout: LayoutNode[]
+  /**
+   * Relationships this view declines to draw.
+   *
+   * The model still asserts them, and they appear on every other view. Presentation, like the
+   * coordinates beside them (ADR-0011).
+   */
+  hidden: string[]
   /** How this view draws its connections. Presentation only, never versioned (ADR-0003). */
   router: ConnectionRouter
 }

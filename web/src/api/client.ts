@@ -98,12 +98,19 @@ export function createApi(token: string) {
       request<ViewDetail>(`/api/workspaces/${encode(workspace)}/views/${encode(view)}`, token),
 
     /** A PUT, not a command: coordinates are the one layer outside the commit log (ADR-0003). */
-    saveLayout: (workspace: string, view: string, nodes: LayoutNode[], router?: ConnectionRouter) =>
+    saveLayout: (
+      workspace: string,
+      view: string,
+      nodes: LayoutNode[],
+      router?: ConnectionRouter,
+      hidden?: string[],
+    ) =>
       request<void>(`/api/workspaces/${encode(workspace)}/views/${encode(view)}/layout`, token, {
         method: 'PUT',
-        // `router` only when it is being changed: a drag saves coordinates several times a second
-        // and must not carry an opinion about routing with it.
-        body: JSON.stringify(router ? { nodes, router } : { nodes }),
+        // `router` and `hidden` only when they are being sent: a drag saves coordinates several
+        // times a second and must not carry an opinion about routing, or about which lines this
+        // view leaves out.
+        body: JSON.stringify({ nodes, ...(router ? { router } : {}), ...(hidden ? { hidden } : {}) }),
       }),
 
     folders: (workspace: string, kind: 'elements' | 'views') =>
