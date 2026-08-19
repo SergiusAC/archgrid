@@ -350,6 +350,10 @@ Non-obvious breakages already hit and fixed — do not re-introduce:
   - **Stacking order is JointJS's to compute.** Ask `toFront`/`toBack` and read `z` back rather
     than inventing numbers, and lift children over their parent afterwards — `toBack` on a nested
     element files it behind its own container, where it looks deleted.
+- **A write that bypasses the command pipeline must tell the query cache.** Layout goes to its own
+  endpoint, so nothing invalidates `['view', …]`; with `staleTime: 30_000` a view saved and reopened
+  came back as it was *before* the save, and the next drag then started from those stale positions.
+  `saveLayout` patches the cached view with what it sent.
 - **Layout is saved when the user asks, not automatically.** Changes live as a draft in
   `localStorage` and reach the server on Save or Ctrl+S. The old debounce was the origin of every
   ordering trap here: a save in flight racing a refetch, a write landing after the change it was

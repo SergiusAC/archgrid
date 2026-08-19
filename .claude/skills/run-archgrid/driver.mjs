@@ -967,6 +967,42 @@ async function interactions(page) {
   await page.screenshot({ path: `${outDir}/39-saving.png` })
 
   /*
+   * --- a saved view reopens as saved ---
+   *
+   * Reported from use: save a view, come back to it, and the old arrangement is there. The draft
+   * is gone by then — it is cleared on save — so what is drawn comes from the cached copy of the
+   * view, and a save that writes to the server without telling the cache leaves that copy holding
+   * the layout as it was before. Worse than a redraw: the next drag starts from the stale
+   * positions and the next save writes them over the good ones.
+   */
+  // The business actor, and away from the middle: it stands alone at the left, so the drag cannot
+  // land inside a container and turn this into a test of the nesting dialogue.
+  const movedKey = await keyOf('Business Actor')
+  const movedBox = await nodeAt(movedKey).locator('.ag-body').boundingBox()
+  await page.mouse.move(movedBox.x + movedBox.width / 2, movedBox.y + movedBox.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(movedBox.x + movedBox.width / 2 - 120, movedBox.y + movedBox.height / 2 + 90, { steps: 10 })
+  await page.mouse.up()
+  await page.waitForTimeout(600)
+  check('the drag did not nest anything', (await page.locator('.ag-picker').count()) === 0)
+  await page.keyboard.press('Control+s')
+  await page.waitForTimeout(2500)
+  const asSaved = await transformsOf()
+
+  await page.locator('.ag-tree-item').first().click()
+  await page.waitForTimeout(2000)
+  await page.locator('.ag-tree-item', { hasText: viewName }).first().click()
+  await page.waitForTimeout(3000)
+  const asReopened = await transformsOf()
+  check(
+    'a saved view reopens as it was saved',
+    asReopened === asSaved,
+    asReopened === asSaved ? '' : `
+      saved: ${asSaved}
+      back:  ${asReopened}`,
+  )
+
+  /*
    * --- the small things that grate every day ---
    *
    * A palette that has gone monochrome, a notice that cannot be dismissed, a rename that commits

@@ -12,6 +12,7 @@ import type {
   ModelRelationship,
   Profile,
   RelationshipType,
+  ViewDetail,
   ViewFilter,
 } from '../api/types.ts'
 import { Metamodel } from '../metamodel/Metamodel.ts'
@@ -366,6 +367,37 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   const saveLayout = useMutation({
     mutationFn: (geometry: Geometry & { router: ConnectionRouter; hidden: string[] }) =>
       api.saveLayout(workspace, viewKey!, layoutNodes(geometry), geometry.router, geometry.hidden),
+    /**
+     * Tells the cache what was just written.
+     *
+     * Without this a view saved and reopened came back as it had been *before* the save: the draft
+     * is cleared on save, so the canvas is drawn from the cached copy of the view, and that copy
+     * still held the old layout for as long as it stayed fresh. Which made it look intermittent —
+     * within the stale window the old arrangement, after it the new one.
+     *
+     * And it was worse than a redraw: the next drag started from those stale positions and the
+     * next save wrote them over the good ones. Model commands never had the problem because they
+     * go through `refresh()`; only the layout endpoint wrote to the server and told nobody.
+     *
+     * Patched rather than invalidated, because we know exactly what the server now holds — it is
+     * what we just sent — and a refetch would put a round trip between saving and being able to
+     * trust what is on screen.
+     */
+    onSuccess: (_result, geometry) => {
+      if (!viewKey) {
+        return
+      }
+      queryClient.setQueryData<ViewDetail>(['view', workspace, viewKey], (current) =>
+        current
+          ? {
+              ...current,
+              layout: layoutNodes(geometry),
+              hidden: geometry.hidden,
+              router: geometry.router,
+            }
+          : current,
+      )
+    },
   })
 
   const pendingSave = useRef<number | null>(null)
