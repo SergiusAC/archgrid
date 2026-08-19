@@ -534,6 +534,31 @@ async function interactions(page) {
   )
   await page.screenshot({ path: `${outDir}/31-nested.png` })
 
+  /*
+   * --- a child can be centred in the box that holds it ---
+   *
+   * Reported from use: the guides made this impossible. The container was excluded from the
+   * candidates, so the one alignment wanted had no guide, while unrelated elements nearby went on
+   * tugging the child off centre.
+   */
+  const frameBox = await nodeAt(system).locator('.ag-body').boundingBox()
+  const childBox = await nodeAt(api).locator('.ag-body').boundingBox()
+  const wantCentre = frameBox.x + frameBox.width / 2
+  await page.mouse.move(childBox.x + childBox.width / 2, childBox.y + childBox.height / 2)
+  await page.mouse.down()
+  // Aim a few pixels off centre: near enough for the guide to finish the job.
+  await page.mouse.move(wantCentre + 5, childBox.y + childBox.height / 2, { steps: 12 })
+  await page.waitForTimeout(250)
+  await page.mouse.up()
+  await page.waitForTimeout(1200)
+  const centred = await nodeAt(api).locator('.ag-body').boundingBox()
+  check(
+    'a child snaps to the centre of its container',
+    Math.abs(centred.x + centred.width / 2 - wantCentre) < 1.5,
+    `child centre ${Math.round(centred.x + centred.width / 2)} vs container centre ${Math.round(wantCentre)}`,
+  )
+  await page.screenshot({ path: `${outDir}/38-centred.png` })
+
   // --- drawing a relationship ---
   await page.locator('.ag-splitter-left .ag-splitter-toggle').click()
   await page.waitForTimeout(300)

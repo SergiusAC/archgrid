@@ -461,40 +461,54 @@ export default function Canvas(props: CanvasProps) {
       clearGuides()
       const moved = elementView.model
       const box = moved.getBBox()
+      /*
+       * Its own container counts; its own children do not.
+       *
+       * Centring a child inside the box that holds it is the commonest alignment there is, and
+       * excluding the container meant the one guide the user wanted was the one guide missing —
+       * while every unrelated element nearby went on tugging the child off centre. Descendants
+       * stay excluded because they travel with the element, so lining up with them is meaningless.
+       */
       const others = model
         .getElements()
-        .filter((other) => other !== moved && !moved.isEmbeddedIn(other) && !other.isEmbeddedIn(moved))
+        .filter((other) => other !== moved && !other.isEmbeddedIn(moved))
         .map((other) => other.getBBox())
       if (others.length === 0) {
         return
       }
       const span = model.getBBox() ?? box
 
-      let shift: { x?: number; y?: number } = {}
+      const shift: { x?: number; y?: number } = {}
       for (const axis of GUIDE_AXES) {
         const mine = axis.of(box)
+        // The nearest candidate, not the last one that happened to be in range: iterating and
+        // overwriting made the winner depend on the order elements were added to the graph.
+        let best: { line: number; distance: number } | null = null
         for (const other of others) {
-          // Against the other's matching line and against its centre: an element lines up with a
-          // neighbour's edge as readily as with its middle, and both look deliberate.
           for (const theirs of [axis.of(other), axis.centre(other)]) {
-            if (Math.abs(mine - theirs) > GUIDE_TOLERANCE) {
-              continue
+            const distance = Math.abs(mine - theirs)
+            if (distance <= GUIDE_TOLERANCE && (!best || distance < best.distance)) {
+              best = { line: theirs, distance }
             }
-            shift = axis.vertical
-              ? { ...shift, x: box.x + (theirs - mine) }
-              : { ...shift, y: box.y + (theirs - mine) }
-            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line')
-            const from = axis.vertical ? span.y - 200 : span.x - 200
-            const to = axis.vertical ? span.y + span.height + 200 : span.x + span.width + 200
-            line.setAttribute('x1', String(axis.vertical ? theirs : from))
-            line.setAttribute('y1', String(axis.vertical ? from : theirs))
-            line.setAttribute('x2', String(axis.vertical ? theirs : to))
-            line.setAttribute('y2', String(axis.vertical ? to : theirs))
-            line.setAttribute('class', 'ag-guide')
-            guides.appendChild(line)
-            break
           }
         }
+        if (!best) {
+          continue
+        }
+        if (axis.vertical) {
+          shift.x = box.x + (best.line - mine)
+        } else {
+          shift.y = box.y + (best.line - mine)
+        }
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line')
+        const from = axis.vertical ? span.y - 200 : span.x - 200
+        const to = axis.vertical ? span.y + span.height + 200 : span.x + span.width + 200
+        line.setAttribute('x1', String(axis.vertical ? best.line : from))
+        line.setAttribute('y1', String(axis.vertical ? from : best.line))
+        line.setAttribute('x2', String(axis.vertical ? best.line : to))
+        line.setAttribute('y2', String(axis.vertical ? to : best.line))
+        line.setAttribute('class', 'ag-guide')
+        guides.appendChild(line)
       }
       if (shift.x !== undefined || shift.y !== undefined) {
         moved.position(shift.x ?? box.x, shift.y ?? box.y)
