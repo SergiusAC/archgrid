@@ -36,6 +36,8 @@ export interface CanvasLink {
 export interface Geometry {
   positions: Record<string, Position>
   sizes: Record<string, { width: number; height: number }>
+  /** What each element is drawn inside on this view. Presentation, per view (ADR-0011). */
+  parents: Record<string, string | null>
 }
 
 interface CanvasProps {
@@ -299,14 +301,16 @@ export default function Canvas(props: CanvasProps) {
   const geometry = useCallback((): Geometry => {
     const positions: Record<string, Position> = {}
     const sizes: Record<string, { width: number; height: number }> = {}
+    const parents: Record<string, string | null> = {}
     for (const element of graph.current?.getElements() ?? []) {
       const key = String(element.id)
+      parents[key] = element.getParentCell() ? String(element.getParentCell()!.id) : null
       // Absolute, including embedded children: JointJS positions are absolute, so the stored
       // layout needs no conversion and re-parenting never silently moves anything.
       positions[key] = element.position()
       sizes[key] = element.size()
     }
-    return { positions, sizes }
+    return { positions, sizes, parents }
   }, [])
 
   // ------------------------------------------------------------------ mount

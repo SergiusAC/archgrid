@@ -188,9 +188,11 @@ final class ModelApiDtos {
      */
     record DerivedRelationshipResponse(String key, String type, String source, String target, List<String> via) {}
 
-    record LayoutNodeResponse(String element, double x, double y, Double width, Double height) {}
+    /** `parent` is what this element is drawn inside on this view — presentation only (ADR-0011). */
+    record LayoutNodeResponse(String element, double x, double y, Double width, Double height, String parent) {}
 
-    record LayoutNodeRequest(@NotBlank String element, double x, double y, Double width, Double height) {}
+    record LayoutNodeRequest(
+            @NotBlank String element, double x, double y, Double width, Double height, String parent) {}
 
     /** Coordinates never travel as commands: moving a box is not a model change (ADR-0003). */
     /** `router` is optional: a plain drag saves coordinates and must not disturb the routing. */

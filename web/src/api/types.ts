@@ -106,6 +106,8 @@ export interface LayoutNode {
   y: number
   width: number | null
   height: number | null
+  /** Drawn inside this element on this view. Presentation only, per view (ADR-0011). */
+  parent: string | null
 }
 
 /**

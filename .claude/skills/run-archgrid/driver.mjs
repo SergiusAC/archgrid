@@ -501,6 +501,30 @@ async function interactions(page) {
       inner.y + inner.height <= frame.y + frame.height + 1,
     `child ${Math.round(inner.width)}x${Math.round(inner.height)} in frame ${Math.round(frame.width)}x${Math.round(frame.height)}`,
   )
+  /*
+   * Nesting asks what it means, and then stops drawing what it now says.
+   *
+   * Archi's ARM: containment is a way of drawing a structural relationship, so the editor offers
+   * to create one, and the line is hidden because the nesting is already saying it. The
+   * relationship is in the model - hidden here, drawn on any view where the two are not nested.
+   */
+  check('nesting asks what it means', (await page.locator('.ag-picker').count()) > 0)
+  const nestable = await page.locator('.ag-picker li button span').allTextContents()
+  check(
+    'it offers only what nesting can express',
+    nestable.length > 0 &&
+      nestable.every((name) => ['Composition', 'Aggregation', 'Assignment', 'Realization'].includes(name)),
+    nestable.join(', '),
+  )
+  const linksBeforeNesting = await page.locator('.ag-paper .ag-link').count()
+  await page.locator('.ag-picker li button', { hasText: 'Composition' }).first().click()
+  await page.waitForTimeout(3000)
+  check(
+    'the relationship it creates is not also drawn as a line',
+    (await page.locator('.ag-paper .ag-link').count()) === linksBeforeNesting,
+    `${linksBeforeNesting} lines before, ${await page.locator('.ag-paper .ag-link').count()} after`,
+  )
+
   // A container whose own name is covered by its first child reads worse than no nesting at all.
   const label = await nodeAt(system).locator('.ag-node-label').boundingBox()
   check(

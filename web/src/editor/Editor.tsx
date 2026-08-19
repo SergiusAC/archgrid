@@ -11,6 +11,7 @@ import type {
   ModelElement,
   ModelRelationship,
   Profile,
+  RelationshipType,
 } from '../api/types.ts'
 import { Metamodel } from '../metamodel/Metamodel.ts'
 import Canvas, { type CanvasElement, type CanvasLink, type Geometry } from './Canvas.tsx'
@@ -46,6 +47,14 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   const [selected, setSelected] = useState<string[]>([])
   // A relationship can be selected too, and until it could there was no way to delete one.
   const [selectedLink, setSelectedLink] = useState<string | null>(null)
+  // What the editor is asking about a nesting the user has just made.
+  const [nesting, setNesting] = useState<{
+    x: number
+    y: number
+    container: string
+    child: string
+    permitted: RelationshipType[]
+  } | null>(null)
   // The connector tool: active, and the element clicked as the source of the next line.
   const [connecting, setConnecting] = useState(false)
   const [connectFrom, setConnectFrom] = useState<string | null>(null)
@@ -124,6 +133,25 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   /** Absolute geometry per element: where it is and, once resized, how big. */
   const [positions, setPositions] = useState<Record<string, Position>>({})
   const [sizes, setSizes] = useState<Record<string, Size>>({})
+  /**
+   * What each element is drawn inside, on this view only.
+   *
+   * Nesting is presentation (ADR-0011): the same element may sit inside a container on the
+   * context diagram and stand alone on another, which is the whole reason views exist.
+   */
+  const [parents, setParents] = useState<Record<string, string | null>>({})
+  /**
+   * The same value, readable synchronously.
+   *
+   * The debounced layout save runs after the render that scheduled it, and read the nesting as it
+   * was before the drop — so a save queued by the drag landed after the nesting was written and
+   * quietly put it back to null. State lags by a render; this does not.
+   */
+  const parentsRef = useRef<Record<string, string | null>>({})
+  const rememberParents = useCallback((next: Record<string, string | null>) => {
+    parentsRef.current = next
+    setParents(next)
+  }, [])
   // Panel widths are pure presentation, so they live in the browser and nowhere else.
   const [leftWidth, setLeftWidth] = useState(240)
   const [rightWidth, setRightWidth] = useState(288)
@@ -137,16 +165,19 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     }
     const stored: Record<string, { x: number; y: number }> = {}
     const storedSizes: Record<string, { width: number; height: number }> = {}
+    const storedParents: Record<string, string | null> = {}
     for (const node of view.data.layout) {
       stored[node.element] = { x: node.x, y: node.y }
+      storedParents[node.element] = node.parent
       if (node.width && node.height) {
         storedSizes[node.element] = { width: node.width, height: node.height }
       }
     }
     setPositions(stored)
     setSizes(storedSizes)
+    rememberParents(storedParents)
     setGeometryVersion((version) => version + 1)
-  }, [view.data])
+  }, [view.data, rememberParents])
 
   const refresh = useCallback(async () => {
     await Promise.all([
@@ -240,11 +271,15 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
 
   const pendingSave = useRef<number | null>(null)
   const scheduleLayoutSave = useCallback(
-    (next: Record<string, { x: number; y: number }>, nextSizes?: Record<string, Size>) => {
+    (
+      next: Record<string, { x: number; y: number }>,
+      nextSizes?: Record<string, Size>,
+      nextParents?: Record<string, string | null>,
+    ) => {
       if (!viewKey) {
         return
       }
-      const geometry = { positions: next, sizes: nextSizes ?? sizes }
+      const geometry = { positions: next, sizes: nextSizes ?? sizes, parents: nextParents ?? parentsRef.current }
       // Debounced: a drag emits a position per frame, and one request per frame would be
       // both wasteful and a guaranteed source of out-of-order writes.
       if (pendingSave.current) {
@@ -302,12 +337,13 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   const containers = useMemo(() => {
     const withChildren = new Set<string>()
     for (const element of onView) {
-      if (element.parent && onViewKeys.has(element.parent)) {
-        withChildren.add(element.parent)
+      const parent = parents[element.key]
+      if (parent && onViewKeys.has(parent)) {
+        withChildren.add(parent)
       }
     }
     return withChildren
-  }, [onView, onViewKeys])
+  }, [onView, onViewKeys, parents])
 
   const canvasElements: CanvasElement[] = useMemo(
     () =>
@@ -323,20 +359,43 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           layer: type?.layer ?? 'other',
           specialised: element.profile != null,
           concept: element.conceptType,
-          // Only a container that is itself on the view: nesting is a drawing of containment,
-          // and a parent nobody can see is not one.
-          parent: element.parent && onViewKeys.has(element.parent) ? element.parent : null,
+          // From this view's layout, and only when the container is on the view too: a parent
+          // nobody can see is not one.
+          parent: parents[element.key] && onViewKeys.has(parents[element.key]!) ? parents[element.key] : null,
           x: at.x,
           y: at.y,
           width: size?.width ?? (container ? 320 : NODE_WIDTH),
           height: size?.height ?? (container ? 200 : NODE_HEIGHT),
         }
       }),
-    [onView, onViewKeys, positions, sizes, containers, metamodel],
+    [onView, onViewKeys, positions, sizes, parents, containers, metamodel],
+  )
+
+  /**
+   * A relationship the nesting on this view already expresses, so the line would say it twice.
+   *
+   * Only the structural ones, and only between a container and its own child: those are what the
+   * specification allows to be drawn as containment instead of a line. A Serving between the same
+   * two elements is a different statement and stays visible.
+   *
+   * It is hidden, never deleted — the model still asserts it, and it is drawn on any other view
+   * where the two are not nested (ADR-0011).
+   */
+  const expressedByNesting = useCallback(
+    (relationship: ModelRelationship) => {
+      if (metamodel.relationshipType(relationship.type)?.category !== 'structural') {
+        return false
+      }
+      return (
+        parents[relationship.target] === relationship.source ||
+        parents[relationship.source] === relationship.target
+      )
+    },
+    [parents, metamodel],
   )
 
   const canvasLinks: CanvasLink[] = useMemo(() => {
-    const explicit = (view.data?.relationships ?? []).map((relationship) => ({
+    const explicit = (view.data?.relationships ?? []).filter((r) => !expressedByNesting(r)).map((relationship) => ({
       key: relationship.key,
       source: relationship.source,
       target: relationship.target,
@@ -358,7 +417,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     }))
 
     return [...explicit, ...derived]
-  }, [view.data])
+  }, [view.data, expressedByNesting])
 
   /** Live geometry from a drag or resize. The save is debounced; the state is not. */
   const onGeometry = useCallback(
@@ -401,32 +460,62 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   )
 
   /**
-   * Dropping a node onto another puts it inside — the gesture people already expect.
+   * Dropping an element into another draws it inside, on this view alone.
    *
-   * Containment is a model change, so it goes through {@code MoveElement} and produces a commit,
-   * unlike the coordinates that arrived with the same drag. The two travel separately on purpose
-   * (ADR-0003), and this is the one gesture that does both at once. The canvas has already
-   * decided *what* contains what and grown the frame to fit; only the command belongs here.
+   * No command and no commit: which box is drawn inside which is presentation (ADR-0011), so it
+   * travels with the coordinates. What the nesting *means* is a separate question, and the answer
+   * is a relationship — so if the model does not already say something structural about these two,
+   * the editor asks whether it should, exactly as Archi's ARM does.
    */
   const onNest = useCallback(
     async (key: string, parent: string | null, next: Geometry) => {
-      const dragged = byKey[key]
-      if (!dragged || (dragged.parent ?? null) === parent) {
-        return
-      }
       setPositions(next.positions)
       setSizes(next.sizes)
-      // Awaited before the command, which refetches the view: a debounced save still in flight
-      // would be answered with the geometry the server held before the drop.
+      rememberParents(next.parents)
+      // Nothing queued by the drag may land after this and undo it.
+      if (pendingSave.current) {
+        window.clearTimeout(pendingSave.current)
+        pendingSave.current = null
+      }
+      // Saved at once rather than debounced: nesting is a decision, not a frame of a drag, and
+      // the relationship offered next refetches the view — which would answer with the layout as
+      // it was before the drop and undo the nesting a moment after it was made.
       await saveLayout.mutateAsync(next)
-      apply.mutate({
-        commands: [{ op: 'move-element', key, parent: parent ?? undefined }],
-        label: parent
-          ? `Put ${dragged.name} inside ${byKey[parent]?.name ?? parent}`
-          : `Take ${dragged.name} out of its container`,
+      if (!parent) {
+        return
+      }
+      const container = byKey[parent]
+      const child = byKey[key]
+      if (!container || !child) {
+        return
+      }
+      // Already said? Then nesting is just a nicer way of drawing what is there.
+      const already = allRelationships.some(
+        (relationship) =>
+          metamodel.relationshipType(relationship.type)?.category === 'structural' &&
+          ((relationship.source === parent && relationship.target === key) ||
+            (relationship.source === key && relationship.target === parent)),
+      )
+      if (already) {
+        return
+      }
+      const permitted = metamodel
+        .permittedBetween(container.conceptType, child.conceptType)
+        .filter((type) => type.category === 'structural')
+      if (permitted.length === 0) {
+        return
+      }
+      const node = document.querySelector(`.ag-node[data-key="${CSS.escape(key)}"]`)
+      const box = node?.getBoundingClientRect()
+      setNesting({
+        x: box ? box.right + 8 : window.innerWidth / 2,
+        y: box ? box.top : window.innerHeight / 2,
+        container: parent,
+        child: key,
+        permitted,
       })
     },
-    [byKey, apply, saveLayout],
+    [byKey, allRelationships, metamodel, saveLayout, rememberParents],
   )
 
   const connect = useCallback(
@@ -493,10 +582,10 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       if (!viewKey) {
         return
       }
-      await api.saveLayout(workspace, viewKey, layoutNodes({ positions, sizes }), router)
+      await api.saveLayout(workspace, viewKey, layoutNodes({ positions, sizes, parents }), router)
       await queryClient.invalidateQueries({ queryKey: ['view', workspace] })
     },
-    [api, workspace, viewKey, positions, sizes, queryClient],
+    [api, workspace, viewKey, positions, sizes, parents, queryClient],
   )
 
   /**
@@ -1094,6 +1183,26 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         />
       )}
 
+      {nesting && (
+        <RelationshipPicker
+          x={nesting.x}
+          y={nesting.y}
+          sourceName={byKey[nesting.container]?.name ?? nesting.container}
+          targetName={byKey[nesting.child]?.name ?? nesting.child}
+          reason={
+            `Drawn inside on this view only. What does it mean? Pick a relationship, or press ` +
+            `Escape to leave them merely nested.`
+          }
+          permitted={nesting.permitted}
+          onPick={(type) => {
+            const { container, child } = nesting
+            setNesting(null)
+            connect(container, child, type)
+          }}
+          onCancel={() => setNesting(null)}
+        />
+      )}
+
       {picker && (
         <RelationshipPicker
           x={picker.x}
@@ -1131,13 +1240,14 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
 }
 
 /** Geometry as the layout endpoint wants it. Missing sizes fall back to the default box. */
-function layoutNodes({ positions, sizes }: Geometry) {
+function layoutNodes({ positions, sizes, parents }: Geometry) {
   return Object.entries(positions).map(([element, position]) => ({
     element,
     x: position.x,
     y: position.y,
     width: sizes[element]?.width ?? NODE_WIDTH,
     height: sizes[element]?.height ?? NODE_HEIGHT,
+    parent: parents[element] ?? null,
   }))
 }
 
