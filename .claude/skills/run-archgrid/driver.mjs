@@ -636,9 +636,8 @@ async function interactions(page) {
     ledger.y < grownFrame.y + grownFrame.height && grownFrame.y < ledger.y + ledger.height
   check('a new element avoids the container it would otherwise cover', !overlapsContainer)
 
-  // Access is not permitted between two Application Components, which is the teaching path.
-  await page.locator('select').first().selectOption({ label: 'Access' })
-  await page.waitForTimeout(300)
+  // No type is chosen in advance any more: two Application Components permit several, so the
+  // connector asks — which is the teaching path.
   const edgesBefore = await page.locator('.ag-paper .ag-link').count()
   // Click the tool, click the source, click the target — Archi's sequence.
   await page.getByRole('button', { name: /^Connect/ }).click()
@@ -791,9 +790,15 @@ async function interactions(page) {
    * runs that do not. Chosen per view and saved for everyone, because a colleague opening the
    * diagram should see it as it was drawn.
    */
+  const openMenu = async () => {
+    await page.getByRole('button', { name: 'More' }).click()
+    await page.waitForTimeout(300)
+  }
+  await openMenu()
   const routerSelect = page.locator('.ag-router-select')
   check('the view opens on straight lines, as Archi does', (await routerSelect.inputValue()) === 'straight')
   await routerSelect.selectOption('orthogonal')
+  await page.keyboard.press('Escape')
   await page.waitForTimeout(2500)
   const bent = await page.evaluate(
     () =>
@@ -811,10 +816,12 @@ async function interactions(page) {
   await openRepository(page)
   await page.locator('.ag-tree-item', { hasText: viewName }).first().click()
   await page.waitForTimeout(3000)
+  await openMenu()
   check(
     'the choice survives a reload',
     (await page.locator('.ag-router-select').inputValue()) === 'orthogonal',
   )
+  await page.keyboard.press('Escape')
 
   // --- notation: the shape says what it is before any word is read ---
   const shapes = await page.evaluate(() =>

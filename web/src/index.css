@@ -1146,3 +1146,33 @@ body.ag-resizing {
   color: var(--fg);
   box-shadow: 0 2px 8px rgb(0 0 0 / 0.18);
 }
+
+/* ---------------------------------------------------------------- toolbar */
+
+.ag-toolbar-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 0.2rem 0.15rem;
+  background: var(--line);
+}
+
+/* The rare settings of a view, one click away rather than in the way. */
+.ag-menu {
+  position: relative;
+}
+
+.ag-menu-popover {
+  position: absolute;
+  z-index: 6;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 12rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 0.375rem;
+  background: var(--surface);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.18);
+}

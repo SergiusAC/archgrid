@@ -43,7 +43,6 @@ type Size = { width: number; height: number }
 export default function Editor({ api, workspace, metamodel, profiles }: EditorProps) {
   const queryClient = useQueryClient()
   const [viewKey, setViewKey] = useState<string | null>(null)
-  const [relationshipType, setRelationshipType] = useState('Serving')
   const [message, setMessage] = useState<{ kind: 'error' | 'info'; text: string } | null>(null)
   const [selected, setSelected] = useState<string[]>([])
   // A relationship can be selected too, and until it could there was no way to delete one.
@@ -170,6 +169,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   const routerRef = useRef<ConnectionRouter>('straight')
   /** Whether the arrangement in hand differs from the one the server holds. */
   const [dirty, setDirty] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   /**
    * The type being carried from the palette, and where the cursor is holding it.
    *
@@ -621,6 +621,14 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     [byKey, relationshipsByKey, apply],
   )
 
+  /**
+   * Two ends named; now what goes between them.
+   *
+   * There is no type chosen in advance any more. Picking one before the ends are known was a
+   * guess the editor overrode half the time — the metamodel can only answer once it knows both
+   * concepts, and by then the user has said everything needed. This is the Magic Connector and
+   * the only way to draw a line.
+   */
   const onConnect = useCallback(
     (sourceKey: string, targetKey: string) => {
       const source = byKey[sourceKey]
@@ -628,14 +636,14 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       if (!source || !target) {
         return
       }
-      if (metamodel.permits(source.conceptType, target.conceptType, relationshipType)) {
-        connect(source.key, target.key, relationshipType)
+      const permitted = metamodel.permittedBetween(source.conceptType, target.conceptType)
+      if (permitted.length === 0) {
+        setMessage({
+          kind: 'error',
+          text: `ArchiMate permits no relationship from ${source.name} to ${target.name}.`,
+        })
         return
       }
-      // The metamodel knows what *would* work here, so offer that instead of only refusing.
-      // This is the difference between a tool that prevents mistakes and one that teaches the
-      // notation.
-      const permitted = metamodel.permittedBetween(source.conceptType, target.conceptType)
       if (permitted.length === 1) {
         // Asking someone to choose from a list of one is an action that carries no decision.
         // Draw it, name it, and let undo be the way back.
@@ -653,10 +661,10 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         y: box ? box.top : window.innerHeight / 2,
         source: source.key,
         target: target.key,
-        reason: metamodel.explain(source.conceptType, target.conceptType, relationshipType),
+        reason: `What does ${source.name} do to ${target.name}? Only what ArchiMate permits is listed.`,
       })
     },
-    [byKey, metamodel, relationshipType, connect],
+    [byKey, metamodel, connect],
   )
 
   /**
@@ -945,6 +953,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         removeFromView(selected)
       } else if (event.key === 'Escape') {
         setContext(null)
+        setMenuOpen(false)
         setConnecting(false)
         setConnectFrom(null)
       }
@@ -1094,18 +1103,15 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       />
 
       <div className="ag-canvas-area">
+        {/*
+          Twelve controls in one row, wrapping onto a second. Grouped now by what each belongs to:
+          what the view is, what draws, and what is rare. The three delete buttons are gone from
+          here entirely — they live on the right-click menu and on Delete, where they already
+          were, and two of the three were permanently greyed out anyway.
+        */}
         <div className="ag-toolbar">
           <strong className="ag-view-name">{view.data?.name ?? 'No view open'}</strong>
-          <label className="ag-field ag-inline">
-            <span>Draw</span>
-            <select value={relationshipType} onChange={(event) => setRelationshipType(event.target.value)}>
-              {metamodel.relationshipTypes.map((type) => (
-                <option key={type.concept} value={type.concept}>
-                  {type.name}
-                </option>
-              ))}
-            </select>
-          </label>
+
           <button
             type="button"
             className={dirty ? 'ag-tool-active' : ''}
@@ -1123,6 +1129,9 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           >
             Discard
           </button>
+
+          <span className="ag-toolbar-divider" />
+
           <button
             type="button"
             className={connecting ? 'ag-tool-active' : ''}
@@ -1136,64 +1145,62 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           >
             {connecting ? 'Connecting…' : 'Connect'}
           </button>
-          <label className="ag-field ag-inline">
-            <span>Lines</span>
-            <select
-              className="ag-router-select"
-              value={router}
-              disabled={!viewKey}
-              onChange={(event) => chooseRouter(event.target.value as ConnectionRouter)}
-            >
-              <option value="straight">Straight</option>
-              <option value="orthogonal">Orthogonal</option>
-            </select>
-          </label>
-          <button
-            type="button"
-            onClick={() =>
-              view.data &&
-              void autoLayout(onView, view.data.relationships).then((laid) => {
-                setPositions(laid)
-                rememberChange(laid)
-                setGeometryVersion((version) => version + 1)
-                setFitToken(`auto:${Date.now()}`)
-              })
-            }
-            disabled={!viewKey}
-          >
-            Auto-layout
-          </button>
-          <button type="button" onClick={() => void undo()} disabled={history.undoStack.length === 0} title="Ctrl+Z">
+          <button type="button" onClick={() => void undo()} disabled={history.undoStack.length === 0} title="Undo (Ctrl+Z)">
             Undo
           </button>
-          <button type="button" onClick={() => void redo()} disabled={history.redoStack.length === 0} title="Ctrl+Shift+Z">
+          <button type="button" onClick={() => void redo()} disabled={history.redoStack.length === 0} title="Redo (Ctrl+Shift+Z)">
             Redo
           </button>
-          <button
-            type="button"
-            className="ag-danger"
-            onClick={() => selectedLink && deleteRelationship(selectedLink)}
-            disabled={!selectedLink}
-            title="Delete the selected relationship from the model"
-          >
-            Delete relationship
-          </button>
-          <button
-            type="button"
-            onClick={() => removeFromView(selected)}
-            disabled={selected.length === 0 || !viewKey}
-            title="Delete — takes it off this view only"
-          >
-            Remove from view
-          </button>
-          <button
-            type="button"
-            className="ag-danger"
-            onClick={() => deleteFromModel(selected)}
-            disabled={selected.length === 0}
-          >
-            Delete from repository
-          </button>
+
+          {/* Settings of the view rather than daily actions, so they are one click further away. */}
+          <div className="ag-menu">
+            <button
+              type="button"
+              className={menuOpen ? 'ag-tool-active' : ''}
+              onClick={() => setMenuOpen((open) => !open)}
+              disabled={!viewKey}
+              title="More"
+              aria-label="More"
+            >
+              ⋯
+            </button>
+            {menuOpen && (
+              <>
+                <div className="ag-context-backdrop" onClick={() => setMenuOpen(false)} />
+                <div className="ag-menu-popover" role="menu">
+                  <label className="ag-field">
+                    <span>Lines</span>
+                    <select
+                      className="ag-router-select"
+                      value={router}
+                      onChange={(event) => chooseRouter(event.target.value as ConnectionRouter)}
+                    >
+                      <option value="straight">Straight</option>
+                      <option value="orthogonal">Orthogonal</option>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false)
+                      if (!view.data) {
+                        return
+                      }
+                      void autoLayout(onView, view.data.relationships).then((laid) => {
+                        setPositions(laid)
+                        rememberChange(laid)
+                        setGeometryVersion((version) => version + 1)
+                        setFitToken(`auto:${Date.now()}`)
+                      })
+                    }}
+                  >
+                    Auto-layout
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
           <span className="ag-toolbar-spacer" />
           <span className="ag-muted">
             {onView.length} on view · {allElements.length} in repository
