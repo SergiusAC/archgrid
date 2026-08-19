@@ -45,12 +45,16 @@ class MetamodelController {
 
     record ViewpointDto(String code, String name, List<String> concepts) {}
 
+    /** A C4 level: a name and a depth relative to a view's focus, nothing stored on an element. */
+    record C4LevelDto(String code, String name, int depth) {}
+
     record MetamodelDto(
             String language,
             String version,
             List<ElementTypeDto> elementTypes,
             List<RelationshipTypeDto> relationshipTypes,
             List<ViewpointDto> viewpoints,
+            List<C4LevelDto> c4Levels,
             Map<String, Map<String, String>> permitted) {}
 
     /**
@@ -67,6 +71,7 @@ class MetamodelController {
                         elementTypes(),
                         relationshipTypes(),
                         viewpoints(),
+                        c4Levels(),
                         permitted()));
     }
 
@@ -96,6 +101,18 @@ class MetamodelController {
         return metamodel.viewpoints().stream()
                 .map(viewpoint -> new ViewpointDto(
                         viewpoint.code(), viewpoint.name(), List.copyOf(viewpoint.concepts())))
+                .toList();
+    }
+
+    /**
+     * The C4 levels, so a client can offer them without knowing what they are.
+     *
+     * <p>Data rather than three constants in the UI: the levels are hand-authored alongside the
+     * shape table, and a fourth one would otherwise mean editing both (ADR-0007).
+     */
+    private List<C4LevelDto> c4Levels() {
+        return c4Mapping.levels().stream()
+                .map(level -> new C4LevelDto(level.code(), level.name(), level.depth()))
                 .toList();
     }
 

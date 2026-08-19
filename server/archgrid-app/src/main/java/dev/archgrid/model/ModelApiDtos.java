@@ -191,6 +191,24 @@ final class ModelApiDtos {
      * <p>Marked apart from explicit ones on purpose: an architect must be able to tell what the
      * model says from what follows from it, and `via` answers "why is this line here".
      */
+    /**
+     * The graph seen as C4 around one element (ADR-0007).
+     *
+     * <p>`omitted` is not an error list: C4 represents ten of ArchiMate's sixty-two concepts, and
+     * a projection that dropped the rest in silence would look complete while hiding half the
+     * model.
+     */
+    record C4ProjectionResponse(
+            String level,
+            String levelName,
+            String focus,
+            List<ElementResponse> elements,
+            List<RelationshipResponse> relationships,
+            List<DerivedRelationshipResponse> derived,
+            List<OmittedResponse> omitted) {}
+
+    record OmittedResponse(String key, String name, String type) {}
+
     record DerivedRelationshipResponse(String key, String type, String source, String target, List<String> via) {}
 
     /** `parent` is what this element is drawn inside on this view — presentation only (ADR-0011). */

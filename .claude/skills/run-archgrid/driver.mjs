@@ -293,7 +293,9 @@ async function smoke(page) {
       actions: [...el.querySelectorAll('.ag-context-actions > button')].map((b) =>
         b.textContent.replace(/\s+/g, ' ').trim(),
       ),
-      rows: [...el.querySelectorAll('.ag-context-row button')].map((b) => b.textContent.trim()),
+      rows: [...el.querySelectorAll('.ag-context-actions .ag-context-row button')].map((b) =>
+        b.textContent.trim(),
+      ),
       usage: el.querySelector('.ag-context-usage h4')?.textContent ?? '',
       views: el.querySelector('.ag-context-views h4')?.textContent ?? '',
       inViewport: box.left >= 0 && box.top >= 0 && box.right <= innerWidth && box.bottom <= innerHeight,
@@ -1407,6 +1409,66 @@ async function interactions(page) {
     derived.join(' | ') || 'no derived lines',
   )
   await page.screenshot({ path: `${outDir}/46-derived.png` })
+
+  /*
+   * --- the same graph, read as C4 ---
+   *
+   * The product's second claim after "the repository is the source of truth": one graph, several
+   * notations. Nothing is stored for it — whether Payment System is a system or a container is
+   * depth relative to the focus (ADR-0007) — and what C4 cannot draw is named rather than dropped.
+   */
+  const c4From = async (key, level) => {
+    const box = await nodeAt(key).locator('.ag-body').boundingBox()
+    await page.mouse.click(box.x + box.width / 2, box.y + 14, { button: 'right' })
+    await page.waitForSelector('.ag-context-c4', { timeout: 5000 })
+    await page.locator('.ag-context-c4 button', { hasText: level }).click()
+    await page.waitForTimeout(4000)
+  }
+
+  await c4From(system, 'System Context')
+  const contextView = await page.locator('.ag-view-name').textContent()
+  check('a C4 context view is created from an element', contextView?.includes('System Context'), contextView ?? '')
+  const contextKeys = await page.evaluate(() =>
+    [...document.querySelectorAll('.ag-paper .ag-node')].map((node) => node.getAttribute('data-key')),
+  )
+  check(
+    'and shows the system without its insides',
+    contextKeys.includes(system) && !contextKeys.includes(api),
+    contextKeys.join(' '),
+  )
+  check(
+    'and says what C4 has no form for',
+    (await page.locator('.ag-banner').textContent())?.includes('no form in C4'),
+    (await page.locator('.ag-banner').textContent())?.slice(0, 120) ?? 'no banner',
+  )
+  await page.screenshot({ path: `${outDir}/47-c4-context.png` })
+
+  await page.locator('.ag-tree-item', { hasText: viewName }).first().click()
+  await page.waitForTimeout(3000)
+  await c4From(system, 'Container')
+  const containerKeys = await page.evaluate(() =>
+    [...document.querySelectorAll('.ag-paper .ag-node')].map((node) => node.getAttribute('data-key')),
+  )
+  check(
+    'a container view opens the system one level down',
+    containerKeys.includes(system) && containerKeys.includes(api),
+    containerKeys.join(' '),
+  )
+  const insideBoundary = await page.evaluate((keys) => {
+    const box = (key) => {
+      const body = document.querySelector(`.ag-paper .ag-node[data-key="${key}"] .ag-body`)
+      return body ? body.getBoundingClientRect() : null
+    }
+    const outer = box(keys.system)
+    const inner = box(keys.api)
+    if (!outer || !inner) return false
+    return inner.left >= outer.left && inner.right <= outer.right && inner.top >= outer.top && inner.bottom <= outer.bottom
+  }, { system, api })
+  check('and draws the container inside the boundary, as C4 does', insideBoundary)
+  await page.screenshot({ path: `${outDir}/48-c4-container.png` })
+
+  await page.locator('.ag-tree-item', { hasText: viewName }).first().click()
+  await page.waitForTimeout(3000)
 
   // Back to the view with containers and lines on it: exporting one lone box proves very little.
   await page.locator('.ag-tree-item', { hasText: viewName }).first().click()

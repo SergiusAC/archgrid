@@ -21,6 +21,9 @@ interface ContextMenuProps {
   onClose: () => void
   /** How many elements the selection holds: align only means something for more than one. */
   selectedCount: number
+  /** C4 levels the mapping declares, in the order it declares them. */
+  c4Levels: { code: string; name: string }[]
+  onC4View: (level: string) => void
   onArrange: (how: 'left' | 'centre' | 'right' | 'top' | 'middle' | 'bottom' | 'across' | 'down') => void
   onCopy: () => void
   onDuplicate: () => void
@@ -64,6 +67,8 @@ export default function ContextMenu({
   currentView,
   onClose,
   selectedCount,
+  c4Levels,
+  onC4View,
   onArrange,
   onCopy,
   onDuplicate,
@@ -178,6 +183,24 @@ export default function ContextMenu({
             </ul>
           )}
         </section>
+
+        {/*
+          A C4 diagram of this element. Computed, never stored: whether this is a system or a
+          container depends on where the boundary is drawn (ADR-0007), so the level is a question
+          asked here rather than a field on the element.
+        */}
+        {c4Levels.length > 0 && (
+          <section className="ag-context-align ag-context-c4">
+            <h4>C4 view from here</h4>
+            <div className="ag-context-row">
+              {c4Levels.map((level) => (
+                <button key={level.code} type="button" onClick={() => onC4View(level.code)}>
+                  {level.name}
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/*
           Alignment for a multiple selection. The guides advise while one element is dragged; six

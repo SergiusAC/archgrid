@@ -24,6 +24,7 @@ import Palette from './Palette.tsx'
 import Properties from './Properties.tsx'
 import Splitter from './Splitter.tsx'
 import RelationshipPicker from './RelationshipPicker.tsx'
+import { c4Layout } from './c4.ts'
 import { GRID, NODE_HEIGHT, NODE_WIDTH, autoLayout, nextFreePosition } from './layout.ts'
 import { clearDraft, readDraft, writeDraft } from './draft.ts'
 import { invert, useHistoryStore, type Position } from './store.ts'
@@ -70,6 +71,8 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    */
   const [clipboard, setClipboard] = useState<string[]>([])
   const [exportAs, setExportAs] = useState<{ format: 'svg' | 'png'; name: string; token: number } | null>(null)
+  /** A C4 view just created and not yet arranged: sizes and nesting land when it opens. */
+  const projected = useRef<{ view: string; layout: ReturnType<typeof c4Layout> } | null>(null)
   const exportToken = useRef(0)
   const [hiddenOpen, setHiddenOpen] = useState(false)
   const [sidebar, setSidebar] = useState<'views' | 'palette' | 'repository'>('views')
@@ -459,7 +462,11 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     if (missing.length === 0) {
       return
     }
-    if (Object.keys(positions).length === 0) {
+    // Auto-layout only when nothing has said where these should go. A projection arranges its own
+    // diagram — a boundary with its parts inside it — and handing that to a layered algorithm
+    // would produce a correct drawing in which nothing is obviously the subject.
+    const unrequested = missing.filter((element) => !placeAt.current[element.key])
+    if (Object.keys(positions).length === 0 && unrequested.length === missing.length) {
       void autoLayout(onView, view.data.relationships).then((laid) => {
         setPositions(laid)
         rememberChange(laid)
@@ -1138,6 +1145,76 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   }, [views.data, applySilently])
 
   /**
+   * A C4 diagram of one element, as a real view.
+   *
+   * The projection itself is computed and stored nowhere — no element carries a C4 type, because
+   * whether something is a system or a container depends on where the boundary is drawn
+   * ([ADR-0007](docs/adr/0007-c4-projection.md)). What is kept is an ordinary view: membership
+   * versioned like any other, and an arrangement the architect is free to change afterwards.
+   * That is the difference between a projection and a report — you can carry on working in it.
+   */
+  const createC4View = useCallback(
+    async (focusKey: string, level: string) => {
+      let projection
+      try {
+        projection = await api.c4Projection(workspace, focusKey, level)
+      } catch (error) {
+        setMessage({ kind: 'error', text: describe(error) })
+        return
+      }
+      const name = `${byKey[focusKey]?.name ?? focusKey} — ${projection.levelName}`
+      const key = uniqueKey(name, Object.fromEntries((views.data ?? []).map((v) => [v.key, true])))
+      const commands: Command[] = [
+        { op: 'create-view', key, name, viewpoint: 'layered' },
+        ...projection.elements.map((element) => ({ op: 'add-to-view', key, element: element.key }) as Command),
+      ]
+      if (!(await applySilently(commands, `C4 ${projection.levelName} of ${name}`))) {
+        return
+      }
+      const arranged = c4Layout(projection)
+      // Positions are asked for before the view opens; the placement effect uses them instead of
+      // laying the elements out as a graph of peers.
+      for (const [element, position] of Object.entries(arranged.positions)) {
+        placeAt.current[element] = position
+      }
+      projected.current = { view: key, layout: arranged }
+      setViewKey(key)
+      setMessage(
+        projection.omitted.length === 0
+          ? { kind: 'info', text: `${projection.levelName} view created.` }
+          : {
+              kind: 'info',
+              // Said out loud, because a diagram that quietly leaves things out claims a
+              // completeness it does not have (ADR-0007).
+              text: `${projection.levelName} view created. ${projection.omitted.length} ${
+                projection.omitted.length === 1 ? 'element has' : 'elements have'
+              } no form in C4 and ${projection.omitted.length === 1 ? 'is' : 'are'} not shown: ${projection.omitted
+                .slice(0, 4)
+                .map((element) => `${element.name} (${element.type})`)
+                .join(', ')}${projection.omitted.length > 4 ? '…' : ''}`,
+            },
+      )
+    },
+    [api, workspace, byKey, views.data, applySilently],
+  )
+
+  /** Sizes and nesting for a projected view, once the view it belongs to is the one open. */
+  useEffect(() => {
+    const pending = projected.current
+    if (!pending || !view.data || view.data.key !== pending.view || geometryFor !== view.data.key) {
+      return
+    }
+    projected.current = null
+    setSizes((current) => ({ ...current, ...pending.layout.sizes }))
+    rememberParents({ ...parentsRef.current, ...pending.layout.parents })
+    rememberChange(pending.layout.positions, pending.layout.sizes, {
+      ...parentsRef.current,
+      ...pending.layout.parents,
+    })
+    setGeometryVersion((version) => version + 1)
+  }, [view.data, geometryFor, rememberParents, rememberChange])
+
+  /**
    * Restores a set of coordinates and persists them. Undoing a move is itself not a commit.
    */
   const restoreLayout = useCallback(
@@ -1770,6 +1847,11 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           views={usageViews}
           currentView={viewKey}
           selectedCount={selected.length}
+          c4Levels={metamodel.c4Levels}
+          onC4View={(level) => {
+            setContext(null)
+            void createC4View(context.elementKey, level)
+          }}
           onArrange={(how) => {
             arrange(how)
             setContext(null)

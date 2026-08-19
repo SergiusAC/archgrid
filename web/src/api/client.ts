@@ -11,6 +11,7 @@ import type {
   ModelRelationship,
   ProblemDetail,
   Profile,
+  C4Projection,
   Usage,
   ViewDetail,
   ViewSummary,
@@ -92,6 +93,13 @@ export function createApi(token: string) {
       request<ModelRelationship[]>(`/api/workspaces/${encode(workspace)}/relationships`, token),
 
     profiles: (workspace: string) => request<Profile[]>(`/api/workspaces/${encode(workspace)}/profiles`, token),
+
+    /** The graph as C4 around one element: computed on demand, never stored (ADR-0007). */
+    c4Projection: (workspace: string, focus: string, level: string) =>
+      request<C4Projection>(
+        `/api/workspaces/${encode(workspace)}/projections/c4?focus=${encode(focus)}&level=${encode(level)}`,
+        token,
+      ),
 
     /** Where an element is used: its relationships, and the views that show it. */
     usage: (workspace: string, element: string) =>

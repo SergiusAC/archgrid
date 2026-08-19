@@ -61,6 +61,8 @@ export interface MetamodelDto {
   elementTypes: ElementType[]
   relationshipTypes: RelationshipType[]
   viewpoints: Viewpoint[]
+  /** C4 levels, hand-authored beside the shape table: a name and a depth relative to a focus. */
+  c4Levels: { code: string; name: string; depth: number }[]
   /** source concept -> target concept -> permitted relationship keys, e.g. `{"Node": {"Artifact": "aio"}}` */
   permitted: Record<string, Record<string, string>>
 }
@@ -156,6 +158,24 @@ export interface ViewDetail {
 export interface Usage {
   relationships: ModelRelationship[]
   views: { key: string; name: string }[]
+}
+
+/**
+ * The graph seen as C4 around one element (ADR-0007).
+ *
+ * Computed, never stored: no element carries a C4 type, because whether something is a system or a
+ * container depends on where the boundary is drawn. `omitted` is part of the answer — C4 has a form
+ * for ten of ArchiMate's sixty-two concepts, and a projection that dropped the rest in silence
+ * would look complete while hiding half the model.
+ */
+export interface C4Projection {
+  level: string
+  levelName: string
+  focus: string
+  elements: ModelElement[]
+  relationships: ModelRelationship[]
+  derived: DerivedRelationship[]
+  omitted: { key: string; name: string; type: string }[]
 }
 
 /** Organisation only. A folder means nothing to the metamodel and is not versioned. */

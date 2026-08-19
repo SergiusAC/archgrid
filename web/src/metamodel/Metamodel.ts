@@ -12,6 +12,8 @@ export class Metamodel {
   readonly elementTypes: ElementType[]
   readonly relationshipTypes: RelationshipType[]
   readonly viewpoints: Viewpoint[]
+  /** C4 levels as the mapping declares them; the UI offers what is there rather than three constants. */
+  readonly c4Levels: { code: string; name: string; depth: number }[]
 
   private readonly elementByConcept: Map<string, ElementType>
   private readonly relationshipByConcept: Map<string, RelationshipType>
@@ -23,6 +25,7 @@ export class Metamodel {
     this.elementTypes = dto.elementTypes
     this.relationshipTypes = dto.relationshipTypes
     this.viewpoints = dto.viewpoints
+    this.c4Levels = dto.c4Levels ?? []
     this.permitted = dto.permitted
     this.elementByConcept = new Map(dto.elementTypes.map((type) => [type.concept, type]))
     this.relationshipByConcept = new Map(dto.relationshipTypes.map((type) => [type.concept, type]))

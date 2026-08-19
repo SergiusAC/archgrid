@@ -102,6 +102,19 @@ public final class ModelGraph {
     }
 
     /**
+     * The relationships between these elements and no others.
+     *
+     * <p>What a view shows, asked without a view: a C4 projection computes its element set and
+     * needs the same answer (ADR-0007).
+     */
+    public List<Relationship> relationshipsAmong(java.util.Set<Slug> keys) {
+        return relationships.values().stream()
+                .filter(relationship ->
+                        keys.contains(relationship.source()) && keys.contains(relationship.target()))
+                .toList();
+    }
+
+    /**
      * What this element contains, read from Composition relationships (ADR-0011).
      *
      * <p>Not from a field: containment is a relationship, so "what is inside this" is a question

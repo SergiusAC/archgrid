@@ -3,6 +3,9 @@ package dev.archgrid.model;
 import dev.archgrid.admin.workspace.WorkspaceService;
 import dev.archgrid.domain.model.ModelCommand;
 import dev.archgrid.domain.metamodel.Metamodel;
+import dev.archgrid.domain.metamodel.c4.C4Level;
+import dev.archgrid.domain.metamodel.c4.C4Mapping;
+import dev.archgrid.domain.model.C4Projection;
 import dev.archgrid.domain.model.ModelGraph;
 import dev.archgrid.domain.model.RelationshipDerivation;
 import dev.archgrid.domain.model.View;
@@ -45,6 +48,7 @@ class GraphController {
     private final FolderService folders;
     private final ViewLayoutService layout;
     private final Metamodel metamodel;
+    private final C4Mapping c4;
 
     GraphController(
             WorkspaceService workspaces,
@@ -52,13 +56,15 @@ class GraphController {
             ModelCommandService commands,
             FolderService folders,
             ViewLayoutService layout,
-            Metamodel metamodel) {
+            Metamodel metamodel,
+            C4Mapping c4) {
         this.workspaces = workspaces;
         this.graphs = graphs;
         this.commands = commands;
         this.folders = folders;
         this.layout = layout;
         this.metamodel = metamodel;
+        this.c4 = c4;
     }
 
     @GetMapping
@@ -210,6 +216,84 @@ class GraphController {
                         .toList(),
                 layout.hidden(graphId, viewKey),
                 layout.router(graphId, viewKey));
+    }
+
+    // ------------------------------------------------------------------ C4
+
+    /**
+     * The graph seen as C4, around one element.
+     *
+     * <p>Computed on demand and stored nowhere — no element carries a C4 type, because whether
+     * something is a system or a container depends on where the boundary is drawn (ADR-0007). What
+     * comes back is an ordinary set of elements and lines, so the client can draw it, and then, if
+     * the architect wants to keep it, create a view from it with the commands it already has.
+     *
+     * <p>The omitted list is part of the answer, not an aside: C4 has no form for behaviour,
+     * interfaces, motivation or strategy, and a diagram that quietly dropped them would be
+     * claiming a completeness it does not have.
+     */
+    @GetMapping("/projections/c4")
+    ModelApiDtos.C4ProjectionResponse c4Projection(
+            @PathVariable String workspaceKey, @RequestParam String focus, @RequestParam String level) {
+        UUID graphId = graphId(workspaceKey);
+        ModelGraph graph = commands.current(graphId);
+        C4Level c4Level = c4.level(level)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.UNPROCESSABLE_CONTENT,
+                        "Unknown C4 level '" + level + "'. Use one of: "
+                                + c4.levels().stream().map(C4Level::code).toList() + "."));
+        Slug focusKey = Slug.of(focus);
+        if (graph.element(focusKey).isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No element '" + focus + "'.");
+        }
+
+        C4Projection.Result result = C4Projection.project(graph, metamodel, c4, focusKey, c4Level)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.UNPROCESSABLE_CONTENT, explainRefusal(graph, focusKey, c4Level)));
+
+        java.util.Set<Slug> shown = new java.util.LinkedHashSet<>(result.shown());
+        return new ModelApiDtos.C4ProjectionResponse(
+                c4Level.code(),
+                c4Level.name(),
+                focus,
+                result.shown().stream()
+                        .map(graph::element)
+                        .flatMap(java.util.Optional::stream)
+                        .map(ModelApiDtos.ElementResponse::from)
+                        .toList(),
+                graph.relationshipsAmong(shown).stream()
+                        .map(ModelApiDtos.RelationshipResponse::from)
+                        .toList(),
+                // The lines the model implies between what is shown, through everything the level
+                // hides. On a context diagram that is most of the lines there are.
+                RelationshipDerivation.derive(graph, shown, metamodel).stream()
+                        .map(derived -> new ModelApiDtos.DerivedRelationshipResponse(
+                                derived.key(),
+                                derived.type().concept(),
+                                derived.source().value(),
+                                derived.target().value(),
+                                derived.via().stream()
+                                        .map(hidden -> graph.element(hidden)
+                                                .map(dev.archgrid.domain.model.Element::name)
+                                                .orElseGet(hidden::value))
+                                        .toList()))
+                        .toList(),
+                result.omitted().stream()
+                        .map(graph::element)
+                        .flatMap(java.util.Optional::stream)
+                        .map(element -> new ModelApiDtos.OmittedResponse(
+                                element.key().value(), element.name(), element.displayType()))
+                        .toList());
+    }
+
+    /** Says which of the two reasons applies, because "cannot be drawn" teaches nobody anything. */
+    private String explainRefusal(ModelGraph graph, Slug focus, C4Level level) {
+        String type = graph.element(focus)
+                .map(dev.archgrid.domain.model.Element::displayType)
+                .orElse("?");
+        return "C4 has no way to draw a " + type + " at the " + level.name() + " level, so there is no "
+                + "diagram to be had around '" + focus.value() + "'. A C4 view is drawn around a system, "
+                + "a container or a person.";
     }
 
     /**

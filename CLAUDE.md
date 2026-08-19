@@ -287,6 +287,12 @@ Two things here are easy to get wrong and expensive when wrong:
   on `C4RelationshipIntent` handles it. Getting this wrong yields a plausible-looking diagram
   whose impact analysis is exactly backwards.
 
+`C4Projection` (domain) turns that data into a diagram: focus + level → what to show and what
+cannot be shown. Neighbours roll up to their outermost container — a context diagram naming the one
+module of a neighbouring platform that happens to call you is a context diagram of nothing — and
+the omitted list is part of the answer, surfaced in the UI rather than dropped. The result is
+materialised as an ordinary view, so the architect can keep working in it.
+
 `C4Shape.OMITTED` is the default and the correct answer for 52 of 62 concepts — C4 has no
 behaviour, interfaces, motivation, strategy or implementation elements. The count of
 representable concepts is pinned by a test; changing it is a design change for ADR-0007.
