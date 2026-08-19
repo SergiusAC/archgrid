@@ -175,6 +175,7 @@ export function invert(
         break
       case 'rename-view':
       case 'set-viewpoint':
+      case 'set-view-filters':
         // Needs the view's previous state, which this snapshot does not carry. Arrives with the
         // commit diff in phase 5; a wrong inverse would be worse than none.
         break

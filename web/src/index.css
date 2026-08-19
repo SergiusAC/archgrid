@@ -1242,6 +1242,78 @@ body.ag-resizing {
   box-shadow: 0 6px 20px rgb(0 0 0 / 0.18);
 }
 
+/* What the view draws, out of what belongs to it. */
+.ag-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.ag-filters h4 {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ag-filter-layers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.ag-filter-layers button {
+  font-size: 0.72rem;
+  padding: 0.15rem 0.4rem;
+  text-transform: capitalize;
+}
+
+.ag-filter-on {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.ag-filter-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.ag-filter-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+}
+
+.ag-filter-property {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.ag-filter-property input {
+  min-width: 0;
+  flex: 1;
+  font-size: 0.78rem;
+  padding: 0.2rem 0.3rem;
+}
+
+.ag-filter-foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+}
+
 /* Two buttons that belong together, side by side inside the menu. */
 .ag-menu-row {
   display: flex;

@@ -107,6 +107,7 @@ public final class ModelChange {
                     mutateView(graph, set.key(), violations, view -> view.withViewpoint(set.viewpoint()));
                 }
             }
+            case ModelCommand.SetViewFilters set -> setViewFilters(graph, metamodel, set, violations);
             case ModelCommand.DeleteView delete -> {
                 if (!graph.containsView(delete.key())) {
                     violations.add(Violation.of(
@@ -150,6 +151,30 @@ public final class ModelChange {
             return;
         }
         graph.put(View.of(create.key(), create.name(), create.viewpoint()));
+    }
+
+    /**
+     * Applies a view's filters, having checked that each one can ever match.
+     *
+     * <p>A layer that does not exist is not a filter that shows nothing; it is a typo, and a view
+     * that silently went blank because of one would send the architect looking for a deleted
+     * element. The metamodel knows the layers, so this is a question it can answer.
+     */
+    private static void setViewFilters(
+            ModelGraph graph, Metamodel metamodel, ModelCommand.SetViewFilters set, List<Violation> violations) {
+        Set<String> layers = metamodel.elementTypes().stream()
+                .map(type -> type.layer().code())
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        for (ViewFilter filter : set.filters()) {
+            if (filter.kind() == ViewFilter.Kind.LAYER && !layers.contains(filter.value())) {
+                violations.add(Violation.of(
+                        Violation.Code.UNKNOWN_TYPE,
+                        set.key(),
+                        "'" + filter.value() + "' is not a layer in this metamodel. Layers: " + layers + "."));
+                return;
+            }
+        }
+        mutateView(graph, set.key(), violations, view -> view.withFilters(new LinkedHashSet<>(set.filters())));
     }
 
     private static void mutateView(

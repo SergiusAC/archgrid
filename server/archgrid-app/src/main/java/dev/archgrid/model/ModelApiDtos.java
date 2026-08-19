@@ -3,6 +3,7 @@ package dev.archgrid.model;
 import dev.archgrid.domain.model.Element;
 import dev.archgrid.domain.model.ModelCommand;
 import dev.archgrid.domain.model.Relationship;
+import dev.archgrid.domain.model.ViewFilter;
 import dev.archgrid.domain.shared.Slug;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -53,7 +54,9 @@ final class ModelApiDtos {
             String property,
             String value,
             String viewpoint,
-            String element) {
+            String element,
+            /** Conditions on what a view draws; only `set-view-filters` uses them. */
+            List<FilterDto> filters) {
 
         ModelCommand toCommand() {
             Slug subject = slug(key, "key");
@@ -76,6 +79,10 @@ final class ModelApiDtos {
                         subject, require(name, "name"), require(viewpoint, "viewpoint"));
                 case "rename-view" -> new ModelCommand.RenameView(subject, require(name, "name"));
                 case "set-viewpoint" -> new ModelCommand.SetViewpoint(subject, require(viewpoint, "viewpoint"));
+                case "set-view-filters" -> new ModelCommand.SetViewFilters(
+                        subject,
+                        (filters == null ? List.<FilterDto>of() : filters)
+                                .stream().map(FilterDto::toFilter).toList());
                 case "delete-view" -> new ModelCommand.DeleteView(subject);
                 case "add-to-view" -> new ModelCommand.AddToView(subject, slug(require(element, "element"), "element"));
                 case "remove-from-view" -> new ModelCommand.RemoveFromView(
@@ -180,6 +187,10 @@ final class ModelApiDtos {
             List<RelationshipResponse> relationships,
             List<DerivedRelationshipResponse> derived,
             List<LayoutNodeResponse> layout,
+            /** Conditions on what this view draws. Versioned with its name and viewpoint (ADR-0003). */
+            List<FilterDto> filters,
+            /** Members the filters leave out — named, so a narrowed diagram cannot pass for a full one. */
+            List<OmittedResponse> filtered,
             /** Relationships this view does not draw. Presentation only; the model still holds them. */
             List<String> hidden,
             /** How this view draws its connections: 'straight' or 'orthogonal'. Presentation only. */
@@ -198,6 +209,29 @@ final class ModelApiDtos {
      * a projection that dropped the rest in silence would look complete while hiding half the
      * model.
      */
+    /**
+     * One condition on what a view draws.
+     *
+     * @param kind {@code layer} or {@code property}
+     * @param name the property key; unused for a layer
+     * @param value the layer code, or the property value. Null on a property filter asks for
+     *     everything that has the property at all.
+     */
+    record FilterDto(String kind, String name, String value) {
+
+        ViewFilter toFilter() {
+            if (kind == null || kind.isBlank()) {
+                // The same shape as every other bad command: an explanation, not a 500.
+                throw new IllegalArgumentException("A view filter needs a kind: 'layer' or 'property'.");
+            }
+            return new ViewFilter(ViewFilter.Kind.of(kind), name, value);
+        }
+
+        static FilterDto from(ViewFilter filter) {
+            return new FilterDto(filter.kind().code(), filter.name(), filter.value());
+        }
+    }
+
     record C4ProjectionResponse(
             String level,
             String levelName,

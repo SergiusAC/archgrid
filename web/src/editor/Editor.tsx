@@ -12,10 +12,12 @@ import type {
   ModelRelationship,
   Profile,
   RelationshipType,
+  ViewFilter,
 } from '../api/types.ts'
 import { Metamodel } from '../metamodel/Metamodel.ts'
 import Canvas, { type CanvasElement, type CanvasLink, type Geometry } from './Canvas.tsx'
 import ContextMenu, { type ContextTarget } from './ContextMenu.tsx'
+import Filters from './Filters.tsx'
 import LinkMenu, { type LinkTarget } from './LinkMenu.tsx'
 import Explorer from './Explorer.tsx'
 import FolderTree, { type TreeItem } from './FolderTree.tsx'
@@ -1198,6 +1200,35 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     [api, workspace, byKey, views.data, applySilently],
   )
 
+  /**
+   * Narrows what this view draws, without touching what belongs to it.
+   *
+   * A command, because the filter is part of the view's definition and worth attributing
+   * (ADR-0003) — and applied on the server, which is the whole value of it: a view filtered to the
+   * application layer derives the application-level lines running through the technology it no
+   * longer draws.
+   */
+  const setFilters = useCallback(
+    (filters: ViewFilter[]) => {
+      if (!viewKey) {
+        return
+      }
+      void applySilently([{ op: 'set-view-filters', key: viewKey, filters }], 'Filter the view')
+    },
+    [viewKey, applySilently],
+  )
+
+  /** The layers the metamodel knows, in the order it lists its types. */
+  const layers = useMemo(() => {
+    const seen: string[] = []
+    for (const type of metamodel.elementTypes) {
+      if (!seen.includes(type.layer)) {
+        seen.push(type.layer)
+      }
+    }
+    return seen
+  }, [metamodel])
+
   /** Sizes and nesting for a projected view, once the view it belongs to is the one open. */
   useEffect(() => {
     const pending = projected.current
@@ -1529,6 +1560,13 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
                       <option value="orthogonal">Orthogonal</option>
                     </select>
                   </label>
+                  <Filters
+                    layers={layers}
+                    filters={view.data?.filters ?? []}
+                    filtered={view.data?.filtered ?? []}
+                    onChange={setFilters}
+                  />
+
                   {/* The diagram as a file: needed by any document that embeds it, and the only
                       way a view leaves the product before phase 5 brings documentation. */}
                   <div className="ag-menu-row">

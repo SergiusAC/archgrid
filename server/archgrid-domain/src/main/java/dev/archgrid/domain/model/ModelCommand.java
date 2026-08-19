@@ -174,6 +174,26 @@ public sealed interface ModelCommand {
         }
     }
 
+    /**
+     * Replaces the view's filters wholesale.
+     *
+     * <p>Wholesale rather than add/remove: a filter set is small, read as a whole, and edited as a
+     * whole, and two commands would make "the view now shows the technology layer only" arrive in
+     * the history as two half-decisions.
+     */
+    record SetViewFilters(Slug key, java.util.List<ViewFilter> filters) implements ModelCommand {
+
+        public SetViewFilters {
+            Objects.requireNonNull(key, "key must not be null");
+            filters = java.util.List.copyOf(filters);
+        }
+
+        @Override
+        public Slug subject() {
+            return key;
+        }
+    }
+
     /** Deletes the diagram. The elements it showed are untouched — they belong to the repository. */
     record DeleteView(Slug key) implements ModelCommand {
 

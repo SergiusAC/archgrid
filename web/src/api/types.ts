@@ -145,6 +145,10 @@ export interface ViewDetail {
    * coordinates beside them (ADR-0011).
    */
   hidden: string[]
+  /** Conditions on what this view draws. Versioned with its name and viewpoint. */
+  filters: ViewFilter[]
+  /** Members the filters leave out, named so a narrowed diagram cannot pass for the whole picture. */
+  filtered: { key: string; name: string; type: string }[]
   /** How this view draws its connections. Presentation only, never versioned (ADR-0003). */
   router: ConnectionRouter
 }
@@ -168,6 +172,21 @@ export interface Usage {
  * for ten of ArchiMate's sixty-two concepts, and a projection that dropped the rest in silence
  * would look complete while hiding half the model.
  */
+/**
+ * One condition on what a view draws — never on what belongs to it.
+ *
+ * Versioned with the view's name and viewpoint (ADR-0003): "this diagram is about the technology
+ * layer" is a documentation decision. Removing it brings the elements back where they were, because
+ * they never left.
+ */
+export interface ViewFilter {
+  kind: 'layer' | 'property'
+  /** The property key; unused for a layer. */
+  name: string | null
+  /** The layer code, or the property value. Null on a property filter means "has it at all". */
+  value: string | null
+}
+
 export interface C4Projection {
   level: string
   levelName: string
@@ -221,6 +240,7 @@ export type Command =
   | { op: 'create-view'; key: string; name: string; viewpoint: string }
   | { op: 'rename-view'; key: string; name: string }
   | { op: 'set-viewpoint'; key: string; viewpoint: string }
+  | { op: 'set-view-filters'; key: string; filters: ViewFilter[] }
   | { op: 'delete-view'; key: string }
   | { op: 'add-to-view'; key: string; element: string }
   | { op: 'remove-from-view'; key: string; element: string }

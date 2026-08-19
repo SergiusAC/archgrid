@@ -1411,6 +1411,49 @@ async function interactions(page) {
   await page.screenshot({ path: `${outDir}/46-derived.png` })
 
   /*
+   * --- a view can be narrowed without losing anything ---
+   *
+   * A filter is a condition on what the view draws, never on what belongs to it (ADR-0003), and it
+   * is applied on the server so that the lines lift through what is no longer drawn. Which is why
+   * clearing it puts every box back exactly where it was.
+   */
+  const boxesOf = () =>
+    page.evaluate(() =>
+      Object.fromEntries(
+        [...document.querySelectorAll('.ag-paper .ag-node')].map((node) => [
+          node.getAttribute('data-key'),
+          node.getAttribute('transform'),
+        ]),
+      ),
+    )
+  const unfiltered = await boxesOf()
+  await openMenu()
+  await page.locator('.ag-filter-layers button', { hasText: 'business' }).click()
+  await page.waitForTimeout(3000)
+  const narrowed = await boxesOf()
+  check(
+    'filtering to a layer draws only that layer',
+    Object.keys(narrowed).length > 0 && Object.keys(narrowed).length < Object.keys(unfiltered).length,
+    `${Object.keys(unfiltered).length} -> ${Object.keys(narrowed).length}`,
+  )
+  check(
+    'and says what it is leaving out',
+    (await page.locator('.ag-filter-foot').textContent())?.includes('left out'),
+    (await page.locator('.ag-filter-foot').textContent())?.slice(0, 80) ?? 'no note',
+  )
+  await page.screenshot({ path: `${outDir}/49-filtered.png` })
+
+  await page.locator('.ag-filter-foot .ag-link').click()
+  await page.waitForTimeout(3000)
+  const restored = await boxesOf()
+  check(
+    'clearing it brings every element back where it was',
+    JSON.stringify(restored) === JSON.stringify(unfiltered),
+    `${Object.keys(restored).length} of ${Object.keys(unfiltered).length}`,
+  )
+  await page.keyboard.press('Escape')
+
+  /*
    * --- the same graph, read as C4 ---
    *
    * The product's second claim after "the repository is the source of truth": one graph, several

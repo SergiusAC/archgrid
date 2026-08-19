@@ -5,6 +5,7 @@ import dev.archgrid.domain.model.Element;
 import dev.archgrid.domain.model.ModelGraph;
 import dev.archgrid.domain.model.Relationship;
 import dev.archgrid.domain.model.View;
+import dev.archgrid.domain.model.ViewFilter;
 import dev.archgrid.domain.profile.AttributeDefinition;
 import dev.archgrid.domain.profile.AttributeType;
 import dev.archgrid.domain.profile.Profile;
@@ -143,7 +144,7 @@ class ModelGraphRepository {
 
         return jdbc.sql(
                         """
-                        select v."key" as view_key, vv.name, vv.viewpoint
+                        select v."key" as view_key, vv.name, vv.viewpoint, vv.filters::text as filters
                         from view_version vv
                         join view v on v.id = vv.view_id
                         where v.model_id = :modelId and vv.to_seq is null
@@ -153,7 +154,11 @@ class ModelGraphRepository {
                 .query((ResultSet rs, int rowNum) -> {
                     Slug key = Slug.of(rs.getString("view_key"));
                     return new View(
-                            key, rs.getString("name"), rs.getString("viewpoint"), members.getOrDefault(key, Set.of()));
+                            key,
+                            rs.getString("name"),
+                            rs.getString("viewpoint"),
+                            members.getOrDefault(key, Set.of()),
+                            readFilters(rs.getString("filters")));
                 })
                 .list();
     }
@@ -188,6 +193,42 @@ class ModelGraphRepository {
                 .list()
                 .forEach(builder::profile);
         return builder.build(metamodel);
+    }
+
+    /**
+     * A view's filters, which are conditions on what it draws and never on what belongs to it.
+     *
+     * <p>An entry we cannot make sense of is dropped rather than fatal: a filter is presentation
+     * of a decision, and refusing to open a diagram because one condition is unreadable would be
+     * the wrong trade.
+     */
+    private Set<ViewFilter> readFilters(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return Set.of();
+        }
+        List<Map<String, String>> entries = json.readValue(raw, new tools.jackson.core.type.TypeReference<>() {});
+        Set<ViewFilter> filters = new java.util.LinkedHashSet<>();
+        for (Map<String, String> entry : entries) {
+            try {
+                filters.add(new ViewFilter(
+                        ViewFilter.Kind.of(entry.get("kind")), entry.get("name"), entry.get("value")));
+            } catch (RuntimeException ignored) {
+                // Unreadable condition; the diagram is worth more than the filter.
+            }
+        }
+        return filters;
+    }
+
+    private String writeFilters(Set<ViewFilter> filters) {
+        return json.writeValueAsString(filters.stream()
+                .map(filter -> {
+                    Map<String, String> entry = new java.util.LinkedHashMap<>();
+                    entry.put("kind", filter.kind().code());
+                    entry.put("name", filter.name());
+                    entry.put("value", filter.value());
+                    return entry;
+                })
+                .toList());
     }
 
     private List<AttributeDefinition> readAttributes(String raw) {
@@ -349,21 +390,26 @@ class ModelGraphRepository {
             View updated = current.get(key);
             UUID viewId = viewIds.get(key);
 
+            // Filters are part of the definition, not of the membership: "this diagram is about
+            // the technology layer" is versioned exactly like its name (ADR-0003). Leaving them
+            // out of this comparison wrote the commit and none of the change.
             boolean definitionChanged = previous == null
                     || updated == null
                     || !previous.name().equals(updated.name())
-                    || !previous.viewpoint().equals(updated.viewpoint());
+                    || !previous.viewpoint().equals(updated.viewpoint())
+                    || !previous.filters().equals(updated.filters());
             if (definitionChanged) {
                 if (previous != null) {
                     closeVersion("view", "view_id", viewId, seq);
                 }
                 if (updated != null) {
-                    jdbc.sql("insert into view_version (view_id, from_seq, name, viewpoint) "
-                                    + "values (:id, :seq, :name, :viewpoint)")
+                    jdbc.sql("insert into view_version (view_id, from_seq, name, viewpoint, filters) "
+                                    + "values (:id, :seq, :name, :viewpoint, cast(:filters as jsonb))")
                             .param("id", viewId)
                             .param("seq", seq)
                             .param("name", updated.name())
                             .param("viewpoint", updated.viewpoint())
+                            .param("filters", writeFilters(updated.filters()))
                             .update();
                 }
             }

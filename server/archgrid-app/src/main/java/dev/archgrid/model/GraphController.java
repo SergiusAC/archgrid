@@ -181,23 +181,28 @@ class GraphController {
         View view = graph.view(Slug.of(viewKey))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No view '" + viewKey + "'."));
 
+        // Filtering happens here rather than in the browser, and that is the whole value of it: a
+        // view narrowed to the application layer derives the application-level lines that run
+        // through the technology it no longer draws.
+        java.util.Set<Slug> shown = dev.archgrid.domain.model.ViewFilters.visible(graph, view, metamodel);
+
         return new ModelApiDtos.ViewResponse(
                 view.key().value(),
                 view.name(),
                 view.viewpoint(),
                 folders.viewFolders(graphId).get(view.key().value()),
-                view.elements().stream()
+                shown.stream()
                         .map(graph::element)
                         .flatMap(java.util.Optional::stream)
                         .map(ModelApiDtos.ElementResponse::from)
                         .toList(),
-                graph.relationshipsOn(view).stream()
+                graph.relationshipsAmong(shown).stream()
                         .map(ModelApiDtos.RelationshipResponse::from)
                         .toList(),
                 // Computed, never stored: what the model implies between the elements on this
                 // view through elements it does not show. A context diagram that omitted these
                 // would be lying by omission.
-                RelationshipDerivation.derive(graph, view.elements(), metamodel).stream()
+                RelationshipDerivation.derive(graph, shown, metamodel).stream()
                         .map(derived -> new ModelApiDtos.DerivedRelationshipResponse(
                                 derived.key(),
                                 derived.type().concept(),
@@ -213,6 +218,16 @@ class GraphController {
                         .map(node -> new ModelApiDtos.LayoutNodeResponse(
                                 node.elementKey(), node.x(), node.y(), node.width(), node.height(),
                                 node.parentKey(), node.z()))
+                        .toList(),
+                view.filters().stream().map(ModelApiDtos.FilterDto::from).toList(),
+                // Named rather than counted: a diagram narrowed by a filter must not read as the
+                // whole picture, and "3 hidden" without saying which is an invitation to guess.
+                view.elements().stream()
+                        .filter(member -> !shown.contains(member))
+                        .map(graph::element)
+                        .flatMap(java.util.Optional::stream)
+                        .map(element -> new ModelApiDtos.OmittedResponse(
+                                element.key().value(), element.name(), element.displayType()))
                         .toList(),
                 layout.hidden(graphId, viewKey),
                 layout.router(graphId, viewKey));

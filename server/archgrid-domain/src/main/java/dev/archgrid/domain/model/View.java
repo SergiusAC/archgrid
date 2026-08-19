@@ -22,8 +22,11 @@ import java.util.Set;
  * @param viewpoint a viewpoint code from the metamodel. It drives the palette; it does not
  *     forbid anything. ArchiMate viewpoints are guidance about what is relevant, and a tool
  *     that refuses an element because of one fights its user for no gain.
+ * @param filters conditions on what is drawn, not on what belongs. Versioned with the rest of the
+ *     view definition (ADR-0003): "this diagram is about the technology layer" is a documentation
+ *     decision, and removing the filter brings the elements back where they were.
  */
-public record View(Slug key, String name, String viewpoint, Set<Slug> elements) {
+public record View(Slug key, String name, String viewpoint, Set<Slug> elements, Set<ViewFilter> filters) {
 
     public static final int MAX_NAME_LENGTH = 200;
 
@@ -38,11 +41,13 @@ public record View(Slug key, String name, String viewpoint, Set<Slug> elements) 
         if (name.length() > MAX_NAME_LENGTH) {
             throw new IllegalArgumentException("view name must be at most " + MAX_NAME_LENGTH + " characters: " + key);
         }
+        Objects.requireNonNull(filters, "filters must not be null");
         elements = Collections.unmodifiableSet(new LinkedHashSet<>(elements));
+        filters = Collections.unmodifiableSet(new LinkedHashSet<>(filters));
     }
 
     public static View of(Slug key, String name, String viewpoint) {
-        return new View(key, name, viewpoint, Set.of());
+        return new View(key, name, viewpoint, Set.of(), Set.of());
     }
 
     public boolean contains(Slug elementKey) {
@@ -50,22 +55,26 @@ public record View(Slug key, String name, String viewpoint, Set<Slug> elements) 
     }
 
     public View withName(String newName) {
-        return new View(key, newName, viewpoint, elements);
+        return new View(key, newName, viewpoint, elements, filters);
     }
 
     public View withViewpoint(String newViewpoint) {
-        return new View(key, name, newViewpoint, elements);
+        return new View(key, name, newViewpoint, elements, filters);
+    }
+
+    public View withFilters(Set<ViewFilter> newFilters) {
+        return new View(key, name, viewpoint, elements, newFilters);
     }
 
     public View with(Slug elementKey) {
         Set<Slug> updated = new LinkedHashSet<>(elements);
         updated.add(elementKey);
-        return new View(key, name, viewpoint, updated);
+        return new View(key, name, viewpoint, updated, filters);
     }
 
     public View without(Slug elementKey) {
         Set<Slug> updated = new LinkedHashSet<>(elements);
         updated.remove(elementKey);
-        return new View(key, name, viewpoint, updated);
+        return new View(key, name, viewpoint, updated, filters);
     }
 }
