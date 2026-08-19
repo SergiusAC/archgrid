@@ -11,6 +11,7 @@ import type {
   ModelRelationship,
   ProblemDetail,
   Profile,
+  Usage,
   ViewDetail,
   ViewSummary,
   Workspace,
@@ -91,6 +92,10 @@ export function createApi(token: string) {
       request<ModelRelationship[]>(`/api/workspaces/${encode(workspace)}/relationships`, token),
 
     profiles: (workspace: string) => request<Profile[]>(`/api/workspaces/${encode(workspace)}/profiles`, token),
+
+    /** Where an element is used: its relationships, and the views that show it. */
+    usage: (workspace: string, element: string) =>
+      request<Usage>(`/api/workspaces/${encode(workspace)}/elements/${encode(element)}/usage`, token),
 
     views: (workspace: string) => request<ViewSummary[]>(`/api/workspaces/${encode(workspace)}/views`, token),
 

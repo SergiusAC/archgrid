@@ -148,6 +148,17 @@ export interface ViewDetail {
   router: ConnectionRouter
 }
 
+/**
+ * Everywhere an element is used.
+ *
+ * The views half is what matters before a deletion: "it will go from these four diagrams" is a
+ * decision an architect can make, "it will go from everywhere" is one they can only accept.
+ */
+export interface Usage {
+  relationships: ModelRelationship[]
+  views: { key: string; name: string }[]
+}
+
 /** Organisation only. A folder means nothing to the metamodel and is not versioned. */
 export interface Folder {
   id: string

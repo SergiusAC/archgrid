@@ -129,6 +129,21 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     queryFn: () => api.view(workspace, viewKey!),
   })
 
+  /**
+   * Where the element in hand is used, asked of the server rather than inferred.
+   *
+   * A view lists its own elements; nothing on the client knows the other twenty views without
+   * fetching them all. And this is the answer that matters before a deletion: "it will go from
+   * these four diagrams" is a decision, "it will go from everywhere" is a leap of faith.
+   */
+  const usageKey = context?.elementKey ?? (selected.length === 1 ? selected[0] : null)
+  const usage = useQuery({
+    queryKey: ['usage', workspace, usageKey],
+    enabled: usageKey != null,
+    queryFn: () => api.usage(workspace, usageKey!),
+  })
+  const usageViews = usage.data && usage.isSuccess && usageKey ? usage.data.views : null
+
   const headCommitId = graph.data?.headCommitId ?? null
   const allElements = useMemo(() => repository.data?.elements ?? [], [repository.data])
   const allRelationships = useMemo(() => repository.data?.relationships ?? [], [repository.data])
@@ -268,6 +283,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       queryClient.invalidateQueries({ queryKey: ['repository', workspace] }),
       queryClient.invalidateQueries({ queryKey: ['views', workspace] }),
       queryClient.invalidateQueries({ queryKey: ['view', workspace] }),
+      queryClient.invalidateQueries({ queryKey: ['usage', workspace] }),
     ])
   }, [queryClient, workspace])
 
@@ -1592,6 +1608,9 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         }
         onSelect={(key) => setSelected([key])}
         onDeleteRelationship={deleteRelationship}
+        views={usageViews}
+        currentView={viewKey}
+        onOpenView={setViewKey}
       />
       )}
 
@@ -1683,6 +1702,8 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           relationships={allRelationships}
           elementsByKey={byKey}
           metamodel={metamodel}
+          views={usageViews}
+          currentView={viewKey}
           onClose={() => setContext(null)}
           onCopy={() => {
             copySelection()

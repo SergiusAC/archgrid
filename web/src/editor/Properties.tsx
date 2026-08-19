@@ -17,6 +17,10 @@ interface PropertiesProps {
   /** From here as well as from the canvas: this is where an element's relationships are read. */
   onDeleteRelationship: (key: string) => void
   onSelect: (key: string) => void
+  /** The views showing this element, or null while the answer is still on its way. */
+  views: { key: string; name: string }[] | null
+  currentView: string | null
+  onOpenView: (key: string) => void
 }
 
 /**
@@ -38,6 +42,9 @@ export default function Properties({
   onProperty,
   onDeleteRelationship,
   onSelect,
+  views,
+  currentView,
+  onOpenView,
 }: PropertiesProps) {
   const [name, setName] = useState('')
   const [documentation, setDocumentation] = useState('')
@@ -187,6 +194,32 @@ export default function Properties({
             Add
           </button>
         </form>
+      </section>
+
+      {/*
+        The half of "where is this used" that a diagramming tool cannot answer at all: the element
+        belongs to the repository, and every view merely shows it (ADR-0009).
+      */}
+      <section className="ag-props-group">
+        <h3>{views ? `On ${views.length} view${views.length === 1 ? '' : 's'}` : 'Views…'}</h3>
+        {views && views.length === 0 && <p className="muted">On no view yet.</p>}
+        {views && views.length > 0 && (
+          <ul className="ag-props-usage">
+            {views.map((view) => (
+              <li key={view.key}>
+                <button
+                  type="button"
+                  className="ag-link"
+                  disabled={view.key === currentView}
+                  onClick={() => onOpenView(view.key)}
+                >
+                  {view.name}
+                </button>
+                {view.key === currentView && <span className="ag-muted"> this one</span>}
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="ag-props-group">

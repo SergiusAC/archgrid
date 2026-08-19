@@ -279,6 +279,12 @@ async function smoke(page) {
   // --- right-click inspector ---
   await page.locator('.ag-paper .ag-node').first().click({ button: 'right' })
   await page.waitForSelector('.ag-context', { timeout: 5000 })
+  // The views an element is on come from the server, so the menu is not finished the moment it
+  // opens. Checking the delete wording before that answer lands would check the wrong sentence.
+  await page.waitForFunction(
+    () => /On \d+ view/.test(document.querySelector('.ag-context-views h4')?.textContent ?? ''),
+    { timeout: 5000 },
+  )
   const menu = await page.evaluate(() => {
     const el = document.querySelector('.ag-context')
     const box = el.getBoundingClientRect()
@@ -289,10 +295,17 @@ async function smoke(page) {
       ),
       rows: [...el.querySelectorAll('.ag-context-row button')].map((b) => b.textContent.trim()),
       usage: el.querySelector('.ag-context-usage h4')?.textContent ?? '',
+      views: el.querySelector('.ag-context-views h4')?.textContent ?? '',
       inViewport: box.left >= 0 && box.top >= 0 && box.right <= innerWidth && box.bottom <= innerHeight,
     }
   })
   await shot('02-context-menu')
+  check('the menu says which views show the element', /On \d+ view/.test(menu.views), menu.views)
+  check(
+    'and what deleting it would cost',
+    /Also .*removes it from \d+ view/.test(menu.actions[1] ?? ''),
+    menu.actions[1] ?? '',
+  )
   check('context menu offers both delete modes', menu.actions.length === 2, menu.actions.join(' | '))
   check('context menu stays inside the window', menu.inViewport)
   check(
@@ -1265,6 +1278,42 @@ async function interactions(page) {
    * picture of it. The export is the SVG on screen minus the editor's furniture, carrying the
    * stylesheet, because nothing that opens the file will consult ours.
    */
+  /*
+   * --- an element knows every diagram it is on ---
+   *
+   * The claim a diagramming tool cannot make: the element belongs to the repository and each view
+   * merely shows it, so "where is this used" has to answer with views, not only with lines. It is
+   * also what turns "delete from the model" from a leap into a decision.
+   */
+  await clickNode(await keyOf('Ledger'), 'centre')
+  await page.waitForSelector('.ag-props-group h3', { timeout: 5000 })
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('.ag-props-group h3')].some((h) => /On \d+ views?/.test(h.textContent)),
+    { timeout: 5000 },
+  )
+  const onViews = await page.evaluate(() => {
+    const heads = [...document.querySelectorAll('.ag-props-group h3')]
+    const head = heads.find((h) => /On \d+ views?/.test(h.textContent))
+    return {
+      heading: head.textContent,
+      names: [...head.parentElement.querySelectorAll('li .ag-link')].map((b) => b.textContent.trim()),
+    }
+  })
+  check(
+    'the panel names every view the element is on',
+    onViews.heading === 'On 2 views' && onViews.names.includes(viewName),
+    `${onViews.heading}: ${onViews.names.join(', ')}`,
+  )
+  // And they are a way in, not only a fact: this is the walk from one diagram to another.
+  await page.locator('.ag-props-group li .ag-link', { hasText: viewName }).first().click()
+  await page.waitForTimeout(3000)
+  check(
+    'and opens the one you click',
+    (await page.locator('.ag-toolbar strong, .ag-view-name').first().textContent())?.includes(viewName),
+    (await page.locator('.ag-toolbar strong, .ag-view-name').first().textContent()) ?? '',
+  )
+  await page.screenshot({ path: `${outDir}/45-where-used.png` })
+
   // Back to the view with containers and lines on it: exporting one lone box proves very little.
   await page.locator('.ag-tree-item', { hasText: viewName }).first().click()
   await page.waitForTimeout(3000)
