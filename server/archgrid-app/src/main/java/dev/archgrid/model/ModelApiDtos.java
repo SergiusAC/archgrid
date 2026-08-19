@@ -251,10 +251,15 @@ final class ModelApiDtos {
     record LayoutNodeResponse(
             String element, double x, double y, Double width, Double height, String parent, Integer z) {}
 
-    /** Where a line bends on this view. Presentation, like the coordinates it travels with. */
-    record LayoutLinkResponse(String relationship, List<PointDto> vertices) {}
+    /**
+     * Where a line bends on this view. Presentation, like the coordinates it travels with.
+     *
+     * <p>`key` is the line as the diagram knows it: a relationship key, or the computed key of a
+     * derived line. Not named `relationship`, because half of them are not one.
+     */
+    record LayoutLinkResponse(String key, List<PointDto> vertices) {}
 
-    record LayoutLinkRequest(@NotBlank String relationship, List<PointDto> vertices) {}
+    record LayoutLinkRequest(@NotBlank String key, List<PointDto> vertices) {}
 
     record PointDto(double x, double y) {}
 

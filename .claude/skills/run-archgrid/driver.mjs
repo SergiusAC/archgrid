@@ -1015,6 +1015,33 @@ async function interactions(page) {
   }
 
   /*
+   * --- Discard puts back what the server holds ---
+   *
+   * Reported from use: Discard threw away the draft and left the canvas exactly as it had been
+   * dragged. The unsaved arrangement lives in the editor's own state, not in the query cache, so
+   * refetching the view came back identical, `view.data` never changed, and the effect that loads
+   * a layout never ran.
+   */
+  const beforeDiscard = await transformsOf()
+  const toDiscard = await nodeAt(ledgerKey).locator('.ag-body').boundingBox()
+  await page.mouse.move(toDiscard.x + toDiscard.width / 2, toDiscard.y + 12)
+  await page.mouse.down()
+  await page.mouse.move(toDiscard.x + toDiscard.width / 2 + 130, toDiscard.y + 12 - 70, { steps: 10 })
+  await page.mouse.up()
+  await page.waitForTimeout(700)
+  check('the drag moved something', (await transformsOf()) !== beforeDiscard)
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: 'Discard' }).click()
+  await page.waitForTimeout(2500)
+  check(
+    'Discard puts the view back where the server has it',
+    (await transformsOf()) === beforeDiscard,
+    (await transformsOf()) === beforeDiscard ? '' : `
+      saved: ${beforeDiscard}
+      after: ${await transformsOf()}`,
+  )
+
+  /*
    * --- a saved view reopens as saved ---
    *
    * Reported from use: save a view, come back to it, and the old arrangement is there. The draft
@@ -1493,6 +1520,49 @@ async function interactions(page) {
     derived.join(' | ') || 'no derived lines',
   )
   await page.screenshot({ path: `${outDir}/46-derived.png` })
+
+  /*
+   * --- a derived line keeps the way it was drawn, too ---
+   *
+   * Reported from use. The routing table keyed its rows by a foreign key into `relationship`, and
+   * a derived line has no row there — its key is computed. The editor accepted the bendpoints, sent
+   * them, and the insert matched nothing: dropped without a word.
+   */
+  const derivedPath = () =>
+    page.evaluate(() => {
+      const path = document.querySelector('.ag-paper .ag-link-derived .ag-link-line')
+      return path ? (path.getAttribute('d') ?? '').replace(/\s+/g, ' ').trim() : null
+    })
+  const derivedAt = await page.evaluate(() => {
+    const path = document.querySelector('.ag-paper .ag-link-derived .ag-link-line')
+    if (!path) return null
+    const middle = path.getPointAtLength(path.getTotalLength() / 2)
+    const at = new DOMPoint(middle.x, middle.y).matrixTransform(path.getScreenCTM())
+    return { x: at.x, y: at.y }
+  })
+  if (derivedAt) {
+    const wasStraight = await derivedPath()
+    await page.mouse.move(derivedAt.x, derivedAt.y)
+    await page.waitForTimeout(400)
+    await page.mouse.down()
+    await page.mouse.move(derivedAt.x - 110, derivedAt.y + 60, { steps: 10 })
+    await page.mouse.up()
+    await page.waitForTimeout(800)
+    const bentDerived = await derivedPath()
+    check('a derived line can be routed by hand', bentDerived !== wasStraight, `${wasStraight} -> ${bentDerived}`)
+
+    await page.keyboard.press('Control+s')
+    await page.waitForTimeout(2500)
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await openRepository(page)
+    await page.locator('.ag-tree-item', { hasText: viewName }).first().click()
+    await page.waitForTimeout(3500)
+    check(
+      'and a derived line keeps that route across a reload',
+      (await derivedPath()) === bentDerived,
+      `${bentDerived} -> ${await derivedPath()}`,
+    )
+  }
 
   /*
    * --- a view can be narrowed without losing anything ---

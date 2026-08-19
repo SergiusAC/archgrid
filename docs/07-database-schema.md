@@ -1,6 +1,6 @@
 # 07. Схема данных
 
-Текущее состояние базы: миграции `V1`–`V12`, PostgreSQL 18. Диаграмма **производна** от миграций,
+Текущее состояние базы: миграции `V1`–`V13`, PostgreSQL 18. Диаграмма **производна** от миграций,
 а не наоборот: источник правды — `server/archgrid-app/src/main/resources/db/migration/` и
 Java-миграция `V10`, и при расхождении прав тот каталог.
 
@@ -112,7 +112,7 @@ erDiagram
     view_layout_node }o--|| element : ""
     view_layout_node }o--o| element : "parent_element_id — вложенность здесь"
     view ||--o{ view_layout_link : "изломы линий — вне коммитов"
-    view_layout_link }o--|| relationship : ""
+    view_layout_link }o--o| relationship : "null у выводимой линии"
     view ||--o{ view_hidden_relationship : "линии, которых это представление не рисует"
     view_hidden_relationship }o--|| relationship : ""
 
@@ -149,7 +149,8 @@ erDiagram
     }
     view_layout_link {
         uuid view_id PK
-        uuid relationship_id PK
+        text link_key PK "ключ связи или выводимой линии"
+        uuid relationship_id FK "null, если линия выводимая"
         jsonb vertices "точки, через которые ведёт линия"
     }
     view_hidden_relationship {
@@ -237,6 +238,12 @@ Composition или Aggregation в `relationship_version`. «Что внутри 
 модель целиком. Два исключения: `folder_id` у элемента и представления — `set null` (удалили папку,
 содержимое осталось), а `element_version.profile_id` — `restrict`: профиль нельзя удалить, пока по
 нему типизирован хоть один элемент, включая исторические версии.
+
+**Маршрут линии ключуется линией, а не связью.** `view_layout_link.link_key` — это ключ связи
+*или* вычисляемый ключ выводимой линии (`derived:source:type:target`), а `relationship_id` заполнен
+только в первом случае и служит для каскадной уборки. Пока ключом был внешний ключ на
+`relationship`, изломы выводимых линий редактор принимал, отправлял на сервер и терял: вставке было
+не с чем сопоставить строку (миграция V13).
 
 **Один узел на элемент в пределах вида — решение, а не недосмотр.** `view_layout_node` держит
 `primary key (view_id, element_id)`, тогда как обменный формат ArchiMate разрешает нарисовать один

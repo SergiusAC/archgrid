@@ -221,7 +221,7 @@ class GraphController {
                         .toList(),
                 layout.links(graphId, viewKey).stream()
                         .map(link -> new ModelApiDtos.LayoutLinkResponse(
-                                link.relationshipKey(),
+                                link.linkKey(),
                                 link.vertices().stream()
                                         .map(point -> new ModelApiDtos.PointDto(point.x(), point.y()))
                                         .toList()))
@@ -345,7 +345,7 @@ class GraphController {
                     viewKey,
                     request.links().stream()
                             .map(link -> new dev.archgrid.model.ViewLayoutRepository.LayoutLink(
-                                    link.relationship(),
+                                    link.key(),
                                     (link.vertices() == null ? List.<ModelApiDtos.PointDto>of() : link.vertices())
                                             .stream()
                                                     .map(point -> new dev.archgrid.model.ViewLayoutRepository.Point(

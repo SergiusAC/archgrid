@@ -264,41 +264,47 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    * the position the server or the placement rule gave it, while everything the user has moved
    * keeps where they put it.
    */
+  const applyStoredLayout = useCallback(
+    (data: ViewDetail, withDraft: boolean) => {
+      const stored: Record<string, { x: number; y: number }> = {}
+      const storedSizes: Record<string, { width: number; height: number }> = {}
+      const storedParents: Record<string, string | null> = {}
+      const storedOrder: Record<string, number> = {}
+      for (const node of data.layout) {
+        stored[node.element] = { x: node.x, y: node.y }
+        storedParents[node.element] = node.parent
+        if (node.z != null) {
+          storedOrder[node.element] = node.z
+        }
+        if (node.width && node.height) {
+          storedSizes[node.element] = { width: node.width, height: node.height }
+        }
+      }
+      const storedVertices: Record<string, Position[]> = {}
+      for (const link of data.layoutLinks) {
+        storedVertices[link.key] = link.vertices
+      }
+      const draft = withDraft ? readDraft(workspace, data.key) : null
+      setPositions(draft ? { ...stored, ...draft.positions } : stored)
+      setSizes(draft ? { ...storedSizes, ...draft.sizes } : storedSizes)
+      rememberParents(draft ? { ...storedParents, ...draft.parents } : storedParents)
+      rememberOrder(draft ? { ...storedOrder, ...draft.order } : storedOrder)
+      rememberHidden(draft?.hidden ?? data.hidden)
+      rememberVertices(draft ? { ...storedVertices, ...draft.vertices } : storedVertices)
+      setRouter(draft?.router ?? data.router)
+      routerRef.current = draft?.router ?? data.router
+      setDirty(draft != null)
+      setGeometryFor(data.key)
+      setGeometryVersion((version) => version + 1)
+    },
+    [workspace, rememberParents, rememberOrder, rememberHidden, rememberVertices],
+  )
+
   useEffect(() => {
-    if (!view.data) {
-      return
+    if (view.data) {
+      applyStoredLayout(view.data, true)
     }
-    const stored: Record<string, { x: number; y: number }> = {}
-    const storedSizes: Record<string, { width: number; height: number }> = {}
-    const storedParents: Record<string, string | null> = {}
-    const storedOrder: Record<string, number> = {}
-    for (const node of view.data.layout) {
-      stored[node.element] = { x: node.x, y: node.y }
-      storedParents[node.element] = node.parent
-      if (node.z != null) {
-        storedOrder[node.element] = node.z
-      }
-      if (node.width && node.height) {
-        storedSizes[node.element] = { width: node.width, height: node.height }
-      }
-    }
-    const draft = readDraft(workspace, view.data.key)
-    setPositions(draft ? { ...stored, ...draft.positions } : stored)
-    setSizes(draft ? { ...storedSizes, ...draft.sizes } : storedSizes)
-    rememberParents(draft ? { ...storedParents, ...draft.parents } : storedParents)
-    rememberOrder(draft ? { ...storedOrder, ...draft.order } : storedOrder)
-    rememberHidden(draft?.hidden ?? view.data.hidden)
-    const storedVertices: Record<string, Position[]> = {}
-    for (const link of view.data.layoutLinks) {
-      storedVertices[link.relationship] = link.vertices
-    }
-    rememberVertices(draft ? { ...storedVertices, ...draft.vertices } : storedVertices)
-    setRouter(draft?.router ?? view.data.router)
-    routerRef.current = draft?.router ?? view.data.router
-    setDirty(draft != null)
-    setGeometryFor(view.data.key)
-    setGeometryVersion((version) => version + 1)
-  }, [view.data, workspace, rememberParents, rememberOrder, rememberHidden, rememberVertices])
+  }, [view.data, applyStoredLayout])
 
   const refresh = useCallback(async () => {
     await Promise.all([
@@ -495,9 +501,21 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       return
     }
     clearDraft(workspace, viewKey)
-    setDirty(false)
     await queryClient.invalidateQueries({ queryKey: ['view', workspace] })
-  }, [viewKey, workspace, queryClient])
+    /*
+     * Applied here rather than left to the refetch.
+     *
+     * The unsaved arrangement lives in this component's state, not in the query cache, so the
+     * refetch comes back byte-identical to what was already cached — react-query hands back the
+     * same object, `view.data` never changes, the effect that loads a layout never re-runs, and
+     * Discard threw away the draft while leaving the canvas exactly as the user had dragged it.
+     * Which is the worst of both: nothing to save, and nothing put back.
+     */
+    const current = queryClient.getQueryData<ViewDetail>(['view', workspace, viewKey])
+    if (current) {
+      applyStoredLayout(current, false)
+    }
+  }, [viewKey, workspace, queryClient, applyStoredLayout])
 
   /**
    * A notice that has served its purpose goes away by itself; a refusal does not.
@@ -1977,9 +1995,14 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
 }
 
 /** Geometry as the layout endpoint wants it. Missing sizes fall back to the default box. */
-/** Only the lines that have been bent; a straight one needs no row and gets none. */
+/**
+ * Only the lines that have been bent; a straight one needs no row and gets none.
+ *
+ * Derived lines included: the model implies them rather than stating them, but where one is drawn
+ * on this view it is drawn the way the architect routed it.
+ */
 function layoutLinks({ vertices }: Geometry) {
-  return Object.entries(vertices).map(([relationship, points]) => ({ relationship, vertices: points }))
+  return Object.entries(vertices).map(([key, points]) => ({ key, vertices: points }))
 }
 
 function layoutNodes({ positions, sizes, parents, order }: Geometry) {

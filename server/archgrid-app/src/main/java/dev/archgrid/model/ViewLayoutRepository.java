@@ -81,8 +81,14 @@ class ViewLayoutRepository {
     /** A bendpoint. Model coordinates, the same ones the nodes are placed in. */
     record Point(double x, double y) {}
 
-    /** How one connection is routed on one view: the points the line is dragged through. */
-    record LayoutLink(String relationshipKey, List<Point> vertices) {}
+    /**
+     * How one line is routed on one view: the points it is dragged through.
+     *
+     * <p>`linkKey` is the line as the diagram knows it — the key of a stated relationship, or the
+     * computed key of a derived one. Keying by the relationship excluded every implied line, which
+     * the editor let the user bend and then dropped in silence.
+     */
+    record LayoutLink(String linkKey, List<Point> vertices) {}
 
     /**
      * The routing of every line on this view.
@@ -95,16 +101,15 @@ class ViewLayoutRepository {
         List<LayoutLink> links = new ArrayList<>();
         jdbc.sql(
                         """
-                        select r."key" as relationship_key, l.vertices::text as vertices
+                        select l.link_key, l.vertices::text as vertices
                         from view_layout_link l
                         join view v on v.id = l.view_id
-                        join relationship r on r.id = l.relationship_id
                         where v.model_id = :modelId and v."key" = :viewKey
                         """)
                 .param("modelId", modelId)
                 .param("viewKey", viewKey)
                 .query((ResultSet rs, int rowNum) -> {
-                    links.add(new LayoutLink(rs.getString("relationship_key"), readVertices(rs.getString("vertices"))));
+                    links.add(new LayoutLink(rs.getString("link_key"), readVertices(rs.getString("vertices"))));
                     return null;
                 })
                 .list();
@@ -123,31 +128,34 @@ class ViewLayoutRepository {
                 jdbc.sql(
                                 """
                                 delete from view_layout_link l
-                                using view v, relationship r
-                                where l.view_id = v.id and l.relationship_id = r.id
+                                using view v
+                                where l.view_id = v.id
                                   and v.model_id = :modelId and v."key" = :viewKey
-                                  and r."key" = :relationshipKey
+                                  and l.link_key = :linkKey
                                 """)
                         .param("modelId", modelId)
                         .param("viewKey", viewKey)
-                        .param("relationshipKey", link.relationshipKey())
+                        .param("linkKey", link.linkKey())
                         .update();
                 continue;
             }
-            // Silently ignores a relationship the model no longer has, for the same reason `save`
-            // ignores an element that has left the view: losing a bendpoint to a race costs a drag.
+            // A left join, not a join: a derived line has no row in `relationship` to match, and
+            // that is exactly the case this table used to lose. Where there is one, the reference
+            // is kept so deleting the relationship takes its routing with it.
             jdbc.sql(
                             """
-                            insert into view_layout_link (view_id, relationship_id, vertices)
-                            select v.id, r.id, cast(:vertices as jsonb)
+                            insert into view_layout_link (view_id, relationship_id, link_key, vertices)
+                            select v.id, r.id, :linkKey, cast(:vertices as jsonb)
                             from view v
-                            join relationship r on r.model_id = v.model_id and r."key" = :relationshipKey
+                            left join relationship r on r.model_id = v.model_id and r."key" = :linkKey
                             where v.model_id = :modelId and v."key" = :viewKey
-                            on conflict (view_id, relationship_id)
-                            do update set vertices = excluded.vertices, updated_at = now()
+                            on conflict (view_id, link_key)
+                            do update set relationship_id = excluded.relationship_id,
+                                          vertices = excluded.vertices,
+                                          updated_at = now()
                             """)
                     .param("vertices", json.writeValueAsString(link.vertices()))
-                    .param("relationshipKey", link.relationshipKey())
+                    .param("linkKey", link.linkKey())
                     .param("modelId", modelId)
                     .param("viewKey", viewKey)
                     .update();

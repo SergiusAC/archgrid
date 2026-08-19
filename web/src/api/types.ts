@@ -189,7 +189,8 @@ export interface Usage {
  * boxes in the way (ADR-0003).
  */
 export interface LayoutLink {
-  relationship: string
+  /** The line as the diagram knows it: a relationship key, or the computed key of a derived line. */
+  key: string
   vertices: { x: number; y: number }[]
 }
 
