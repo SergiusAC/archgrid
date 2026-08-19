@@ -5,15 +5,21 @@ import dev.archgrid.domain.metamodel.Metamodel;
 import dev.archgrid.domain.metamodel.RelationshipType;
 import dev.archgrid.domain.metamodel.Viewpoint;
 import dev.archgrid.domain.metamodel.c4.C4Mapping;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import org.springframework.http.CacheControl;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.context.request.WebRequest;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Serves the metamodel to the editor.
@@ -34,9 +40,37 @@ class MetamodelController {
     private final Metamodel metamodel;
     private final C4Mapping c4Mapping;
 
-    MetamodelController(Metamodel metamodel, C4Mapping c4Mapping) {
+    /**
+     * The payload and its tag, built once.
+     *
+     * <p>The metamodel cannot change while the process runs, so there is nothing to recompute and
+     * the tag is exact rather than a guess about what might have changed.
+     */
+    private final MetamodelDto payload;
+
+    private final String etag;
+
+    MetamodelController(Metamodel metamodel, C4Mapping c4Mapping, ObjectMapper json) {
         this.metamodel = metamodel;
         this.c4Mapping = c4Mapping;
+        this.payload = new MetamodelDto(
+                metamodel.language(),
+                metamodel.version(),
+                elementTypes(),
+                relationshipTypes(),
+                viewpoints(),
+                c4Levels(),
+                permitted());
+        this.etag = tag(json.writeValueAsString(payload));
+    }
+
+    private static String tag(String body) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(body.getBytes(StandardCharsets.UTF_8));
+            return "\"" + HexFormat.of().formatHex(digest, 0, 16) + "\"";
+        } catch (java.security.NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 is required by the platform", ex);
+        }
     }
 
     record ElementTypeDto(String concept, String name, String layer, String aspect, String c4Shape) {}
@@ -58,21 +92,24 @@ class MetamodelController {
             Map<String, Map<String, String>> permitted) {}
 
     /**
-     * Immutable for the lifetime of a release, so it is worth caching hard. The version is part
-     * of the payload; a client that upgrades gets a new bundle and refetches anyway.
+     * Immutable for the lifetime of a process, and revalidated rather than cached blind.
+     *
+     * <p>It used to carry {@code max-age=12h}, on the reasoning that the metamodel does not change
+     * and the payload is large. Both are true and the conclusion was still wrong: when the server
+     * started sending a new field, every browser that had asked in the last twelve hours went on
+     * using the old shape, and the feature that field enabled was invisible with nothing in the
+     * console to say why. A conditional request costs one round trip and answers 304 with no body;
+     * that is the right price for never serving a client a payload older than the server's.
      */
     @GetMapping
-    ResponseEntity<MetamodelDto> get() {
+    ResponseEntity<MetamodelDto> get(WebRequest request) {
+        if (request.checkNotModified(etag)) {
+            return ResponseEntity.status(HttpStatus.NOT_MODIFIED).eTag(etag).build();
+        }
         return ResponseEntity.ok()
-                .cacheControl(CacheControl.maxAge(java.time.Duration.ofHours(12)).cachePrivate())
-                .body(new MetamodelDto(
-                        metamodel.language(),
-                        metamodel.version(),
-                        elementTypes(),
-                        relationshipTypes(),
-                        viewpoints(),
-                        c4Levels(),
-                        permitted()));
+                .eTag(etag)
+                .cacheControl(CacheControl.noCache().cachePrivate())
+                .body(payload);
     }
 
     private List<ElementTypeDto> elementTypes() {

@@ -288,7 +288,8 @@ Two things here are easy to get wrong and expensive when wrong:
   whose impact analysis is exactly backwards.
 
 `C4Projection` (domain) turns that data into a diagram: focus + level → what to show and what
-cannot be shown. Neighbours roll up to their outermost container — a context diagram naming the one
+cannot be shown. "Inside" means Composition **or** Aggregation — both are whole-part in ArchiMate,
+differing in exclusivity rather than membership; assignment and realization are not. Neighbours roll up to their outermost container — a context diagram naming the one
 module of a neighbouring platform that happens to call you is a context diagram of nothing — and
 the omitted list is part of the answer, surfaced in the UI rather than dropped. The result is
 materialised as an ordinary view, so the architect can keep working in it.

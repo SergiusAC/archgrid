@@ -115,15 +115,31 @@ public final class ModelGraph {
     }
 
     /**
-     * What this element contains, read from Composition relationships (ADR-0011).
+     * The two relationships that mean "part of" in ArchiMate.
+     *
+     * <p>Composition and aggregation, and nothing else. Assignment allocates — an actor to a role,
+     * a node to an artifact — and realization says one thing brings another about; neither makes
+     * the target part of the source, and treating them as containment would put a server inside
+     * the application it happens to run.
+     *
+     * <p>The difference between the two is exclusivity, not membership: a composed part belongs to
+     * one whole and dies with it, an aggregated part may be shared and outlive it. Both are inside
+     * the whole when you ask what a system is made of, which is the question a C4 view asks.
+     */
+    private static boolean isContainment(Relationship relationship) {
+        String type = relationship.conceptType();
+        return "Composition".equals(type) || "Aggregation".equals(type);
+    }
+
+    /**
+     * What this element contains, read from the graph (ADR-0011).
      *
      * <p>Not from a field: containment is a relationship, so "what is inside this" is a question
-     * about the graph like any other, and it can be answered for aggregation or assignment by
-     * changing one string rather than by adding a second mechanism.
+     * about the graph like any other.
      */
     public List<Element> childrenOf(Slug key) {
         return relationships.values().stream()
-                .filter(relationship -> "Composition".equals(relationship.conceptType()))
+                .filter(ModelGraph::isContainment)
                 .filter(relationship -> key.equals(relationship.source()))
                 .map(relationship -> elements.get(relationship.target()))
                 .filter(java.util.Objects::nonNull)
@@ -158,13 +174,18 @@ public final class ModelGraph {
     /**
      * What contains this element, if anything.
      *
-     * <p>Composition is ownership, so there should be at most one; where a model says otherwise
-     * the first is taken rather than throwing, because a query is not the place to enforce it.
+     * <p>Composition is exclusive, so an element has at most one owner — but aggregation is not,
+     * and a shared part genuinely belongs to several wholes. This answers with the first the model
+     * states, which is enough for the two callers that ask (rolling a neighbour up to its system,
+     * walking to the top of a chain) and is not the place to argue with a model that shares.
+     * Composition wins where both exist, because ownership is the stronger claim.
      */
     public Optional<Element> containerOf(Slug key) {
         return relationships.values().stream()
-                .filter(relationship -> "Composition".equals(relationship.conceptType()))
+                .filter(ModelGraph::isContainment)
                 .filter(relationship -> key.equals(relationship.target()))
+                .sorted(java.util.Comparator.comparing(
+                        relationship -> "Composition".equals(relationship.conceptType()) ? 0 : 1))
                 .map(relationship -> elements.get(relationship.source()))
                 .filter(java.util.Objects::nonNull)
                 .findFirst();

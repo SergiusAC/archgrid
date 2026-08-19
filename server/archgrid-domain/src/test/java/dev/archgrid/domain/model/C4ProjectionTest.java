@@ -25,6 +25,8 @@ class C4ProjectionTest {
 
     private static final RelationshipType COMPOSITION =
             new RelationshipType("Composition", "Composition", 'c', RelationshipCategory.STRUCTURAL, 1);
+    private static final RelationshipType AGGREGATION =
+            new RelationshipType("Aggregation", "Aggregation", 'g', RelationshipCategory.STRUCTURAL, 2);
     private static final RelationshipType SERVING =
             new RelationshipType("Serving", "Serving", 'v', RelationshipCategory.DEPENDENCY, 0);
 
@@ -38,11 +40,12 @@ class C4ProjectionTest {
     private static final Metamodel METAMODEL = Metamodel.builder()
             .version("3.2")
             .relationshipType(COMPOSITION)
+            .relationshipType(AGGREGATION)
             .relationshipType(SERVING)
             .elementType(COMPONENT)
             .elementType(SERVICE)
             .elementType(NODE)
-            .permit("ApplicationComponent", "ApplicationComponent", List.of(COMPOSITION, SERVING))
+            .permit("ApplicationComponent", "ApplicationComponent", List.of(COMPOSITION, AGGREGATION, SERVING))
             .permit("ApplicationComponent", "ApplicationService", List.of(COMPOSITION, SERVING))
             .permit("ApplicationComponent", "Node", List.of(SERVING))
             .build();
@@ -74,6 +77,11 @@ class C4ProjectionTest {
     /** Containment as it is stored: a Composition from the whole to the part (ADR-0011). */
     private static Relationship contains(String whole, String part) {
         return relationship(whole + "-contains-" + part, "Composition", whole, part);
+    }
+
+    /** The other way a model says "part of": weaker, shareable, and just as much inside. */
+    private static Relationship aggregates(String whole, String part) {
+        return relationship(whole + "-aggregates-" + part, "Aggregation", whole, part);
     }
 
     private static List<String> keys(List<Slug> slugs) {
@@ -136,6 +144,30 @@ class C4ProjectionTest {
         // A context diagram that named the particular module of the neighbouring system which
         // happens to call you would be a context diagram of nothing.
         assertThat(keys(result.shown())).containsExactlyInAnyOrder("payments", "crm");
+    }
+
+    @Test
+    @DisplayName("an aggregated part is inside its whole, like a composed one")
+    void aggregation_counts_as_containment() {
+        ModelGraph graph = ModelGraph.of(
+                List.of(
+                        element("processing", COMPONENT),
+                        element("backoffice", COMPONENT),
+                        element("mobile", COMPONENT)),
+                List.of(
+                        aggregates("processing", "backoffice"),
+                        relationship("backoffice-serves", "Serving", "backoffice", "mobile")));
+
+        // Composition and aggregation differ in exclusivity, not in membership: a part that may be
+        // shared is still a part, and a context diagram that drew it beside its own system would
+        // be answering a question nobody asked.
+        C4Projection.Result context =
+                C4Projection.project(graph, METAMODEL, MAPPING, Slug.of("processing"), CONTEXT).orElseThrow();
+        assertThat(keys(context.shown())).containsExactlyInAnyOrder("processing", "mobile");
+
+        C4Projection.Result container =
+                C4Projection.project(graph, METAMODEL, MAPPING, Slug.of("processing"), CONTAINER).orElseThrow();
+        assertThat(keys(container.shown())).containsExactlyInAnyOrder("processing", "backoffice", "mobile");
     }
 
     @Test
