@@ -403,6 +403,11 @@ export default function Canvas(props: CanvasProps) {
 
     // -------------------------------------------------------------- selection
     view.on('element:pointerclick', (elementView: joint.dia.ElementView, event: joint.dia.Event) => {
+      // JointJS reports a click for any button, so the right one arrived here as well and
+      // collapsed the selection to one element a moment before its own menu opened.
+      if ((event.button ?? 0) !== 0) {
+        return
+      }
       latest.current.onSelectLink(null)
       const key = String(elementView.model.id)
       // With the connector tool active a click means "this end of the line", not "select this".
@@ -445,8 +450,13 @@ export default function Canvas(props: CanvasProps) {
     })
     view.on('element:contextmenu', (elementView: joint.dia.ElementView, event: joint.dia.Event) => {
       event.preventDefault()
-      latest.current.onSelect([String(elementView.model.id)])
-      latest.current.onContextMenu(String(elementView.model.id), event.clientX ?? 0, event.clientY ?? 0)
+      const key = String(elementView.model.id)
+      // Right-clicking inside a selection keeps it. Collapsing to the one element under the
+      // cursor throws away the very thing the menu's align section acts on.
+      if (!latest.current.selected.includes(key)) {
+        latest.current.onSelect([key])
+      }
+      latest.current.onContextMenu(key, event.clientX ?? 0, event.clientY ?? 0)
     })
 
     // -------------------------------------------------------------- geometry

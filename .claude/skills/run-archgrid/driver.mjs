@@ -1217,6 +1217,14 @@ async function interactions(page) {
   }
 
   const serviceKey = await keyOf('Application Service')
+  // Knocked out of line first: these two were created one under the other, so aligning them
+  // would have passed without moving anything.
+  const nudged = await nodeAt(serviceKey).locator('.ag-body').boundingBox()
+  await page.mouse.move(nudged.x + nudged.width / 2, nudged.y + nudged.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(nudged.x + nudged.width / 2 + 90, nudged.y + nudged.height / 2, { steps: 10 })
+  await page.mouse.up()
+  await page.waitForTimeout(600)
   await bandOver([ledgerKey, serviceKey])
   check(
     'a band across the canvas selects what it encloses',
@@ -1224,6 +1232,56 @@ async function interactions(page) {
     `${await page.locator('.ag-paper .ag-node-selected').count()} selected`,
   )
   await page.screenshot({ path: `${outDir}/43-marquee.png` })
+
+  /*
+   * --- align brings a selection into a line ---
+   *
+   * The guides advise while one element is dragged; bringing six boxes into a column is a
+   * different act, and the band above is what makes asking for it possible.
+   */
+  const boxOf = async (key) => nodeAt(key).locator('.ag-body').boundingBox()
+  const apart = Math.abs((await boxOf(ledgerKey)).x - (await boxOf(serviceKey)).x)
+  const rightClicked = await boxOf(ledgerKey)
+  await page.mouse.click(
+    rightClicked.x + rightClicked.width / 2,
+    rightClicked.y + rightClicked.height / 2,
+    { button: 'right' },
+  )
+  await page.waitForSelector('.ag-context-align', { timeout: 5000 })
+  await page.locator('.ag-context-align button', { hasText: 'Left' }).click()
+  await page.waitForTimeout(1200)
+  const aligned = Math.abs((await boxOf(ledgerKey)).x - (await boxOf(serviceKey)).x)
+  check(
+    'aligning left puts the selection on one edge',
+    apart > 20 && aligned < 1.5,
+    `${apart.toFixed(0)}px apart -> ${aligned.toFixed(1)}px`,
+  )
+
+  // A move made above the canvas is still a move: one press of undo, not none.
+  await page.keyboard.press('Control+z')
+  await page.waitForTimeout(1200)
+  check(
+    'and one undo puts them back',
+    Math.abs(Math.abs((await boxOf(ledgerKey)).x - (await boxOf(serviceKey)).x) - apart) < 1.5,
+    `${Math.abs((await boxOf(ledgerKey)).x - (await boxOf(serviceKey)).x).toFixed(0)}px apart`,
+  )
+  await page.keyboard.press('Control+Shift+z')
+  await page.waitForTimeout(1000)
+
+  // The daily gesture, through the same route: drag a box, press undo, expect the box back.
+  const dragged = await boxOf(ledgerKey)
+  await page.mouse.move(dragged.x + dragged.width / 2, dragged.y + dragged.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(dragged.x + dragged.width / 2 - 120, dragged.y + dragged.height / 2, { steps: 10 })
+  await page.mouse.up()
+  await page.waitForTimeout(600)
+  await page.keyboard.press('Control+z')
+  await page.waitForTimeout(1200)
+  check(
+    'undoing a move puts the box back where it was',
+    Math.abs((await boxOf(ledgerKey)).x - dragged.x) < 1.5,
+    `${dragged.x.toFixed(0)} -> ${(await boxOf(ledgerKey)).x.toFixed(0)}`,
+  )
 
   const beforeDuplicate = await page.locator('.ag-paper .ag-node').count()
   await page.keyboard.press('Control+d')

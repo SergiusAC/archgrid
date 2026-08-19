@@ -979,6 +979,67 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     }
   }, [viewKey, selected, byKey, positions, apply])
 
+  /**
+   * Align and distribute a multiple selection.
+   *
+   * Straight lines between boxes are what makes a diagram look drafted rather than dropped, and
+   * the guides only help one element at a time. Pure layout: coordinates move, nothing commits
+   * (ADR-0003), and the whole gesture is one entry on the undo stack.
+   */
+  const arrange = useCallback(
+    (how: 'left' | 'centre' | 'right' | 'top' | 'middle' | 'bottom' | 'across' | 'down') => {
+      if (selected.length < 2 || !viewKey) {
+        return
+      }
+      const boxes = selected
+        .map((key) => ({ key, at: positions[key], size: sizes[key] ?? { width: NODE_WIDTH, height: NODE_HEIGHT } }))
+        .filter((box): box is { key: string; at: Position; size: Size } => box.at != null)
+      if (boxes.length < 2) {
+        return
+      }
+      const snap = (value: number) => Math.round(value / GRID) * GRID
+      const left = Math.min(...boxes.map((box) => box.at.x))
+      const right = Math.max(...boxes.map((box) => box.at.x + box.size.width))
+      const top = Math.min(...boxes.map((box) => box.at.y))
+      const bottom = Math.max(...boxes.map((box) => box.at.y + box.size.height))
+      const next = { ...positions }
+
+      if (how === 'across' || how === 'down') {
+        // Even gaps between edges, not between centres: with boxes of different widths, evenly
+        // spaced centres leave gaps that visibly are not even.
+        const horizontal = how === 'across'
+        const ordered = [...boxes].sort((a, b) => (horizontal ? a.at.x - b.at.x : a.at.y - b.at.y))
+        const span = horizontal ? right - left : bottom - top
+        const used = ordered.reduce((total, box) => total + (horizontal ? box.size.width : box.size.height), 0)
+        const gap = (span - used) / (ordered.length - 1)
+        let cursor = horizontal ? left : top
+        for (const box of ordered) {
+          next[box.key] = horizontal ? { ...box.at, x: snap(cursor) } : { ...box.at, y: snap(cursor) }
+          cursor += (horizontal ? box.size.width : box.size.height) + gap
+        }
+      } else {
+        for (const box of boxes) {
+          const to: { x?: number; y?: number } = {
+            left: { x: left },
+            right: { x: right - box.size.width },
+            centre: { x: (left + right) / 2 - box.size.width / 2 },
+            top: { y: top },
+            bottom: { y: bottom - box.size.height },
+            middle: { y: (top + bottom) / 2 - box.size.height / 2 },
+          }[how]
+          next[box.key] = { x: snap(to.x ?? box.at.x), y: snap(to.y ?? box.at.y) }
+        }
+      }
+
+      history.push({ kind: 'layout', view: viewKey, before: positions, after: next, label: 'Align' })
+      setPositions(next)
+      rememberChange(next)
+      // The canvas holds its own geometry while mounted, so a change made above it has to say so.
+      setGeometryVersion((version) => version + 1)
+    },
+    [selected, viewKey, positions, sizes, history, rememberChange],
+  )
+
   const addToView = useCallback(
     (elementKey: string) => {
       if (!viewKey) {
@@ -1083,6 +1144,10 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     (positionsToRestore: Record<string, Position>) => {
       setPositions(positionsToRestore)
       rememberChange(positionsToRestore)
+      // The canvas keeps its own geometry while it is mounted and only takes ours when this
+      // changes. Without it, undoing a move updated the state and left the box where it was —
+      // silently, because everything else about undo looked as if it had worked.
+      setGeometryVersion((version) => version + 1)
       return true
     },
     [rememberChange],
@@ -1704,6 +1769,11 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           metamodel={metamodel}
           views={usageViews}
           currentView={viewKey}
+          selectedCount={selected.length}
+          onArrange={(how) => {
+            arrange(how)
+            setContext(null)
+          }}
           onClose={() => setContext(null)}
           onCopy={() => {
             copySelection()

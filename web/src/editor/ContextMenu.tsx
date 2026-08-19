@@ -19,6 +19,9 @@ interface ContextMenuProps {
   views: { key: string; name: string }[] | null
   currentView: string | null
   onClose: () => void
+  /** How many elements the selection holds: align only means something for more than one. */
+  selectedCount: number
+  onArrange: (how: 'left' | 'centre' | 'right' | 'top' | 'middle' | 'bottom' | 'across' | 'down') => void
   onCopy: () => void
   onDuplicate: () => void
   onRestack: (to: 'front' | 'back') => void
@@ -60,6 +63,8 @@ export default function ContextMenu({
   views,
   currentView,
   onClose,
+  selectedCount,
+  onArrange,
   onCopy,
   onDuplicate,
   onRestack,
@@ -89,7 +94,7 @@ export default function ContextMenu({
       left: Math.max(margin, Math.min(target.x, window.innerWidth - width - margin)),
       top: Math.max(margin, Math.min(target.y, window.innerHeight - height - margin)),
     })
-  }, [target.x, target.y, used.length, properties.length, views?.length])
+  }, [target.x, target.y, used.length, properties.length, views?.length, selectedCount])
 
   return (
     <>
@@ -173,6 +178,38 @@ export default function ContextMenu({
             </ul>
           )}
         </section>
+
+        {/*
+          Alignment for a multiple selection. The guides advise while one element is dragged; six
+          boxes brought into a row is a different act, and there is nowhere else to ask for it.
+        */}
+        {selectedCount > 1 && (
+          <section className="ag-context-align">
+            <h4>Align {selectedCount} elements</h4>
+            <div className="ag-context-row">
+              {(['left', 'centre', 'right'] as const).map((how) => (
+                <button key={how} type="button" onClick={() => onArrange(how)}>
+                  {how[0].toUpperCase() + how.slice(1)}
+                </button>
+              ))}
+            </div>
+            <div className="ag-context-row">
+              {(['top', 'middle', 'bottom'] as const).map((how) => (
+                <button key={how} type="button" onClick={() => onArrange(how)}>
+                  {how[0].toUpperCase() + how.slice(1)}
+                </button>
+              ))}
+            </div>
+            <div className="ag-context-row">
+              <button type="button" onClick={() => onArrange('across')}>
+                Space across
+              </button>
+              <button type="button" onClick={() => onArrange('down')}>
+                Space down
+              </button>
+            </div>
+          </section>
+        )}
 
         <div className="ag-context-actions">
           {/* Copy takes the element to another view; duplicating makes a second one. Different

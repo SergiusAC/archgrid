@@ -734,6 +734,28 @@ code {
   border-top: 1px solid var(--line);
 }
 
+.ag-context-align {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--line);
+}
+
+.ag-context-align h4 {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ag-context-align button {
+  font-size: 0.78rem;
+  padding: 0.2rem 0.4rem;
+}
+
 .ag-context-row {
   display: flex;
   gap: 0.35rem;
