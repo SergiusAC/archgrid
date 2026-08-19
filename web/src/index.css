@@ -734,6 +734,15 @@ code {
   border-top: 1px solid var(--line);
 }
 
+.ag-context-row {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.ag-context-row button {
+  flex: 1;
+}
+
 .ag-context-actions button {
   display: flex;
   flex-direction: column;

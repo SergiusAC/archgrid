@@ -21,6 +21,8 @@ export interface LayoutDraft {
   positions: Record<string, Position>
   sizes: Record<string, { width: number; height: number }>
   parents: Record<string, string | null>
+  /** Which element is drawn over which — presentation, exactly like the coordinates. */
+  order: Record<string, number>
   router: ConnectionRouter
   /** When it was last touched, so a stale draft can be reasoned about later. */
   at: number

@@ -21,6 +21,8 @@ export interface CanvasElement {
   y: number
   width: number
   height: number
+  /** Which element is drawn over which; null until the view has been ordered. */
+  z: number | null
 }
 
 export interface CanvasLink {
@@ -38,6 +40,8 @@ export interface Geometry {
   sizes: Record<string, { width: number; height: number }>
   /** What each element is drawn inside on this view. Presentation, per view (ADR-0011). */
   parents: Record<string, string | null>
+  /** Which element is drawn over which. */
+  order: Record<string, number>
 }
 
 interface CanvasProps {
@@ -95,6 +99,14 @@ interface CanvasProps {
    * which is Archi's rule and a sound one — otherwise the user is fighting the algorithm.
    */
   router: ConnectionRouter
+  /**
+   * A restack the user has asked for: these elements to the front or the back.
+   *
+   * Performed by the canvas rather than computed above it, because JointJS keeps a child above
+   * whatever contains it — asking it to move a cell and reading the result back is safer than
+   * inventing z values that could put a container over its own contents.
+   */
+  restack: { keys: string[]; to: 'front' | 'back'; token: number } | null
   /** Changing this refits the content; the caller changes it when a view opens. */
   fitToken: string | null
   /**
@@ -311,15 +323,17 @@ export default function Canvas(props: CanvasProps) {
     const positions: Record<string, Position> = {}
     const sizes: Record<string, { width: number; height: number }> = {}
     const parents: Record<string, string | null> = {}
+    const order: Record<string, number> = {}
     for (const element of graph.current?.getElements() ?? []) {
       const key = String(element.id)
+      order[key] = element.get('z') ?? 0
       parents[key] = element.getParentCell() ? String(element.getParentCell()!.id) : null
       // Absolute, including embedded children: JointJS positions are absolute, so the stored
       // layout needs no conversion and re-parenting never silently moves anything.
       positions[key] = element.position()
       sizes[key] = element.size()
     }
-    return { positions, sizes, parents }
+    return { positions, sizes, parents, order }
   }, [])
 
   // ------------------------------------------------------------------ mount
@@ -649,6 +663,9 @@ export default function Canvas(props: CanvasProps) {
       if (isNew || geometryIsNews) {
         cell.position(element.x, element.y)
         cell.resize(element.width, element.height)
+        if (element.z != null) {
+          cell.set('z', element.z)
+        }
       }
       cell.attr({
         root: {
@@ -835,6 +852,43 @@ export default function Canvas(props: CanvasProps) {
     }
     toolsOn.current = only
   }, [props.selected, ready])
+
+  // ------------------------------------------------------------------ stacking
+  useEffect(() => {
+    const model = graph.current
+    if (!model || !ready || !props.restack) {
+      return
+    }
+    applying.current = true
+    for (const key of props.restack.keys) {
+      const cell = model.getCell(key) as joint.dia.Element | undefined
+      // `deep` so a container takes its contents with it, which is the only sane reading of
+      // "bring this to the front" when the thing has something inside it.
+      if (props.restack.to === 'front') {
+        cell?.toFront({ deep: true })
+      } else {
+        cell?.toBack({ deep: true })
+      }
+    }
+    // A child must stay over what holds it. `toBack({ deep: true })` takes a container's contents
+    // with it, but sending a *child* back files it under its own container, where it is drawn
+    // behind an opaque box and looks deleted.
+    const lift = (cell: joint.dia.Cell) => {
+      const z = (cell.get('z') as number | undefined) ?? 0
+      for (const child of cell.getEmbeddedCells()) {
+        if (((child.get('z') as number | undefined) ?? 0) <= z) {
+          child.set('z', z + 1)
+        }
+        lift(child)
+      }
+    }
+    for (const root of model.getElements().filter((element) => !element.getParentCell())) {
+      lift(root)
+    }
+    applying.current = false
+    // Read back rather than assume: JointJS decides the final numbers.
+    latest.current.onGeometry(geometry())
+  }, [props.restack, geometry, ready])
 
   // ------------------------------------------------------------------ fit
   useEffect(() => {

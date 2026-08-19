@@ -16,6 +16,7 @@ interface ContextMenuProps {
   elementsByKey: Record<string, ModelElement>
   metamodel: Metamodel
   onClose: () => void
+  onRestack: (to: 'front' | 'back') => void
   onRemoveFromView: () => void
   onDeleteFromModel: () => void
 }
@@ -34,6 +35,7 @@ export default function ContextMenu({
   elementsByKey,
   metamodel,
   onClose,
+  onRestack,
   onRemoveFromView,
   onDeleteFromModel,
 }: ContextMenuProps) {
@@ -127,6 +129,16 @@ export default function ContextMenu({
         </section>
 
         <div className="ag-context-actions">
+          {/* Stacking is presentation, not model: it rides with the coordinates and is kept by
+              Save like every other part of the arrangement (ADR-0003). */}
+          <div className="ag-context-row">
+            <button type="button" onClick={() => onRestack('front')}>
+              Bring to front
+            </button>
+            <button type="button" onClick={() => onRestack('back')}>
+              Send to back
+            </button>
+          </div>
           <button type="button" onClick={onRemoveFromView}>
             Remove from this view
             <small>Stays in the model</small>

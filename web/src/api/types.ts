@@ -108,6 +108,8 @@ export interface LayoutNode {
   height: number | null
   /** Drawn inside this element on this view. Presentation only, per view (ADR-0011). */
   parent: string | null
+  /** Which element is drawn over which. Presentation only. */
+  z: number | null
 }
 
 /**

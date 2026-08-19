@@ -24,13 +24,14 @@ class ViewLayoutRepository {
     }
 
     /** `parentKey` is the element this one is drawn inside on this view — presentation only. */
-    record LayoutNode(String elementKey, double x, double y, Double width, Double height, String parentKey) {}
+    record LayoutNode(
+            String elementKey, double x, double y, Double width, Double height, String parentKey, Integer z) {}
 
     List<LayoutNode> load(UUID modelId, String viewKey) {
         List<LayoutNode> nodes = new ArrayList<>();
         jdbc.sql(
                         """
-                        select e."key" as element_key, n.x, n.y, n.width, n.height,
+                        select e."key" as element_key, n.x, n.y, n.width, n.height, n.z,
                                p."key" as parent_key
                         from view_layout_node n
                         join view v on v.id = n.view_id
@@ -47,7 +48,8 @@ class ViewLayoutRepository {
                             rs.getDouble("y"),
                             (Double) rs.getObject("width"),
                             (Double) rs.getObject("height"),
-                            rs.getString("parent_key")));
+                            rs.getString("parent_key"),
+                            (Integer) rs.getObject("z")));
                     return null;
                 })
                 .list();
@@ -83,10 +85,11 @@ class ViewLayoutRepository {
             jdbc.sql(
                             """
                             insert into view_layout_node (view_id, element_id, x, y, width, height,
-                                                          parent_element_id)
+                                                          parent_element_id, z)
                             select v.id, e.id, :x, :y, :width, :height,
                                    (select p.id from element p
-                                     where p.model_id = v.model_id and p."key" = :parentKey)
+                                     where p.model_id = v.model_id and p."key" = :parentKey),
+                                   :z
                             from view v
                             join element e on e.model_id = v.model_id and e."key" = :elementKey
                             where v.model_id = :modelId and v."key" = :viewKey
@@ -94,6 +97,7 @@ class ViewLayoutRepository {
                             do update set x = excluded.x, y = excluded.y,
                                           width = excluded.width, height = excluded.height,
                                           parent_element_id = excluded.parent_element_id,
+                                          z = excluded.z,
                                           updated_at = now()
                             """)
                     .param("x", node.x())
@@ -102,6 +106,7 @@ class ViewLayoutRepository {
                     .param("height", node.height())
                     .param("elementKey", node.elementKey())
                     .param("parentKey", node.parentKey())
+                    .param("z", node.z())
                     .param("modelId", modelId)
                     .param("viewKey", viewKey)
                     .update();

@@ -148,6 +148,10 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    * quietly put it back to null. State lags by a render; this does not.
    */
   const parentsRef = useRef<Record<string, string | null>>({})
+  /** Which element is drawn over which, and the request that changes it. */
+  const [order, setOrder] = useState<Record<string, number>>({})
+  const orderRef = useRef<Record<string, number>>({})
+  const [restack, setRestack] = useState<{ keys: string[]; to: 'front' | 'back'; token: number } | null>(null)
   /**
    * Which view the geometry in `positions` belongs to.
    *
@@ -184,6 +188,10 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     parentsRef.current = next
     setParents(next)
   }, [])
+  const rememberOrder = useCallback((next: Record<string, number>) => {
+    orderRef.current = next
+    setOrder(next)
+  }, [])
   // Panel widths are pure presentation, so they live in the browser and nowhere else.
   const [leftWidth, setLeftWidth] = useState(240)
   const [rightWidth, setRightWidth] = useState(288)
@@ -204,9 +212,13 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     const stored: Record<string, { x: number; y: number }> = {}
     const storedSizes: Record<string, { width: number; height: number }> = {}
     const storedParents: Record<string, string | null> = {}
+    const storedOrder: Record<string, number> = {}
     for (const node of view.data.layout) {
       stored[node.element] = { x: node.x, y: node.y }
       storedParents[node.element] = node.parent
+      if (node.z != null) {
+        storedOrder[node.element] = node.z
+      }
       if (node.width && node.height) {
         storedSizes[node.element] = { width: node.width, height: node.height }
       }
@@ -215,12 +227,13 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     setPositions(draft ? { ...stored, ...draft.positions } : stored)
     setSizes(draft ? { ...storedSizes, ...draft.sizes } : storedSizes)
     rememberParents(draft ? { ...storedParents, ...draft.parents } : storedParents)
+    rememberOrder(draft ? { ...storedOrder, ...draft.order } : storedOrder)
     setRouter(draft?.router ?? view.data.router)
     routerRef.current = draft?.router ?? view.data.router
     setDirty(draft != null)
     setGeometryFor(view.data.key)
     setGeometryVersion((version) => version + 1)
-  }, [view.data, workspace, rememberParents])
+  }, [view.data, workspace, rememberParents, rememberOrder])
 
   const refresh = useCallback(async () => {
     await Promise.all([
@@ -329,6 +342,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         positions: next,
         sizes: nextSizes ?? sizes,
         parents: nextParents ?? parentsRef.current,
+        order: orderRef.current,
         router: nextRouter ?? routerRef.current,
       }
       setDirty(true)
@@ -354,7 +368,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       window.clearTimeout(pendingSave.current)
       pendingSave.current = null
     }
-    await saveLayout.mutateAsync({ positions, sizes, parents: parentsRef.current, router })
+    await saveLayout.mutateAsync({ positions, sizes, parents: parentsRef.current, order: orderRef.current, router })
     clearDraft(workspace, viewKey)
     setDirty(false)
     setMessage({ kind: 'info', text: 'View saved.' })
@@ -461,9 +475,10 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           y: at.y,
           width: size?.width ?? (container ? 320 : NODE_WIDTH),
           height: size?.height ?? (container ? 200 : NODE_HEIGHT),
+          z: order[element.key] ?? null,
         }
       }),
-    [onView, onViewKeys, positions, sizes, parents, containers, metamodel],
+    [onView, onViewKeys, positions, sizes, parents, order, containers, metamodel],
   )
 
   /**
@@ -519,9 +534,10 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     (next: Geometry) => {
       setPositions(next.positions)
       setSizes(next.sizes)
+      rememberOrder(next.order)
       rememberChange(next.positions, next.sizes)
     },
-    [rememberChange],
+    [rememberChange, rememberOrder],
   )
 
   /**
@@ -530,6 +546,18 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    * Moving a box is not a model change and produces no commit (ADR-0003), but it is very much
    * something the user just did, so it belongs on the same stack as everything else.
    */
+  /**
+   * Asks the canvas to restack, rather than computing new z values here.
+   *
+   * The token is what makes a repeat of the same request land: bringing the same element forward
+   * twice is two actions, and an object equal to the previous one would leave the effect asleep.
+   */
+  const restackToken = useRef(0)
+  const restackTo = useCallback((keys: string[], to: 'front' | 'back') => {
+    restackToken.current += 1
+    setRestack({ keys, to, token: restackToken.current })
+  }, [])
+
   const onGeometryStart = useCallback(() => {
     dragOrigin.current = positions
   }, [positions])
@@ -540,6 +568,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       dragOrigin.current = null
       setPositions(next.positions)
       setSizes(next.sizes)
+      rememberOrder(next.order)
       rememberChange(next.positions, next.sizes)
       if (!before || !viewKey) {
         return
@@ -551,7 +580,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         history.push({ kind: 'layout', view: viewKey, before, after: next.positions, label: 'Move' })
       }
     },
-    [viewKey, history, rememberChange],
+    [viewKey, history, rememberChange, rememberOrder],
   )
 
   /**
@@ -1269,6 +1298,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
                 setDropping(null)
                 setDropAt(null)
               }}
+              restack={restack}
               fitToken={fitToken}
               geometryVersion={geometryVersion}
             />
@@ -1400,6 +1430,10 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           elementsByKey={byKey}
           metamodel={metamodel}
           onClose={() => setContext(null)}
+          onRestack={(to) => {
+            restackTo([context.elementKey], to)
+            setContext(null)
+          }}
           onRemoveFromView={() => removeFromView([context.elementKey])}
           onDeleteFromModel={() => deleteFromModel([context.elementKey])}
         />
@@ -1409,7 +1443,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
 }
 
 /** Geometry as the layout endpoint wants it. Missing sizes fall back to the default box. */
-function layoutNodes({ positions, sizes, parents }: Geometry) {
+function layoutNodes({ positions, sizes, parents, order }: Geometry) {
   return Object.entries(positions).map(([element, position]) => ({
     element,
     x: position.x,
@@ -1417,6 +1451,7 @@ function layoutNodes({ positions, sizes, parents }: Geometry) {
     width: sizes[element]?.width ?? NODE_WIDTH,
     height: sizes[element]?.height ?? NODE_HEIGHT,
     parent: parents[element] ?? null,
+    z: order[element] ?? null,
   }))
 }
 

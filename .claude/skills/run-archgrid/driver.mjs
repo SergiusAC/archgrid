@@ -283,9 +283,11 @@ async function smoke(page) {
     const el = document.querySelector('.ag-context')
     const box = el.getBoundingClientRect()
     return {
-      actions: [...el.querySelectorAll('.ag-context-actions button')].map((b) =>
+      // Direct children only: the stacking pair sits in its own row above these two.
+      actions: [...el.querySelectorAll('.ag-context-actions > button')].map((b) =>
         b.textContent.replace(/\s+/g, ' ').trim(),
       ),
+      stacking: [...el.querySelectorAll('.ag-context-row button')].map((b) => b.textContent.trim()),
       usage: el.querySelector('.ag-context-usage h4')?.textContent ?? '',
       inViewport: box.left >= 0 && box.top >= 0 && box.right <= innerWidth && box.bottom <= innerHeight,
     }
@@ -293,6 +295,7 @@ async function smoke(page) {
   await shot('02-context-menu')
   check('context menu offers both delete modes', menu.actions.length === 2, menu.actions.join(' | '))
   check('context menu stays inside the window', menu.inViewport)
+  check('context menu offers stacking', menu.stacking.length === 2, menu.stacking.join(' | '))
   await page.keyboard.press('Escape')
 
   // --- undo / redo through the keyboard ---
@@ -1042,6 +1045,59 @@ async function interactions(page) {
     await page.waitForTimeout(300)
     check('a notice can be dismissed', (await page.locator('.ag-banner').count()) === 0)
   }
+
+  /*
+   * --- which box is on top ---
+   *
+   * Overlaps are unavoidable once a diagram has containers and frames, and until now the order
+   * they resolved in was the order the elements happened to reach the graph. Stacking is
+   * presentation: it rides with the coordinates and is kept by Save (ADR-0003).
+   */
+  const stackOf = () =>
+    page.evaluate(() => [...document.querySelectorAll('.ag-paper .ag-node')].map((n) => n.getAttribute('data-key')))
+
+  const restack = async (key, action) => {
+    const box = await nodeAt(key).locator('.ag-body').boundingBox()
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button: 'right' })
+    await page.waitForSelector('.ag-context', { timeout: 5000 })
+    await page.locator('.ag-context-row button', { hasText: action }).click()
+    await page.waitForTimeout(800)
+  }
+
+  await restack(ledgerKey, 'Send to back')
+  const sentBack = await stackOf()
+  check('"Send to back" puts an element under the others', sentBack.indexOf(ledgerKey) === 0, sentBack.join(' '))
+
+  await restack(ledgerKey, 'Bring to front')
+  const brought = await stackOf()
+  check(
+    '"Bring to front" puts it over them again',
+    brought.indexOf(ledgerKey) === brought.length - 1,
+    brought.join(' '),
+  )
+
+  // Sending a *child* back must not file it under its own container, where an opaque box would
+  // hide it and the element would look deleted.
+  await restack(api, 'Send to back')
+  const nested = await stackOf()
+  check(
+    'a nested element sent back still sits over its container',
+    nested.indexOf(api) > nested.indexOf(system),
+    nested.join(' '),
+  )
+
+  await page.keyboard.press('Control+s')
+  await page.waitForTimeout(2500)
+  await restack(ledgerKey, 'Send to back')
+  await page.keyboard.press('Control+s')
+  await page.waitForTimeout(2500)
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await openRepository(page)
+  await page.locator('.ag-tree-item', { hasText: viewName }).first().click()
+  await page.waitForTimeout(3500)
+  const reloaded = await stackOf()
+  check('the stacking order is kept by Save', reloaded.indexOf(ledgerKey) === 0, reloaded.join(' '))
+  await page.screenshot({ path: `${outDir}/40-stacking.png` })
 
   report()
 }

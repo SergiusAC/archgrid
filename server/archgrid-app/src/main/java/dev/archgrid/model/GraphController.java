@@ -206,7 +206,7 @@ class GraphController {
                 layout.load(graphId, viewKey).stream()
                         .map(node -> new ModelApiDtos.LayoutNodeResponse(
                                 node.elementKey(), node.x(), node.y(), node.width(), node.height(),
-                                node.parentKey()))
+                                node.parentKey(), node.z()))
                         .toList(),
                 layout.router(graphId, viewKey));
     }
@@ -230,7 +230,7 @@ class GraphController {
                 request.nodes().stream()
                         .map(node -> new dev.archgrid.model.ViewLayoutRepository.LayoutNode(
                                 node.element(), node.x(), node.y(), node.width(), node.height(),
-                                node.parent()))
+                                node.parent(), node.z()))
                         .toList());
         // Only when asked. A drag saves coordinates several times a second and must not carry an
         // opinion about routing with it.
