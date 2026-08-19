@@ -61,6 +61,14 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   const [connectFrom, setConnectFrom] = useState<string | null>(null)
   const [context, setContext] = useState<ContextTarget | null>(null)
   const [linkContext, setLinkContext] = useState<LinkTarget | null>(null)
+  /**
+   * Elements taken with Ctrl+C, by key.
+   *
+   * Keys, not copies of the elements: pasting on another view means "show these here", which is
+   * membership and nothing more. Making a second Payment API is a different act, and it has its
+   * own gesture (ADR-0008 — the repository is the thing, diagrams are windows on it).
+   */
+  const [clipboard, setClipboard] = useState<string[]>([])
   const [hiddenOpen, setHiddenOpen] = useState(false)
   const [sidebar, setSidebar] = useState<'views' | 'palette' | 'repository'>('views')
   // The element whose name is being typed in place, straight after creation.
@@ -872,6 +880,87 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     [byKey, relationshipsByKey, viewKey, apply],
   )
 
+  /**
+   * Ctrl+C, then Ctrl+V on another view: the same elements, shown in a second place.
+   *
+   * Not new elements — that is what duplicating is for. This is the gesture for the product's
+   * central claim, that one element lives on many views (ADR-0009), and it is the fastest way to
+   * build a second diagram out of a first.
+   */
+  const copySelection = useCallback(() => {
+    if (selected.length === 0) {
+      return
+    }
+    setClipboard(selected)
+    setMessage({
+      kind: 'info',
+      text: `${selected.length} element${selected.length === 1 ? '' : 's'} copied. Ctrl+V shows them on another view; Ctrl+D makes new ones.`,
+    })
+  }, [selected])
+
+  const pasteHere = useCallback(() => {
+    if (!viewKey || clipboard.length === 0) {
+      return
+    }
+    const missing = clipboard.filter((key) => byKey[key] && !onViewKeys.has(key))
+    if (missing.length === 0) {
+      setMessage({
+        kind: 'info',
+        text: 'Those elements are already on this view. Ctrl+D makes new ones instead.',
+      })
+      return
+    }
+    apply.mutate({
+      commands: missing.map((element) => ({ op: 'add-to-view', key: viewKey, element })),
+      label: `Show ${missing.length} element${missing.length === 1 ? '' : 's'}`,
+    })
+  }, [viewKey, clipboard, byKey, onViewKeys, apply])
+
+  /**
+   * Ctrl+D: another element like this one, in the repository as well as on the diagram.
+   *
+   * Documentation and properties come along — a copy that quietly dropped them would be a trap —
+   * but relationships do not. Duplicating two connected elements copies the elements; asserting
+   * new relationships between the copies is a claim about the architecture that nobody made.
+   */
+  const duplicateSelection = useCallback(() => {
+    if (!viewKey || selected.length === 0) {
+      return
+    }
+    const commands: Command[] = []
+    const created: string[] = []
+    // Grows as it goes: two copies of the same element in one gesture must not claim the same key.
+    const taken: Record<string, unknown> = { ...byKey }
+    for (const sourceKey of selected) {
+      const element = byKey[sourceKey]
+      if (!element) {
+        continue
+      }
+      const name = `${element.name} (copy)`
+      const key = uniqueKey(name, taken)
+      taken[key] = true
+      created.push(key)
+      const at = positions[sourceKey]
+      if (at) {
+        placeAt.current[key] = { x: at.x + GRID * 2, y: at.y + GRID * 2 }
+      }
+      commands.push({ op: 'create-element', key, type: element.profile ?? element.conceptType, name })
+      commands.push({ op: 'add-to-view', key: viewKey, element: key })
+      if (element.documentation) {
+        commands.push({ op: 'set-element-documentation', key, documentation: element.documentation })
+      }
+      for (const [property, value] of Object.entries(element.properties)) {
+        commands.push({ op: 'set-element-property', key, property, value })
+      }
+    }
+    if (commands.length > 0) {
+      apply.mutate({ commands, label: `Duplicate ${selected.length} element${selected.length === 1 ? '' : 's'}` })
+      // The copy lands a step off the original and therefore on top of it. Selecting it is what
+      // tells the two apart, and it is what lets the next gesture — a drag — move the right one.
+      setSelected(created)
+    }
+  }, [viewKey, selected, byKey, positions, apply])
+
   const addToView = useCallback(
     (elementKey: string) => {
       if (!viewKey) {
@@ -889,10 +978,9 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   /**
    * Deletes a relationship from the model.
    *
-   * There is no "remove from view" for a line: a view shows the relationships whose ends are both
-   * on it (ADR-0009), so the only way to take one off a diagram is to take one of its ends off,
-   * or to say the relationship does not exist. Both are honest; hiding a line the model asserts
-   * would not be.
+   * The heavier half of the pair the line's menu offers. Its lighter half — hiding the line on
+   * this view — leaves the model alone, so this one is reserved for the case where the
+   * relationship should not exist at all (ADR-0011).
    */
   const deleteRelationship = useCallback(
     (key: string) => {
@@ -1035,6 +1123,16 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       } else if (mod && ((key === 'z' && event.shiftKey) || key === 'y')) {
         event.preventDefault()
         void redo()
+      } else if (mod && key === 'c' && selected.length > 0) {
+        event.preventDefault()
+        copySelection()
+      } else if (mod && key === 'v') {
+        event.preventDefault()
+        pasteHere()
+      } else if (mod && key === 'd') {
+        // The browser's bookmark dialog is never what someone editing a diagram wants either.
+        event.preventDefault()
+        duplicateSelection()
       } else if ((event.key === 'Delete' || event.key === 'Backspace') && selectedLink) {
         event.preventDefault()
         deleteRelationship(selectedLink)
@@ -1052,7 +1150,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [undo, redo, save, selected, selectedLink, deleteRelationship, removeFromView])
+  }, [undo, redo, save, selected, selectedLink, deleteRelationship, removeFromView, copySelection, pasteHere, duplicateSelection])
 
   const viewItems: TreeItem[] = useMemo(
     () =>
@@ -1565,6 +1663,14 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           elementsByKey={byKey}
           metamodel={metamodel}
           onClose={() => setContext(null)}
+          onCopy={() => {
+            copySelection()
+            setContext(null)
+          }}
+          onDuplicate={() => {
+            duplicateSelection()
+            setContext(null)
+          }}
           onRestack={(to) => {
             restackTo([context.elementKey], to)
             setContext(null)

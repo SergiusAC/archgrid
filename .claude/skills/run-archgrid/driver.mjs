@@ -287,7 +287,7 @@ async function smoke(page) {
       actions: [...el.querySelectorAll('.ag-context-actions > button')].map((b) =>
         b.textContent.replace(/\s+/g, ' ').trim(),
       ),
-      stacking: [...el.querySelectorAll('.ag-context-row button')].map((b) => b.textContent.trim()),
+      rows: [...el.querySelectorAll('.ag-context-row button')].map((b) => b.textContent.trim()),
       usage: el.querySelector('.ag-context-usage h4')?.textContent ?? '',
       inViewport: box.left >= 0 && box.top >= 0 && box.right <= innerWidth && box.bottom <= innerHeight,
     }
@@ -295,7 +295,11 @@ async function smoke(page) {
   await shot('02-context-menu')
   check('context menu offers both delete modes', menu.actions.length === 2, menu.actions.join(' | '))
   check('context menu stays inside the window', menu.inViewport)
-  check('context menu offers stacking', menu.stacking.length === 2, menu.stacking.join(' | '))
+  check(
+    'context menu offers copying, duplicating and stacking',
+    menu.rows.join(' | ') === 'Copy | Duplicate | Bring to front | Send to back',
+    menu.rows.join(' | '),
+  )
   await page.keyboard.press('Escape')
 
   // --- undo / redo through the keyboard ---
@@ -1178,6 +1182,81 @@ async function interactions(page) {
   } else {
     check('a line offers hiding and deleting as different things', false, 'no line on the view to try it on')
   }
+
+  /*
+   * --- a band selects, Ctrl+D duplicates, Ctrl+V shows the same elements elsewhere ---
+   *
+   * Three gestures every canvas has, and the two pastes mean genuinely different things here:
+   * showing an element on a second view is membership, making another one is a new element in the
+   * repository (ADR-0009).
+   */
+  const bandOver = async (keys) => {
+    const boxes = await Promise.all(keys.map((key) => nodeAt(key).locator('.ag-body').boundingBox()))
+    const left = Math.min(...boxes.map((b) => b.x)) - 30
+    const top = Math.min(...boxes.map((b) => b.y)) - 30
+    const right = Math.max(...boxes.map((b) => b.x + b.width)) + 30
+    const bottom = Math.max(...boxes.map((b) => b.y + b.height)) + 30
+    await page.mouse.move(left, top)
+    await page.mouse.down()
+    await page.mouse.move(right, bottom, { steps: 12 })
+    await page.mouse.up()
+    await page.waitForTimeout(500)
+  }
+
+  const serviceKey = await keyOf('Application Service')
+  await bandOver([ledgerKey, serviceKey])
+  check(
+    'a band across the canvas selects what it encloses',
+    (await page.locator('.ag-paper .ag-node-selected').count()) === 2,
+    `${await page.locator('.ag-paper .ag-node-selected').count()} selected`,
+  )
+  await page.screenshot({ path: `${outDir}/43-marquee.png` })
+
+  const beforeDuplicate = await page.locator('.ag-paper .ag-node').count()
+  await page.keyboard.press('Control+d')
+  await page.waitForTimeout(3000)
+  check(
+    'Ctrl+D makes another element like the one selected',
+    (await page.locator('.ag-paper .ag-node').count()) === beforeDuplicate + 2,
+    `${beforeDuplicate} -> ${await page.locator('.ag-paper .ag-node').count()}`,
+  )
+  check(
+    'and says it is a copy rather than reusing the name',
+    (await page.locator('.ag-paper .ag-node', { hasText: '(copy)' }).count()) === 2,
+  )
+
+  // Copying puts the same elements on a second view — no new elements in the repository.
+  // By the corner: the duplicate sits a step off the original and covers its middle.
+  await clickNode(ledgerKey)
+  await page.waitForTimeout(300)
+  check(
+    'the original is the one selected when clicked beside its copy',
+    (await page.locator('.ag-paper .ag-node-selected').getAttribute('data-key')) === ledgerKey,
+    (await page.locator('.ag-paper .ag-node-selected').first().getAttribute('data-key')) ?? 'none',
+  )
+  await page.keyboard.press('Control+c')
+  await page.waitForTimeout(400)
+  const repositorySize = async () =>
+    Number((await page.locator('.ag-toolbar .ag-muted').last().textContent()).match(/· (\d+) in repository/)[1])
+  const beforePaste = await repositorySize()
+
+  const secondView = `${viewName} b`
+  page.once('dialog', (dialog) => dialog.accept(secondView))
+  await page.locator('.ag-block-button').first().click()
+  await page.waitForTimeout(3000)
+  await page.keyboard.press('Control+v')
+  await page.waitForTimeout(3000)
+  check(
+    'Ctrl+V shows the copied element on another view',
+    (await page.locator('.ag-paper .ag-node').count()) === 1,
+    `${await page.locator('.ag-paper .ag-node').count()} on the new view`,
+  )
+  check(
+    'and does not make a second element to do it',
+    (await repositorySize()) === beforePaste,
+    `${beforePaste} -> ${await repositorySize()}`,
+  )
+  await page.screenshot({ path: `${outDir}/44-paste.png` })
 
   report()
 }

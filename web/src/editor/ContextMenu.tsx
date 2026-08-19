@@ -16,6 +16,8 @@ interface ContextMenuProps {
   elementsByKey: Record<string, ModelElement>
   metamodel: Metamodel
   onClose: () => void
+  onCopy: () => void
+  onDuplicate: () => void
   onRestack: (to: 'front' | 'back') => void
   onRemoveFromView: () => void
   onDeleteFromModel: () => void
@@ -35,6 +37,8 @@ export default function ContextMenu({
   elementsByKey,
   metamodel,
   onClose,
+  onCopy,
+  onDuplicate,
   onRestack,
   onRemoveFromView,
   onDeleteFromModel,
@@ -129,6 +133,16 @@ export default function ContextMenu({
         </section>
 
         <div className="ag-context-actions">
+          {/* Copy takes the element to another view; duplicating makes a second one. Different
+              acts, so different buttons — the distinction is the same one the delete pair makes. */}
+          <div className="ag-context-row">
+            <button type="button" onClick={onCopy}>
+              Copy
+            </button>
+            <button type="button" onClick={onDuplicate}>
+              Duplicate
+            </button>
+          </div>
           {/* Stacking is presentation, not model: it rides with the coordinates and is kept by
               Save like every other part of the arrangement (ADR-0003). */}
           <div className="ag-context-row">

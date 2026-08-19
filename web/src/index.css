@@ -1069,6 +1069,17 @@ body.ag-resizing {
   vector-effect: non-scaling-stroke;
 }
 
+/* The band a drag across empty canvas draws. Enclose to select. */
+.ag-marquee {
+  fill: var(--accent);
+  fill-opacity: 0.08;
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
 /* The selected relationship, so deleting one is aimed rather than hoped. */
 .ag-link-selected {
   color: var(--accent);

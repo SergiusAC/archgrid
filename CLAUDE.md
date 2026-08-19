@@ -333,6 +333,12 @@ Non-obvious breakages already hit and fixed — do not re-introduce:
   - **Geometry belongs to the canvas while it is mounted.** Pushing positions from props on every
     render races the drag with values one render out of date. External changes — auto-layout, undo
     — arrive through an explicit `geometryVersion`.
+  - **A drag on blank canvas selects; panning is the middle button or space-and-drag.** Selecting
+    is the frequent act. The band takes what it encloses, never what it merely touches: with
+    containers on the diagram, "touch" grabs the container as soon as the band crosses its edge.
+  - **Stacking order is JointJS's to compute.** Ask `toFront`/`toBack` and read `z` back rather
+    than inventing numbers, and lift children over their parent afterwards — `toBack` on a nested
+    element files it behind its own container, where it looks deleted.
 - **Layout is saved when the user asks, not automatically.** Changes live as a draft in
   `localStorage` and reach the server on Save or Ctrl+S. The old debounce was the origin of every
   ordering trap here: a save in flight racing a refetch, a write landing after the change it was

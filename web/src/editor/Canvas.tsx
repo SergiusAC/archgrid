@@ -317,6 +317,8 @@ export default function Canvas(props: CanvasProps) {
   const appliedGeometry = useRef(-1)
   // Which element currently carries the resize grip, so it is not rebuilt on every render.
   const toolsOn = useRef<string | null>(null)
+  // Space turns a drag into a pan, the gesture every canvas editor uses for it.
+  const spaceHeld = useRef(false)
   const [ready, setReady] = useState(false)
   const [editorBox, setEditorBox] = useState<{ x: number; y: number; width: number } | null>(null)
 
@@ -557,19 +559,74 @@ export default function Canvas(props: CanvasProps) {
     })
     view.on('link:mouseleave', (linkView: joint.dia.LinkView) => linkView.removeTools())
 
+    // -------------------------------------------------------------- selection band
+    /*
+     * A drag across empty canvas selects what it encloses, as it does in Archi and in every other
+     * editor. Panning moves to the middle button and to space-and-drag — the same trade the tools
+     * that have both make, because selecting is the frequent act and panning the occasional one.
+     *
+     * Fully enclosed, not merely touched. With containers on the diagram, a band that grabs
+     * whatever it grazes picks up the container the moment it crosses its edge, and the user ends
+     * up moving a system when they meant to move two of its parts.
+     */
+    const band = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+    band.setAttribute('class', 'ag-marquee')
+    band.setAttribute('visibility', 'hidden')
+    ;(element.querySelector('.joint-front-layer') ?? view.svg).appendChild(band)
+
+    let marquee: { x: number; y: number; additive: boolean } | null = null
+    const bandRect = (to: { x: number; y: number }) => ({
+      x: Math.min(marquee!.x, to.x),
+      y: Math.min(marquee!.y, to.y),
+      width: Math.abs(to.x - marquee!.x),
+      height: Math.abs(to.y - marquee!.y),
+    })
+
     // -------------------------------------------------------------- pan and zoom
     let panning: { x: number; y: number; tx: number; ty: number } | null = null
-    view.on('blank:pointerdown', (event: joint.dia.Event) => {
-      const translate = view.translate()
-      panning = { x: event.clientX ?? 0, y: event.clientY ?? 0, tx: translate.tx, ty: translate.ty }
+    view.on('blank:pointerdown', (event: joint.dia.Event, x: number, y: number) => {
+      if (spaceHeld.current || event.button === 1) {
+        const translate = view.translate()
+        panning = { x: event.clientX ?? 0, y: event.clientY ?? 0, tx: translate.tx, ty: translate.ty }
+        return
+      }
+      // While connecting, empty canvas means "make the other end here" — not a selection.
+      if (latest.current.connecting) {
+        return
+      }
+      marquee = { x, y, additive: Boolean(event.shiftKey || event.ctrlKey || event.metaKey) }
     })
     const onPointerMove = (event: PointerEvent) => {
       if (panning) {
         view.translate(panning.tx + event.clientX - panning.x, panning.ty + event.clientY - panning.y)
       }
+      if (marquee) {
+        const rect = bandRect(view.clientToLocalPoint({ x: event.clientX, y: event.clientY }))
+        band.setAttribute('x', String(rect.x))
+        band.setAttribute('y', String(rect.y))
+        band.setAttribute('width', String(rect.width))
+        band.setAttribute('height', String(rect.height))
+        band.setAttribute('visibility', 'visible')
+      }
     }
-    const onPointerUp = () => {
+    const onPointerUp = (event: PointerEvent) => {
       panning = null
+      if (!marquee) {
+        return
+      }
+      const rect = bandRect(view.clientToLocalPoint({ x: event.clientX, y: event.clientY }))
+      const dragged = marquee
+      marquee = null
+      band.setAttribute('visibility', 'hidden')
+      // A click, not a drag: leave it to `blank:pointerclick`, which deselects.
+      if (rect.width < 4 && rect.height < 4) {
+        return
+      }
+      const caught = model.findElementsInArea(rect, { strict: true }).map((found) => String(found.id))
+      const current = latest.current.selected
+      latest.current.onSelect(
+        dragged.additive ? [...current, ...caught.filter((key) => !current.includes(key))] : caught,
+      )
     }
     const onWheel = (event: WheelEvent) => {
       event.preventDefault()
@@ -595,6 +652,19 @@ export default function Canvas(props: CanvasProps) {
     }
     element.addEventListener('pointerup', onDrop)
 
+    // Not while typing: space belongs to the text field, and a rename would otherwise pan.
+    const onSpace = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) {
+        return
+      }
+      if (event.code === 'Space') {
+        spaceHeld.current = event.type === 'keydown'
+      }
+    }
+
+    window.addEventListener('keydown', onSpace)
+    window.addEventListener('keyup', onSpace)
     window.addEventListener('pointermove', onPointerMove)
     window.addEventListener('pointerup', onPointerUp)
     element.addEventListener('wheel', onWheel, { passive: false })
@@ -626,6 +696,8 @@ export default function Canvas(props: CanvasProps) {
     setReady(true)
     return () => {
       observer.disconnect()
+      window.removeEventListener('keydown', onSpace)
+      window.removeEventListener('keyup', onSpace)
       window.removeEventListener('pointermove', onPointerMove)
       window.removeEventListener('pointerup', onPointerUp)
       element.removeEventListener('wheel', onWheel)
