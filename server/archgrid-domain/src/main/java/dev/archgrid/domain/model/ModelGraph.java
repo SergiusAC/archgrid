@@ -101,9 +101,19 @@ public final class ModelGraph {
                 .toList();
     }
 
+    /**
+     * What this element contains, read from Composition relationships (ADR-0011).
+     *
+     * <p>Not from a field: containment is a relationship, so "what is inside this" is a question
+     * about the graph like any other, and it can be answered for aggregation or assignment by
+     * changing one string rather than by adding a second mechanism.
+     */
     public List<Element> childrenOf(Slug key) {
-        return elements.values().stream()
-                .filter(element -> key.equals(element.parent()))
+        return relationships.values().stream()
+                .filter(relationship -> "Composition".equals(relationship.conceptType()))
+                .filter(relationship -> key.equals(relationship.source()))
+                .map(relationship -> elements.get(relationship.target()))
+                .filter(java.util.Objects::nonNull)
                 .toList();
     }
 
@@ -115,26 +125,36 @@ public final class ModelGraph {
     /**
      * The containment chain from this element up to its root, nearest ancestor first.
      *
-     * <p>Stops if it ever revisits an element, so a graph that has somehow acquired a cycle
-     * produces a finite answer instead of hanging. The validator reports the cycle separately;
-     * a query is not the place to throw.
+     * <p>Follows Composition relationships. Stops if it ever revisits an element, so a graph that
+     * has somehow acquired a cycle produces a finite answer instead of hanging. The validator
+     * reports the cycle separately; a query is not the place to throw.
      */
     public List<Element> ancestorsOf(Slug key) {
         List<Element> ancestors = new ArrayList<>();
         List<Slug> seen = new ArrayList<>();
         seen.add(key);
-        Optional<Slug> current = element(key).flatMap(Element::parentKey);
-        while (current.isPresent() && !seen.contains(current.get())) {
-            Slug parent = current.get();
-            seen.add(parent);
-            Optional<Element> element = element(parent);
-            if (element.isEmpty()) {
-                break;
-            }
-            ancestors.add(element.get());
-            current = element.get().parentKey();
+        Optional<Element> current = containerOf(key);
+        while (current.isPresent() && !seen.contains(current.get().key())) {
+            seen.add(current.get().key());
+            ancestors.add(current.get());
+            current = containerOf(current.get().key());
         }
         return ancestors;
+    }
+
+    /**
+     * What contains this element, if anything.
+     *
+     * <p>Composition is ownership, so there should be at most one; where a model says otherwise
+     * the first is taken rather than throwing, because a query is not the place to enforce it.
+     */
+    public Optional<Element> containerOf(Slug key) {
+        return relationships.values().stream()
+                .filter(relationship -> "Composition".equals(relationship.conceptType()))
+                .filter(relationship -> key.equals(relationship.target()))
+                .map(relationship -> elements.get(relationship.source()))
+                .filter(java.util.Objects::nonNull)
+                .findFirst();
     }
 
     public int size() {

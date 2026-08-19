@@ -5,7 +5,9 @@ import dev.archgrid.domain.metamodel.RelationshipVerdict;
 import dev.archgrid.domain.profile.ProfileCatalog;
 import dev.archgrid.domain.shared.Slug;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -80,7 +82,6 @@ public final class ModelChange {
                     property.key(),
                     violations,
                     element -> element.withProperty(property.property(), property.value()));
-            case ModelCommand.MoveElement move -> moveElement(graph, move, violations);
             case ModelCommand.DeleteElement delete -> deleteElement(graph, delete, violations);
             case ModelCommand.AddRelationship add -> addRelationship(graph, add, metamodel, violations);
             case ModelCommand.DeleteRelationship delete -> {
@@ -183,14 +184,6 @@ public final class ModelChange {
                     "'" + create.type() + "' is neither an ArchiMate element type nor a profile defined in this model."));
             return;
         }
-        if (create.parent() != null && !graph.containsElement(create.parent())) {
-            violations.add(Violation.of(
-                    Violation.Code.UNKNOWN_SUBJECT,
-                    create.key(),
-                    "Cannot place '" + create.key() + "' inside '" + create.parent() + "', which does not exist."));
-            return;
-        }
-
         ProfileCatalog.ResolvedType type = resolved.get();
         graph.put(new Element(
                 create.key(),
@@ -198,8 +191,7 @@ public final class ModelChange {
                 type.profile().map(profile -> profile.name()).orElse(null),
                 create.name(),
                 create.documentation(),
-                java.util.Map.of(),
-                create.parent()));
+                java.util.Map.of()));
     }
 
     private static void mutateElement(
@@ -220,31 +212,14 @@ public final class ModelChange {
         }
     }
 
-    private static void moveElement(ModelGraph graph, ModelCommand.MoveElement move, List<Violation> violations) {
-        if (!graph.containsElement(move.key())) {
-            violations.add(Violation.of(
-                    Violation.Code.UNKNOWN_SUBJECT,
-                    move.key(),
-                    "There is no element '" + move.key() + "' in this model."));
-            return;
-        }
-        if (move.parent() != null && !graph.containsElement(move.parent())) {
-            violations.add(Violation.of(
-                    Violation.Code.UNKNOWN_SUBJECT,
-                    move.key(),
-                    "Cannot place '" + move.key() + "' inside '" + move.parent() + "', which does not exist."));
-            return;
-        }
-        mutateElement(graph, move.key(), violations, element -> element.withParent(move.parent()));
-    }
-
     /**
      * Deletes an element and every relationship touching it.
      *
-     * <p>Refuses while the element still contains others. Silently removing a subtree is the
-     * kind of "helpful" behaviour that costs a user a morning's work; the caller is expected to
-     * show what is inside and let the user decide. Relationships, by contrast, cannot survive
-     * the loss of an endpoint and go without asking.
+     * <p>Its contents are not deleted with it, and that follows from containment being a
+     * relationship rather than ownership (ADR-0011): the Composition goes, because a
+     * relationship cannot survive the loss of an endpoint, and the elements it held stay in
+     * the repository as elements in their own right. Deleting a subtree because the user
+     * deleted its root is the kind of "helpful" behaviour that costs a morning's work.
      */
     private static void deleteElement(
             ModelGraph graph, ModelCommand.DeleteElement delete, List<Violation> violations) {
@@ -253,16 +228,6 @@ public final class ModelChange {
                     Violation.Code.UNKNOWN_SUBJECT,
                     delete.key(),
                     "There is no element '" + delete.key() + "' in this model."));
-            return;
-        }
-        List<Element> children = graph.childrenOf(delete.key());
-        if (!children.isEmpty()) {
-            violations.add(Violation.of(
-                    Violation.Code.NOT_APPLICABLE,
-                    delete.key(),
-                    "'" + delete.key() + "' still contains " + children.size()
-                            + " element(s): " + children.stream().map(child -> child.key().value()).toList()
-                            + ". Move or delete them first."));
             return;
         }
         graph.relationshipsTouching(delete.key())
@@ -313,17 +278,6 @@ public final class ModelChange {
      * two elements past each other, for instance.
      */
     private static void validate(ModelGraph graph, Metamodel metamodel, List<Violation> violations) {
-        for (Element element : graph.elements()) {
-            element.parentKey().ifPresent(parent -> {
-                if (!graph.containsElement(parent)) {
-                    violations.add(Violation.of(
-                            Violation.Code.DANGLING_ENDPOINT,
-                            element.key(),
-                            "'" + element.key() + "' is contained by '" + parent + "', which does not exist."));
-                }
-            });
-        }
-
         detectContainmentCycles(graph, violations);
 
         for (View view : graph.views()) {
@@ -368,30 +322,54 @@ public final class ModelChange {
         return verdict.explain() + " Attempted between '" + source.name() + "' and '" + target.name() + "'.";
     }
 
+    /**
+     * No element may contain itself, directly or through a chain of Compositions.
+     *
+     * <p>The rule outlived the field it used to be checked on. Composition is ownership — a part
+     * belongs to exactly one whole — so a cycle is not an unusual model but an impossible one,
+     * and it would send derivation and any future C4 depth walk round forever.
+     */
     private static void detectContainmentCycles(ModelGraph graph, List<Violation> violations) {
-        Set<Slug> reported = new LinkedHashSet<>();
-        for (Element element : graph.elements()) {
-            Set<Slug> seen = new LinkedHashSet<>();
-            seen.add(element.key());
-            Optional<Slug> current = element.parentKey();
-            while (current.isPresent()) {
-                Slug parent = current.get();
-                if (!seen.add(parent)) {
-                    if (reported.add(element.key())) {
-                        violations.add(Violation.of(
-                                Violation.Code.CONTAINMENT_CYCLE,
-                                element.key(),
-                                "Containment forms a cycle through '" + parent + "'; an element cannot contain itself, "
-                                        + "directly or indirectly."));
-                    }
-                    break;
-                }
-                Optional<Element> next = graph.element(parent);
-                if (next.isEmpty()) {
-                    break;
-                }
-                current = next.get().parentKey();
+        Map<Slug, List<Slug>> contains = new LinkedHashMap<>();
+        for (Relationship relationship : graph.relationships()) {
+            if ("Composition".equals(relationship.conceptType())) {
+                contains.computeIfAbsent(relationship.source(), key -> new ArrayList<>())
+                        .add(relationship.target());
             }
         }
+
+        Set<Slug> settled = new LinkedHashSet<>();
+        Set<Slug> reported = new LinkedHashSet<>();
+        for (Slug start : contains.keySet()) {
+            walkContainment(start, contains, settled, new LinkedHashSet<>(), reported, violations);
+        }
+    }
+
+    /** Depth-first with the current path in hand, so a back edge is a cycle and is named as one. */
+    private static void walkContainment(
+            Slug at,
+            Map<Slug, List<Slug>> contains,
+            Set<Slug> settled,
+            Set<Slug> path,
+            Set<Slug> reported,
+            List<Violation> violations) {
+        if (settled.contains(at)) {
+            return;
+        }
+        if (!path.add(at)) {
+            if (reported.add(at)) {
+                violations.add(Violation.of(
+                        Violation.Code.CONTAINMENT_CYCLE,
+                        at,
+                        "Composition forms a cycle through '" + at + "'; an element cannot contain itself, "
+                                + "directly or indirectly."));
+            }
+            return;
+        }
+        for (Slug inside : contains.getOrDefault(at, List.of())) {
+            walkContainment(inside, contains, settled, path, reported, violations);
+        }
+        path.remove(at);
+        settled.add(at);
     }
 }

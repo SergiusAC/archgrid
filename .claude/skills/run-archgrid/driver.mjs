@@ -1372,6 +1372,42 @@ async function interactions(page) {
   )
   await page.screenshot({ path: `${outDir}/45-where-used.png` })
 
+  /*
+   * --- what a container's parts do, the container is understood to do ---
+   *
+   * The case context views exist for, and the one that quietly broke: containment became a
+   * relationship on the canvas (ADR-0011) while derivation went on reading the old field, so a
+   * nested element's dependencies stopped lifting to the box that holds it. Nest, take the child
+   * off the view, and the line has to reappear at the level above — derived, and saying so.
+   */
+  const holder = await nodeAt(system).locator('.ag-body').boundingBox()
+  const held = await nodeAt(ledgerKey).locator('.ag-body').boundingBox()
+  await page.mouse.move(held.x + held.width / 2, held.y + 12)
+  await page.mouse.down()
+  // Into the empty strip under the container's own name: dropping lower would land on one of the
+  // elements already inside it, and nest into that instead.
+  await page.mouse.move(holder.x + 50, holder.y + 30, { steps: 14 })
+  await page.mouse.up()
+  await page.waitForTimeout(1500)
+  check('nesting still asks what it means', (await page.locator('.ag-picker').count()) > 0)
+  await page.locator('.ag-picker button', { hasText: 'Composition' }).first().click()
+  await page.waitForTimeout(3000)
+
+  await clickNode(ledgerKey)
+  await page.keyboard.press('Delete')
+  await page.waitForTimeout(3000)
+  const derived = await page.evaluate(() =>
+    [...document.querySelectorAll('.ag-paper .ag-link-derived')].map(
+      (link) => link.querySelector('.ag-link-label')?.textContent ?? '',
+    ),
+  )
+  check(
+    'a dependency of a nested element lifts to its container',
+    derived.some((label) => label.includes('Serving')),
+    derived.join(' | ') || 'no derived lines',
+  )
+  await page.screenshot({ path: `${outDir}/46-derived.png` })
+
   // Back to the view with containers and lines on it: exporting one lone box proves very little.
   await page.locator('.ag-tree-item', { hasText: viewName }).first().click()
   await page.waitForTimeout(3000)

@@ -17,8 +17,7 @@ public sealed interface ModelCommand {
     /** The element or relationship this command is about, for error reporting. */
     Slug subject();
 
-    record CreateElement(Slug key, String type, String name, String documentation, Slug parent)
-            implements ModelCommand {
+    record CreateElement(Slug key, String type, String name, String documentation) implements ModelCommand {
 
         public CreateElement {
             Objects.requireNonNull(key, "key must not be null");
@@ -27,7 +26,7 @@ public sealed interface ModelCommand {
         }
 
         public static CreateElement of(String key, String type, String name) {
-            return new CreateElement(Slug.of(key), type, name, null, null);
+            return new CreateElement(Slug.of(key), type, name, null);
         }
 
         @Override
@@ -67,19 +66,6 @@ public sealed interface ModelCommand {
         public SetElementProperty {
             Objects.requireNonNull(key, "key must not be null");
             Objects.requireNonNull(property, "property must not be null");
-        }
-
-        @Override
-        public Slug subject() {
-            return key;
-        }
-    }
-
-    /** A null {@code parent} makes the element a root. */
-    record MoveElement(Slug key, Slug parent) implements ModelCommand {
-
-        public MoveElement {
-            Objects.requireNonNull(key, "key must not be null");
         }
 
         @Override

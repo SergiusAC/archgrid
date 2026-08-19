@@ -35,9 +35,11 @@ import java.util.Set;
  * <p>Nothing derives past a dependency: once the chain has left the structure it no longer
  * describes the same thing, and continuing would manufacture claims the model does not make.
  *
- * <p><strong>Containment counts as composition.</strong> An element's {@code parent} is
- * ArchiMate composition expressed as a field rather than a relationship row, and derivation
- * that ignored it would miss the most common case there is — the whole point of a context view.
+ * <p><strong>Containment is a Composition row like any other</strong> (ADR-0011), so the case a
+ * context view exists for — a system whose parts talk to the outside — derives from the graph
+ * rather than from a field beside it. It was a field once, read here as a second kind of edge;
+ * when the canvas stopped writing that field, derivation went on reading it and quietly answered
+ * from data nothing maintained.
  *
  * <p>The strength ordering this depends on is the one value in the metamodel not taken from
  * upstream and still unverified against the specification (see {@code metamodel/VERIFICATION.md}).
@@ -152,10 +154,12 @@ public final class RelationshipDerivation {
     }
 
     /**
-     * Explicit relationships plus containment, which is composition written as a field.
+     * The relationships, all of them.
      *
-     * <p>The parent edge runs child → parent as an <em>aggregation-strength</em> link in the
-     * direction that matters here: what the child does, the parent is understood to do.
+     * <p>Containment used to be added here as a second source of edges, because it lived on the
+     * element as a field. It is a Composition row now (ADR-0011), so it arrives with everything
+     * else and derivation has one place to read from — which is the point: the rules are hard
+     * enough without two spellings of the same edge.
      */
     private static Map<Slug, List<Edge>> buildAdjacency(ModelGraph graph, Metamodel metamodel) {
         Map<Slug, List<Edge>> outgoing = new LinkedHashMap<>();
@@ -165,16 +169,6 @@ public final class RelationshipDerivation {
                     .ifPresent(type -> outgoing
                             .computeIfAbsent(relationship.source(), key -> new ArrayList<>())
                             .add(new Edge(relationship.target(), type)));
-        }
-
-        Optional<RelationshipType> composition = metamodel.relationshipType("Composition");
-        if (composition.isPresent()) {
-            for (Element element : graph.elements()) {
-                element.parentKey()
-                        .ifPresent(parent -> outgoing
-                                .computeIfAbsent(parent, key -> new ArrayList<>())
-                                .add(new Edge(element.key(), composition.get())));
-            }
         }
         return outgoing;
     }

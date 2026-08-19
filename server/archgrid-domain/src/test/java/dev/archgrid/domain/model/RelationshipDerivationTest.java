@@ -46,9 +46,13 @@ class RelationshipDerivationTest {
             .permit("ApplicationComponent", "ApplicationComponent", List.of(COMPOSITION, AGGREGATION, ASSIGNMENT, SERVING, FLOW))
             .build();
 
-    private static Element element(String key, String parent) {
-        return new Element(
-                Slug.of(key), "ApplicationComponent", null, key, null, Map.of(), parent == null ? null : Slug.of(parent));
+    private static Element element(String key) {
+        return new Element(Slug.of(key), "ApplicationComponent", null, key, null, Map.of());
+    }
+
+    /** Containment, as it is stored: a Composition from the whole to the part (ADR-0011). */
+    private static Relationship contains(String whole, String part) {
+        return Relationship.of(Slug.of(whole + "-contains-" + part), "Composition", Slug.of(whole), Slug.of(part));
     }
 
     private static Relationship relationship(String key, String type, String source, String target) {
@@ -63,8 +67,10 @@ class RelationshipDerivationTest {
     @DisplayName("what a contained element serves, its container serves at the level above")
     void containment_lifts_a_dependency_to_the_container() {
         ModelGraph graph = ModelGraph.of(
-                List.of(element("payment-service", null), element("payment-api", "payment-service"), element("notification-service", null)),
-                List.of(relationship("api-serves", "Serving", "payment-api", "notification-service")));
+                List.of(element("payment-service"), element("payment-api"), element("notification-service")),
+                List.of(
+                        contains("payment-service", "payment-api"),
+                        relationship("api-serves", "Serving", "payment-api", "notification-service")));
 
         List<DerivedRelationship> derived =
                 RelationshipDerivation.derive(graph, visible("payment-service", "notification-service"), METAMODEL);
@@ -81,7 +87,7 @@ class RelationshipDerivationTest {
     @DisplayName("a chain of structural relationships derives the weakest of them")
     void structural_chain_derives_the_weakest_link() {
         ModelGraph graph = ModelGraph.of(
-                List.of(element("a", null), element("b", null), element("c", null)),
+                List.of(element("a"), element("b"), element("c")),
                 List.of(
                         relationship("a-b", "Composition", "a", "b"),
                         relationship("b-c", "Assignment", "b", "c")));
@@ -100,7 +106,7 @@ class RelationshipDerivationTest {
     @DisplayName("nothing derives past a dependency")
     void a_chain_does_not_continue_through_a_dependency() {
         ModelGraph graph = ModelGraph.of(
-                List.of(element("a", null), element("b", null), element("c", null), element("d", null)),
+                List.of(element("a"), element("b"), element("c"), element("d")),
                 List.of(
                         relationship("a-b", "Composition", "a", "b"),
                         relationship("b-c", "Serving", "b", "c"),
@@ -118,8 +124,9 @@ class RelationshipDerivationTest {
     @DisplayName("an explicit relationship wins; nothing duplicates it")
     void explicit_relationships_are_not_duplicated() {
         ModelGraph graph = ModelGraph.of(
-                List.of(element("a", null), element("hidden", "a"), element("c", null)),
+                List.of(element("a"), element("hidden"), element("c")),
                 List.of(
+                        contains("a", "hidden"),
                         relationship("hidden-c", "Serving", "hidden", "c"),
                         relationship("a-c", "Serving", "a", "c")));
 
@@ -130,7 +137,7 @@ class RelationshipDerivationTest {
     @DisplayName("a path with nothing hidden in the middle derives nothing — it is already drawn")
     void adjacent_visible_elements_derive_nothing() {
         ModelGraph graph = ModelGraph.of(
-                List.of(element("a", null), element("b", null)),
+                List.of(element("a"), element("b")),
                 List.of(relationship("a-b", "Serving", "a", "b")));
 
         assertThat(RelationshipDerivation.derive(graph, visible("a", "b"), METAMODEL)).isEmpty();
@@ -147,7 +154,7 @@ class RelationshipDerivationTest {
                 .permit("ApplicationComponent", "ApplicationComponent", List.of(COMPOSITION, SPECIALIZATION))
                 .build();
         ModelGraph graph = ModelGraph.of(
-                List.of(element("a", null), element("b", null), element("c", null)),
+                List.of(element("a"), element("b"), element("c")),
                 List.of(
                         relationship("a-b", "Composition", "a", "b"),
                         relationship("b-c", "Specialization", "b", "c")));
@@ -160,7 +167,7 @@ class RelationshipDerivationTest {
     @DisplayName("a cycle terminates instead of deriving forever")
     void cycles_terminate() {
         ModelGraph graph = ModelGraph.of(
-                List.of(element("a", null), element("b", null), element("c", null)),
+                List.of(element("a"), element("b"), element("c")),
                 List.of(
                         relationship("a-b", "Composition", "a", "b"),
                         relationship("b-c", "Composition", "b", "c"),
@@ -175,8 +182,10 @@ class RelationshipDerivationTest {
     @DisplayName("a derived line can say why it is there")
     void derived_relationships_carry_their_path() {
         ModelGraph graph = ModelGraph.of(
-                List.of(element("system", null), element("part", "system"), element("other", null)),
-                List.of(relationship("part-flows", "Flow", "part", "other")));
+                List.of(element("system"), element("part"), element("other")),
+                List.of(
+                        contains("system", "part"),
+                        relationship("part-flows", "Flow", "part", "other")));
 
         DerivedRelationship derived =
                 RelationshipDerivation.derive(graph, visible("system", "other"), METAMODEL).get(0);

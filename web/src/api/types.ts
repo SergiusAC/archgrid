@@ -74,7 +74,6 @@ export interface ModelElement {
   name: string
   documentation: string | null
   properties: Record<string, string>
-  parent: string | null
   /** Folder it is filed under, or null for the root. Organisation only. */
   folder?: string | null
 }
@@ -190,11 +189,10 @@ export interface CommitResult {
 
 /** The command surface. Mirrors dev.archgrid.domain.model.ModelCommand. */
 export type Command =
-  | { op: 'create-element'; key: string; type: string; name: string; documentation?: string; parent?: string }
+  | { op: 'create-element'; key: string; type: string; name: string; documentation?: string }
   | { op: 'rename-element'; key: string; name: string }
   | { op: 'set-element-documentation'; key: string; documentation: string | null }
   | { op: 'set-element-property'; key: string; property: string; value: string | null }
-  | { op: 'move-element'; key: string; parent?: string }
   | { op: 'delete-element'; key: string }
   | { op: 'add-relationship'; key: string; type: string; source: string; target: string; name?: string }
   | { op: 'delete-relationship'; key: string }

@@ -124,13 +124,6 @@ export function invert(
         })
         break
       }
-      case 'move-element': {
-        const previous = before.elements[command.key]
-        if (previous) {
-          inverse.push({ op: 'move-element', key: command.key, parent: previous.parent ?? undefined })
-        }
-        break
-      }
       case 'delete-element': {
         const previous = before.elements[command.key]
         if (previous) {
@@ -140,7 +133,6 @@ export function invert(
             type: previous.type,
             name: previous.name,
             documentation: previous.documentation ?? undefined,
-            parent: previous.parent ?? undefined,
           })
           // Deleting an element takes its relationships with it, so undoing has to put them back.
           for (const relationship of Object.values(before.relationships)) {

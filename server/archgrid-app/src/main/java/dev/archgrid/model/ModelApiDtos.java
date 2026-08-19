@@ -48,7 +48,6 @@ final class ModelApiDtos {
             String type,
             String name,
             String documentation,
-            String parent,
             String source,
             String target,
             String property,
@@ -60,12 +59,11 @@ final class ModelApiDtos {
             Slug subject = slug(key, "key");
             return switch (op) {
                 case "create-element" -> new ModelCommand.CreateElement(
-                        subject, require(type, "type"), require(name, "name"), documentation, optionalSlug(parent));
+                        subject, require(type, "type"), require(name, "name"), documentation);
                 case "rename-element" -> new ModelCommand.RenameElement(subject, require(name, "name"));
                 case "set-element-documentation" -> new ModelCommand.SetElementDocumentation(subject, documentation);
                 case "set-element-property" -> new ModelCommand.SetElementProperty(
                         subject, require(property, "property"), value);
-                case "move-element" -> new ModelCommand.MoveElement(subject, optionalSlug(parent));
                 case "delete-element" -> new ModelCommand.DeleteElement(subject);
                 case "add-relationship" -> new ModelCommand.AddRelationship(
                         subject,
@@ -120,7 +118,6 @@ final class ModelApiDtos {
             String name,
             String documentation,
             Map<String, String> properties,
-            String parent,
             /** Which folder it is filed under. Organisation only, unversioned (ADR-0009). */
             String folder) {
 
@@ -137,7 +134,6 @@ final class ModelApiDtos {
                     element.name(),
                     element.documentation(),
                     element.properties(),
-                    element.parentKey().map(Slug::value).orElse(null),
                     folder);
         }
     }

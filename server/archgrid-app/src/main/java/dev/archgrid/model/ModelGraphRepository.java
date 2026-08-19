@@ -72,27 +72,23 @@ class ModelGraphRepository {
                                ev.concept_type,
                                p.name as profile_name,
                                ev.name,
-                               ev.documentation,
-                               parent."key" as parent_key
+                               ev.documentation
                         from element_version ev
                         join element e on e.id = ev.element_id
                         left join profile p on p.id = ev.profile_id
-                        left join element parent on parent.id = ev.parent_element_id
                         where e.model_id = :modelId and ev.to_seq is null
                         order by e."key"
                         """)
                 .param("modelId", modelId)
                 .query((rs, rowNum) -> {
                     Slug key = Slug.of(rs.getString("element_key"));
-                    String parent = rs.getString("parent_key");
                     return new Element(
                             key,
                             rs.getString("concept_type"),
                             rs.getString("profile_name"),
                             rs.getString("name"),
                             rs.getString("documentation"),
-                            elementProperties.getOrDefault(key, Map.of()),
-                            parent == null ? null : Slug.of(parent));
+                            elementProperties.getOrDefault(key, Map.of()));
                 })
                 .list();
 
@@ -401,8 +397,8 @@ class ModelGraphRepository {
     private void insertElementVersion(
             Map<Slug, UUID> ids, Element element, long seq, Map<String, UUID> profileIds) {
         jdbc.sql("insert into element_version "
-                        + "(element_id, from_seq, concept_type, profile_id, name, documentation, properties, parent_element_id) "
-                        + "values (:id, :seq, :type, :profileId, :name, :documentation, cast(:properties as jsonb), :parent)")
+                        + "(element_id, from_seq, concept_type, profile_id, name, documentation, properties) "
+                        + "values (:id, :seq, :type, :profileId, :name, :documentation, cast(:properties as jsonb))")
                 .param("id", ids.get(element.key()))
                 .param("seq", seq)
                 .param("type", element.conceptType())
@@ -410,7 +406,6 @@ class ModelGraphRepository {
                 .param("name", element.name())
                 .param("documentation", element.documentation())
                 .param("properties", json.writeValueAsString(element.properties()))
-                .param("parent", element.parentKey().map(ids::get).orElse(null))
                 .update();
     }
 

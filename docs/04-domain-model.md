@@ -97,7 +97,11 @@ Workspace ──1:1──> Model (граф) ──1:N──> Commit (линей�
 | `name` | Отображаемое имя, `Payment Service` |
 | `documentation` | Свободный текст |
 | `properties` | `Map<String, String>`, в БД `jsonb` |
-| `parent` | Содержащий элемент или null — даёт дерево вложенности |
+
+Поля `parent` **нет**: что чем содержится — связь Composition, как и всё остальное
+([ADR-0011](adr/0011-nesting-is-presentation.md)). Полем это было невидимо для «где используется»,
+не типизировалось как агрегация или назначение и заставляло все представления вкладывать одну и ту
+же пару одинаково.
 
 **`Relationship`** — ребро. `key`, `conceptType` (один из 11), `source`, `target` (ключи элементов), `name`, `properties`.
 
@@ -127,14 +131,13 @@ Workspace ──1:1──> Model (граф) ──1:N──> Commit (линей�
 
 `ModelGraph` — весь граф модели одного коммита в памяти. Загружается целиком: корпоративный ландшафт это тысячи элементов, не миллионы, поэтому команда применяется и проверяется на полной картине, а не на том, что вернул очередной запрос.
 
-**`ModelCommand`** — sealed-иерархия из восьми операций, единственный путь изменения:
+**`ModelCommand`** — sealed-иерархия, единственный путь изменения (плюс операции представлений):
 
 ```
-CreateElement(key, type, name, documentation, parent)
+CreateElement(key, type, name, documentation)
 RenameElement(key, name)
 SetElementDocumentation(key, documentation)
 SetElementProperty(key, property, value)      value = null удаляет
-MoveElement(key, parent)                      parent = null делает корневым
 DeleteElement(key)
 AddRelationship(key, type, source, target, name)
 DeleteRelationship(key)
@@ -142,7 +145,7 @@ DeleteRelationship(key)
 
 **`Violation`** — причина отказа: `code`, `subject`, `detail`. Коды: `relationship-not-permitted`, `unknown-type`, `unknown-subject`, `duplicate-key`, `containment-cycle`, `dangling-endpoint`, `not-applicable`.
 
-`ModelChange.apply` применяет команды к копии, собирает **все** нарушения, а не первое, и проверяет инварианты, которые не гарантирует ни одна отдельная команда: связи разрешены метамоделью, вложенность без циклов, нет висячих концов.
+`ModelChange.apply` применяет команды к копии, собирает **все** нарушения, а не первое, и проверяет инварианты, которые не гарантирует ни одна отдельная команда: связи разрешены метамоделью, Composition не образует циклов, нет висячих концов.
 
 ---
 

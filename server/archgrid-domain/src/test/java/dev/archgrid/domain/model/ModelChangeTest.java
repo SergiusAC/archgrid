@@ -169,22 +169,20 @@ class ModelChangeTest {
     }
 
     @Test
-    @DisplayName("containment that would make an element its own ancestor is refused")
+    @DisplayName("composition that would make an element its own ancestor is refused")
     void rejects_containment_cycles() {
-        ModelGraph base = ModelGraph.of(
-                List.of(
-                        Element.of(Slug.of("a"), "ApplicationComponent", "A"),
-                        new Element(
-                                Slug.of("b"),
-                                "ApplicationComponent",
-                                null,
-                                "B",
-                                null,
-                                java.util.Map.of(),
-                                Slug.of("a"))),
-                List.of());
+        ModelChange.Result built = apply(
+                ModelGraph.empty(),
+                ModelCommand.CreateElement.of("a", "ApplicationComponent", "A"),
+                ModelCommand.CreateElement.of("b", "ApplicationComponent", "B"),
+                ModelCommand.AddRelationship.of("a-holds-b", "Composition", "a", "b"));
+        assertThat(built.isSuccess()).isTrue();
 
-        ModelChange.Result result = apply(base, new ModelCommand.MoveElement(Slug.of("a"), Slug.of("b")));
+        // The rule outlived the field it used to be checked on: containment is a Composition row
+        // now (ADR-0011), and a part that owns its own whole is not an unusual model but an
+        // impossible one.
+        ModelChange.Result result =
+                apply(built.graph(), ModelCommand.AddRelationship.of("b-holds-a", "Composition", "b", "a"));
 
         assertThat(result.violations())
                 .extracting(Violation::code)
@@ -209,21 +207,22 @@ class ModelChangeTest {
     }
 
     @Test
-    @DisplayName("deleting a container refuses rather than silently taking the subtree with it")
-    void refuses_to_delete_an_element_that_still_contains_others() {
+    @DisplayName("deleting a container leaves what it contained in the repository")
+    void deleting_a_container_keeps_its_contents() {
         ModelChange.Result built = apply(
                 ModelGraph.empty(),
                 ModelCommand.CreateElement.of("system", "ApplicationComponent", "System"),
-                new ModelCommand.CreateElement(
-                        Slug.of("part"), "ApplicationComponent", "Part", null, Slug.of("system")));
+                ModelCommand.CreateElement.of("part", "ApplicationComponent", "Part"),
+                ModelCommand.AddRelationship.of("system-holds-part", "Composition", "system", "part"));
         assertThat(built.isSuccess()).isTrue();
 
         ModelChange.Result result = apply(built.graph(), new ModelCommand.DeleteElement(Slug.of("system")));
 
-        assertThat(result.violations()).singleElement().satisfies(violation -> {
-            assertThat(violation.code()).isEqualTo(Violation.Code.NOT_APPLICABLE.code());
-            assertThat(violation.detail()).contains("still contains 1 element(s)").contains("part");
-        });
+        // Containment is a relationship, not ownership of a row (ADR-0011): the Composition cannot
+        // survive the loss of an endpoint, and the part is an element in its own right.
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.graph().elements()).extracting(element -> element.key().value()).containsExactly("part");
+        assertThat(result.graph().relationships()).isEmpty();
     }
 
     @Test

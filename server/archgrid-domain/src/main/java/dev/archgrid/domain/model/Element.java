@@ -15,11 +15,15 @@ import java.util.Optional;
  * and deleting it from the model are different operations, and only the second one is this
  * record disappearing.
  *
+ * <p>It has no parent. What contains what is a Composition relationship like any other, and
+ * drawing one element inside another is how a single view chooses to present it (ADR-0011).
+ * As a field it was invisible to "where is this used", impossible to type as aggregation or
+ * assignment instead, and it forced every diagram to nest the same pair the same way.
+ *
  * @param conceptType always the <em>base</em> ArchiMate concept. A profiled element carries
  *     its profile in {@code profileName} and still validates as this concept, which is what
  *     keeps specialisation from widening what is permitted (ADR-0002).
  * @param profileName the specialisation applied, or null
- * @param parent the containing element, or null for a root
  */
 public record Element(
         Slug key,
@@ -27,8 +31,7 @@ public record Element(
         String profileName,
         String name,
         String documentation,
-        Map<String, String> properties,
-        Slug parent) {
+        Map<String, String> properties) {
 
     public static final int MAX_NAME_LENGTH = 200;
 
@@ -44,14 +47,11 @@ public record Element(
             throw new IllegalArgumentException(
                     "element name must be at most " + MAX_NAME_LENGTH + " characters: " + key);
         }
-        if (key.equals(parent)) {
-            throw new IllegalArgumentException("element cannot contain itself: " + key);
-        }
         properties = Collections.unmodifiableMap(new LinkedHashMap<>(properties));
     }
 
     public static Element of(Slug key, String conceptType, String name) {
-        return new Element(key, conceptType, null, name, null, Map.of(), null);
+        return new Element(key, conceptType, null, name, null, Map.of());
     }
 
     public Optional<String> profile() {
@@ -62,25 +62,17 @@ public record Element(
         return Optional.ofNullable(documentation);
     }
 
-    public Optional<Slug> parentKey() {
-        return Optional.ofNullable(parent);
-    }
-
     /** What the user calls this type: the profile where there is one, the concept otherwise. */
     public String displayType() {
         return profileName != null ? profileName : conceptType;
     }
 
     public Element withName(String newName) {
-        return new Element(key, conceptType, profileName, newName, documentation, properties, parent);
+        return new Element(key, conceptType, profileName, newName, documentation, properties);
     }
 
     public Element withDocumentation(String newDocumentation) {
-        return new Element(key, conceptType, profileName, name, newDocumentation, properties, parent);
-    }
-
-    public Element withParent(Slug newParent) {
-        return new Element(key, conceptType, profileName, name, documentation, properties, newParent);
+        return new Element(key, conceptType, profileName, name, newDocumentation, properties);
     }
 
     /** A null {@code value} removes the property, which is how the command surface expresses deletion. */
@@ -92,6 +84,6 @@ public record Element(
         } else {
             updated.put(property, value);
         }
-        return new Element(key, conceptType, profileName, name, documentation, updated, parent);
+        return new Element(key, conceptType, profileName, name, documentation, updated);
     }
 }

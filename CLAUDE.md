@@ -94,9 +94,11 @@ element may stand alone on the next view. What the nesting *means* is a separate
 editor offers to create a structural relationship; the relationship then lives in the model like
 any other and its line is merely hidden where the nesting already says it.
 
-`element.parent` still exists in the domain, in `move-element` and in the schema, and
-`RelationshipDerivation` still reads it as composition — so derivation leans on a field the UI no
-longer fills. That is the unfinished half of ADR-0011, not a design.
+`element.parent` is gone (migration V10): containment is a Composition row, `move-element` no
+longer exists, and derivation reads relationships only. The migration is written in Java because it
+has to consult the matrix — `move-element` never did, so real data held containment ArchiMate
+forbids, and writing that down as a relationship would leave a repository that rejects every
+subsequent command.
 
 ### Changes to a model are commands only (ADR-0004)
 
@@ -160,8 +162,10 @@ Two rules, along a path whose intermediate elements are all hidden: a structural
 the weakest link; a structural chain ending in one dependency or dynamic relationship derives
 that. Nothing derives past a dependency.
 
-**Containment counts as composition.** `element.parent` is ArchiMate composition written as a
-field, and derivation that ignored it would miss the case context views exist for.
+**Containment is a Composition row like any other** (ADR-0011), so the case context views exist
+for — a system whose parts talk to the outside — derives from the graph. It was a field once, read
+as a second kind of edge; when the canvas stopped writing that field, derivation went on reading it
+and answered from data nothing maintained.
 
 ### Persistence
 
