@@ -795,6 +795,11 @@ async function interactions(page) {
     await page.waitForTimeout(300)
   }
   await openMenu()
+  // A real click inside the menu, because selectOption sets a value without one — which is how a
+  // backdrop covering the whole popover went unnoticed: every check passed while every click in
+  // the menu was landing on the thing that dismisses it.
+  await page.locator('.ag-menu-popover label').click()
+  check('the menu survives a click inside it', (await page.locator('.ag-menu-popover').count()) === 1)
   const routerSelect = page.locator('.ag-router-select')
   check('the view opens on straight lines, as Archi does', (await routerSelect.inputValue()) === 'straight')
   await routerSelect.selectOption('orthogonal')
@@ -902,6 +907,10 @@ async function interactions(page) {
    * origin of every ordering trap this editor has hit. It is now a draft in the browser until
    * Save, which is what makes it survivable and what makes it obvious whether it is safe.
    */
+  // Start from saved rather than from whatever the earlier sections left behind: this is about
+  // the cycle, not about which check happened to drag something last.
+  await page.keyboard.press('Control+s')
+  await page.waitForTimeout(2500)
   const savedLabel = await page.getByRole('button', { name: /^(Save|Saved)/ }).textContent()
   check('a saved view says so', savedLabel?.trim() === 'Saved', savedLabel ?? '')
   const moved = await nodeAt(ledgerKey).locator('.ag-body').boundingBox()

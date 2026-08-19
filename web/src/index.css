@@ -1163,7 +1163,9 @@ body.ag-resizing {
 
 .ag-menu-popover {
   position: absolute;
-  z-index: 6;
+  /* Above the backdrop that closes it. At a lower z-index the backdrop covered the popover, so
+     every click inside the menu landed on the thing whose job is to dismiss it. */
+  z-index: 41;
   top: calc(100% + 4px);
   left: 0;
   min-width: 12rem;
