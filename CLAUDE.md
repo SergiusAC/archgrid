@@ -357,6 +357,10 @@ the screenshot**. Three real defects — double-wrapped markers, an empty minima
 menu falling off the screen edge — were invisible to every other check.
 - Integration tests are skipped when Docker is absent (`dev.archgrid.support.Docker`) so the
   build stays usable without it. A "skipped" IT locally is not a passing IT.
+- **A check that fails against code you can see is correct: confirm the dev server is serving it.**
+  `curl -s localhost:5173/src/editor/Editor.tsx | grep …`. Vite's watcher has missed an edit here,
+  and the result is a driver run testing the previous version of the file while the source on disk,
+  `tsc` and the linter all agree with you. Restart `npm run dev` before doubting the code.
 
 On Windows PowerShell, pass multi-line git commit messages via `git commit -F <file>`; native
 argument parsing mangles quotes inside here-strings.
