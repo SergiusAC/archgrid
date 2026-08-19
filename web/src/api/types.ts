@@ -145,6 +145,8 @@ export interface ViewDetail {
    * coordinates beside them (ADR-0011).
    */
   hidden: string[]
+  /** How the lines are routed here; empty for every connection nobody has bent. */
+  layoutLinks: LayoutLink[]
   /** Conditions on what this view draws. Versioned with its name and viewpoint. */
   filters: ViewFilter[]
   /** Members the filters leave out, named so a narrowed diagram cannot pass for the whole picture. */
@@ -179,6 +181,18 @@ export interface Usage {
  * layer" is a documentation decision. Removing it brings the elements back where they were, because
  * they never left.
  */
+/**
+ * Where a line bends on one view.
+ *
+ * Presentation, like the coordinates it travels with: a relationship is the same relationship
+ * whichever way its line is drawn, and the same one is drawn on many diagrams — each with its own
+ * boxes in the way (ADR-0003).
+ */
+export interface LayoutLink {
+  relationship: string
+  vertices: { x: number; y: number }[]
+}
+
 export interface ViewFilter {
   kind: 'layer' | 'property'
   /** The property key; unused for a layer. */

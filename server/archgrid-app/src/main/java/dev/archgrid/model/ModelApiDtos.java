@@ -187,6 +187,8 @@ final class ModelApiDtos {
             List<RelationshipResponse> relationships,
             List<DerivedRelationshipResponse> derived,
             List<LayoutNodeResponse> layout,
+            /** How the lines are routed here. Empty for every connection nobody has bent. */
+            List<LayoutLinkResponse> layoutLinks,
             /** Conditions on what this view draws. Versioned with its name and viewpoint (ADR-0003). */
             List<FilterDto> filters,
             /** Members the filters leave out — named, so a narrowed diagram cannot pass for a full one. */
@@ -249,6 +251,13 @@ final class ModelApiDtos {
     record LayoutNodeResponse(
             String element, double x, double y, Double width, Double height, String parent, Integer z) {}
 
+    /** Where a line bends on this view. Presentation, like the coordinates it travels with. */
+    record LayoutLinkResponse(String relationship, List<PointDto> vertices) {}
+
+    record LayoutLinkRequest(@NotBlank String relationship, List<PointDto> vertices) {}
+
+    record PointDto(double x, double y) {}
+
     record LayoutNodeRequest(
             @NotBlank String element, double x, double y, Double width, Double height, String parent, Integer z) {}
 
@@ -257,7 +266,11 @@ final class ModelApiDtos {
      * `router` and `hidden` are optional: a plain drag saves coordinates and must not carry an
      * opinion about routing, or about which lines this view leaves out.
      */
-    record LayoutRequest(@Valid List<LayoutNodeRequest> nodes, String router, List<String> hidden) {}
+    record LayoutRequest(
+            @Valid List<LayoutNodeRequest> nodes,
+            @Valid List<LayoutLinkRequest> links,
+            String router,
+            List<String> hidden) {}
 
     record FolderRequest(@NotBlank @Size(max = 120) String name, String parent) {}
 

@@ -219,6 +219,13 @@ class GraphController {
                                 node.elementKey(), node.x(), node.y(), node.width(), node.height(),
                                 node.parentKey(), node.z()))
                         .toList(),
+                layout.links(graphId, viewKey).stream()
+                        .map(link -> new ModelApiDtos.LayoutLinkResponse(
+                                link.relationshipKey(),
+                                link.vertices().stream()
+                                        .map(point -> new ModelApiDtos.PointDto(point.x(), point.y()))
+                                        .toList()))
+                        .toList(),
                 view.filters().stream().map(ModelApiDtos.FilterDto::from).toList(),
                 // Named rather than counted: a diagram narrowed by a filter must not read as the
                 // whole picture, and "3 hidden" without saying which is an invitation to guess.
@@ -332,6 +339,20 @@ class GraphController {
                                 node.element(), node.x(), node.y(), node.width(), node.height(),
                                 node.parent(), node.z()))
                         .toList());
+        if (request.links() != null) {
+            layout.saveLinks(
+                    graphId,
+                    viewKey,
+                    request.links().stream()
+                            .map(link -> new dev.archgrid.model.ViewLayoutRepository.LayoutLink(
+                                    link.relationship(),
+                                    (link.vertices() == null ? List.<ModelApiDtos.PointDto>of() : link.vertices())
+                                            .stream()
+                                                    .map(point -> new dev.archgrid.model.ViewLayoutRepository.Point(
+                                                            point.x(), point.y()))
+                                                    .toList()))
+                            .toList());
+        }
         // Only when asked. A drag saves coordinates several times a second and must not carry an
         // opinion about routing with it.
         if (request.router() != null) {

@@ -43,11 +43,15 @@ export interface Geometry {
   parents: Record<string, string | null>
   /** Which element is drawn over which. */
   order: Record<string, number>
+  /** Where each line bends, by relationship key. Empty for lines nobody has routed by hand. */
+  vertices: Record<string, Position[]>
 }
 
 interface CanvasProps {
   elements: CanvasElement[]
   links: CanvasLink[]
+  /** Where each line bends, by relationship key: what the view was saved with. */
+  vertices: Record<string, Position[]>
   selected: string[]
   /** The element whose name is being typed in place, straight after creation. */
   editingKey: string | null
@@ -326,6 +330,9 @@ export default function Canvas(props: CanvasProps) {
   const appliedGeometry = useRef(-1)
   // Which element currently carries the resize grip, so it is not rebuilt on every render.
   const toolsOn = useRef<string | null>(null)
+  // The geometryVersion whose routing has been written into the links, for the same reason
+  // `appliedGeometry` exists for the elements.
+  const appliedRouting = useRef(-1)
   // Space turns a drag into a pan, the gesture every canvas editor uses for it.
   const spaceHeld = useRef(false)
   const [ready, setReady] = useState(false)
@@ -345,7 +352,12 @@ export default function Canvas(props: CanvasProps) {
       positions[key] = element.position()
       sizes[key] = element.size()
     }
-    return { positions, sizes, parents, order }
+    const vertices: Record<string, Position[]> = {}
+    for (const link of graph.current?.getLinks() ?? []) {
+      // Every line, bent or not: an empty list is how "this one was straightened again" travels.
+      vertices[String(link.id)] = link.vertices().map((point) => ({ x: point.x, y: point.y }))
+    }
+    return { positions, sizes, parents, order, vertices }
   }, [])
 
   // ------------------------------------------------------------------ mount
@@ -494,6 +506,15 @@ export default function Canvas(props: CanvasProps) {
     view.on('element:pointerup', () => {
       interacting.current = false
       latest.current.onGeometryEnd(geometry())
+    })
+
+    // Dragging a bendpoint changes the line and nothing else, so it reports on its own rather than
+    // through the element handlers. Guarded by `applying`, or writing the stored routing back into
+    // the graph would come straight back out as if the user had drawn it.
+    model.on('change:vertices', () => {
+      if (!applying.current) {
+        latest.current.onGeometry(geometry())
+      }
     })
 
     // -------------------------------------------------------------- connecting
@@ -829,6 +850,7 @@ export default function Canvas(props: CanvasProps) {
     if (!model || !ready) {
       return
     }
+    applying.current = true
     const wanted = new Set(props.links.map((link) => link.key))
     for (const cell of model.getLinks()) {
       if (!wanted.has(String(cell.id))) {
@@ -905,11 +927,22 @@ export default function Canvas(props: CanvasProps) {
           },
         },
       ])
+      // Routing comes from props on the same terms geometry does: when the line is new, or when
+      // something above the canvas says the arrangement changed. Applying it on every render would
+      // fight the hand that is dragging a bendpoint right now.
+      if (!existing || props.geometryVersion !== appliedRouting.current) {
+        const stored = props.vertices[link.key]
+        if (stored) {
+          cell.vertices(stored)
+        }
+      }
       if (!existing) {
         cell.addTo(model)
       }
     }
-  }, [props.links, props.router, props.selectedLink, ready])
+    applying.current = false
+    appliedRouting.current = props.geometryVersion
+  }, [props.links, props.router, props.selectedLink, props.vertices, props.geometryVersion, ready])
 
   // The minimap is a second paper over the same graph, so it needs its own refit whenever the
   // content changes — otherwise it shows the top-left corner at full size, which reads as a

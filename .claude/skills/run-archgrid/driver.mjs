@@ -967,6 +967,54 @@ async function interactions(page) {
   await page.screenshot({ path: `${outDir}/39-saving.png` })
 
   /*
+   * --- a line keeps the way it was drawn ---
+   *
+   * Bendpoints are how an architect routes a connection round a box instead of through it, and
+   * they were lost the moment the view was reopened: the layout stored where the boxes are and
+   * nothing about the lines between them.
+   */
+  // Bendpoints belong to straight lines: the orthogonal router computes its own corners, which is
+  // why the tools that make them are only offered on the straight one.
+  await openMenu()
+  await page.locator('.ag-router-select').selectOption('straight')
+  await page.waitForTimeout(1500)
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
+
+  const pathOf = () =>
+    page.evaluate(() => {
+      const path = document.querySelector('.ag-paper .ag-link:not(.ag-link-derived) .ag-link-line')
+      return path ? (path.getAttribute('d') ?? '').replace(/\s+/g, ' ').trim() : null
+    })
+  const linkPoint = await page.evaluate(() => {
+    const path = document.querySelector('.ag-paper .ag-link:not(.ag-link-derived) .ag-link-line')
+    if (!path) return null
+    const middle = path.getPointAtLength(path.getTotalLength() / 2)
+    const at = new DOMPoint(middle.x, middle.y).matrixTransform(path.getScreenCTM())
+    return { x: at.x, y: at.y }
+  })
+  if (linkPoint) {
+    const straight = await pathOf()
+    // The bendpoint tool appears on hover, and dragging the middle of the line makes one.
+    await page.mouse.move(linkPoint.x, linkPoint.y)
+    await page.waitForTimeout(400)
+    await page.mouse.down()
+    await page.mouse.move(linkPoint.x + 90, linkPoint.y + 70, { steps: 10 })
+    await page.mouse.up()
+    await page.waitForTimeout(800)
+    const bent = await pathOf()
+    check('a line can be routed by hand', bent !== straight, `${straight} -> ${bent}`)
+
+    await page.keyboard.press('Control+s')
+    await page.waitForTimeout(2500)
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await openRepository(page)
+    await page.locator('.ag-tree-item', { hasText: viewName }).first().click()
+    await page.waitForTimeout(3500)
+    check('and keeps that route across a reload', (await pathOf()) === bent, `${bent} -> ${await pathOf()}`)
+  }
+
+  /*
    * --- a saved view reopens as saved ---
    *
    * Reported from use: save a view, come back to it, and the old arrangement is there. The draft

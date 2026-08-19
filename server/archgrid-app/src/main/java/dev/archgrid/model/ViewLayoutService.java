@@ -43,6 +43,16 @@ class ViewLayoutService {
     }
 
     @Transactional(readOnly = true)
+    List<ViewLayoutRepository.LayoutLink> links(UUID graphId, String viewKey) {
+        return repository.links(graphId, viewKey);
+    }
+
+    @Transactional
+    void saveLinks(UUID graphId, String viewKey, List<ViewLayoutRepository.LayoutLink> links) {
+        repository.saveLinks(graphId, viewKey, links);
+    }
+
+    @Transactional(readOnly = true)
     List<String> hidden(UUID graphId, String viewKey) {
         return repository.hidden(graphId, viewKey);
     }

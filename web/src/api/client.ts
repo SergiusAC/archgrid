@@ -5,6 +5,7 @@ import type {
   Folder,
   Graph,
   ConnectionRouter,
+  LayoutLink,
   LayoutNode,
   MetamodelDto,
   ModelElement,
@@ -117,13 +118,19 @@ export function createApi(token: string) {
       nodes: LayoutNode[],
       router?: ConnectionRouter,
       hidden?: string[],
+      links?: LayoutLink[],
     ) =>
       request<void>(`/api/workspaces/${encode(workspace)}/views/${encode(view)}/layout`, token, {
         method: 'PUT',
         // `router` and `hidden` only when they are being sent: a drag saves coordinates several
         // times a second and must not carry an opinion about routing, or about which lines this
         // view leaves out.
-        body: JSON.stringify({ nodes, ...(router ? { router } : {}), ...(hidden ? { hidden } : {}) }),
+        body: JSON.stringify({
+          nodes,
+          ...(links ? { links } : {}),
+          ...(router ? { router } : {}),
+          ...(hidden ? { hidden } : {}),
+        }),
       }),
 
     folders: (workspace: string, kind: 'elements' | 'views') =>

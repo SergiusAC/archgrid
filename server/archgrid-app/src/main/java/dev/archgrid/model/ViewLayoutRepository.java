@@ -3,9 +3,11 @@ package dev.archgrid.model;
 import java.sql.ResultSet;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Coordinates.
@@ -18,9 +20,11 @@ import org.springframework.stereotype.Repository;
 class ViewLayoutRepository {
 
     private final JdbcClient jdbc;
+    private final ObjectMapper json;
 
-    ViewLayoutRepository(JdbcClient jdbc) {
+    ViewLayoutRepository(JdbcClient jdbc, ObjectMapper json) {
         this.jdbc = jdbc;
+        this.json = json;
     }
 
     /** `parentKey` is the element this one is drawn inside on this view — presentation only. */
@@ -72,6 +76,93 @@ class ViewLayoutRepository {
                 .param("modelId", modelId)
                 .param("viewKey", viewKey)
                 .update();
+    }
+
+    /** A bendpoint. Model coordinates, the same ones the nodes are placed in. */
+    record Point(double x, double y) {}
+
+    /** How one connection is routed on one view: the points the line is dragged through. */
+    record LayoutLink(String relationshipKey, List<Point> vertices) {}
+
+    /**
+     * The routing of every line on this view.
+     *
+     * <p>A relationship is the same relationship whichever way its line is drawn, so this belongs
+     * with the coordinates rather than with the model — and per view, because the same
+     * relationship is drawn on many diagrams and each has its own boxes in the way.
+     */
+    List<LayoutLink> links(UUID modelId, String viewKey) {
+        List<LayoutLink> links = new ArrayList<>();
+        jdbc.sql(
+                        """
+                        select r."key" as relationship_key, l.vertices::text as vertices
+                        from view_layout_link l
+                        join view v on v.id = l.view_id
+                        join relationship r on r.id = l.relationship_id
+                        where v.model_id = :modelId and v."key" = :viewKey
+                        """)
+                .param("modelId", modelId)
+                .param("viewKey", viewKey)
+                .query((ResultSet rs, int rowNum) -> {
+                    links.add(new LayoutLink(rs.getString("relationship_key"), readVertices(rs.getString("vertices"))));
+                    return null;
+                })
+                .list();
+        return links;
+    }
+
+    /**
+     * Replaces the routing of the lines named, and clears the routing of those sent empty.
+     *
+     * <p>Sent whole rather than as a change, like everything else in the layout: the client holds
+     * the arrangement and the server stores what it is told.
+     */
+    void saveLinks(UUID modelId, String viewKey, List<LayoutLink> links) {
+        for (LayoutLink link : links) {
+            if (link.vertices().isEmpty()) {
+                jdbc.sql(
+                                """
+                                delete from view_layout_link l
+                                using view v, relationship r
+                                where l.view_id = v.id and l.relationship_id = r.id
+                                  and v.model_id = :modelId and v."key" = :viewKey
+                                  and r."key" = :relationshipKey
+                                """)
+                        .param("modelId", modelId)
+                        .param("viewKey", viewKey)
+                        .param("relationshipKey", link.relationshipKey())
+                        .update();
+                continue;
+            }
+            // Silently ignores a relationship the model no longer has, for the same reason `save`
+            // ignores an element that has left the view: losing a bendpoint to a race costs a drag.
+            jdbc.sql(
+                            """
+                            insert into view_layout_link (view_id, relationship_id, vertices)
+                            select v.id, r.id, cast(:vertices as jsonb)
+                            from view v
+                            join relationship r on r.model_id = v.model_id and r."key" = :relationshipKey
+                            where v.model_id = :modelId and v."key" = :viewKey
+                            on conflict (view_id, relationship_id)
+                            do update set vertices = excluded.vertices, updated_at = now()
+                            """)
+                    .param("vertices", json.writeValueAsString(link.vertices()))
+                    .param("relationshipKey", link.relationshipKey())
+                    .param("modelId", modelId)
+                    .param("viewKey", viewKey)
+                    .update();
+        }
+    }
+
+    private List<Point> readVertices(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        List<Map<String, Double>> points = json.readValue(raw, new tools.jackson.core.type.TypeReference<>() {});
+        return points.stream()
+                .filter(point -> point.get("x") != null && point.get("y") != null)
+                .map(point -> new Point(point.get("x"), point.get("y")))
+                .toList();
     }
 
     /**

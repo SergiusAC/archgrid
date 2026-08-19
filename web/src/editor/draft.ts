@@ -25,6 +25,8 @@ export interface LayoutDraft {
   order: Record<string, number>
   /** Relationships this view declines to draw. Also presentation (ADR-0011). */
   hidden: string[]
+  /** Where each line bends, by relationship key. Presentation as much as the coordinates are. */
+  vertices: Record<string, { x: number; y: number }[]>
   router: ConnectionRouter
   /** When it was last touched, so a stale draft can be reasoned about later. */
   at: number

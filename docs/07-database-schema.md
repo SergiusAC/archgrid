@@ -1,12 +1,12 @@
 # 07. Схема данных
 
-Текущее состояние базы: миграции `V1`–`V11`, PostgreSQL 18. Диаграмма **производна** от миграций,
+Текущее состояние базы: миграции `V1`–`V12`, PostgreSQL 18. Диаграмма **производна** от миграций,
 а не наоборот: источник правды — `server/archgrid-app/src/main/resources/db/migration/` и
 Java-миграция `V10`, и при расхождении прав тот каталог.
 
 Служебная таблица `flyway_schema_history` опущена. Столбцы `created_at`/`updated_at` на диаграмме
 не показаны — они есть у `workspace`, `model`, `model_commit`, `profile`, `folder`,
-`view_layout_node`, `view_hidden_relationship` и ничего не решают.
+`view_layout_node`, `view_layout_link`, `view_hidden_relationship` и ничего не решают.
 
 ## Ядро: репозиторий и его история
 
@@ -111,6 +111,8 @@ erDiagram
     view ||--o{ view_layout_node : "координаты — вне коммитов"
     view_layout_node }o--|| element : ""
     view_layout_node }o--o| element : "parent_element_id — вложенность здесь"
+    view ||--o{ view_layout_link : "изломы линий — вне коммитов"
+    view_layout_link }o--|| relationship : ""
     view ||--o{ view_hidden_relationship : "линии, которых это представление не рисует"
     view_hidden_relationship }o--|| relationship : ""
 
@@ -144,6 +146,11 @@ erDiagram
         double height
         uuid parent_element_id FK
         integer z "порядок наложения"
+    }
+    view_layout_link {
+        uuid view_id PK
+        uuid relationship_id PK
+        jsonb vertices "точки, через которые ведёт линия"
     }
     view_hidden_relationship {
         uuid view_id PK
@@ -197,7 +204,7 @@ workspace держит **ровно один связный граф** ([ADR-000
 между проверкой и записью ([ADR-0004](adr/0004-commands-and-versioning-from-day-one.md)).
 
 **Не версионируемое — оформление.** `view_layout_node` (координаты, размеры, вложенность на этом
-представлении, `z`), `view_hidden_relationship`, `view.router`. Перетаскивание прямоугольника не
+представлении, `z`), `view_layout_link` (изломы линий), `view_hidden_relationship`, `view.router`. Перетаскивание прямоугольника не
 порождает коммит, иначе история модели становится нечитаемой
 ([ADR-0003](adr/0003-model-view-layout-separation.md)). Последняя запись побеждает; цена проигранной
 гонки — движение мышью, а не информация.

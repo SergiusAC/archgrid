@@ -196,6 +196,14 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   const [hidden, setHidden] = useState<string[]>([])
   const hiddenRef = useRef<string[]>([])
   /**
+   * Where each line bends, by relationship key.
+   *
+   * Layout, not model: the relationship is the same relationship whichever way its line is drawn,
+   * and the same one is drawn on other views with other boxes in the way (ADR-0003).
+   */
+  const [vertices, setVertices] = useState<Record<string, Position[]>>({})
+  const verticesRef = useRef<Record<string, Position[]>>({})
+  /**
    * Which view the geometry in `positions` belongs to.
    *
    * State, not a ref, and that is the whole point. Both the effect that loads a view's layout and
@@ -239,6 +247,10 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     hiddenRef.current = next
     setHidden(next)
   }, [])
+  const rememberVertices = useCallback((next: Record<string, Position[]>) => {
+    verticesRef.current = next
+    setVertices(next)
+  }, [])
   // Panel widths are pure presentation, so they live in the browser and nowhere else.
   const [leftWidth, setLeftWidth] = useState(240)
   const [rightWidth, setRightWidth] = useState(288)
@@ -276,12 +288,17 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     rememberParents(draft ? { ...storedParents, ...draft.parents } : storedParents)
     rememberOrder(draft ? { ...storedOrder, ...draft.order } : storedOrder)
     rememberHidden(draft?.hidden ?? view.data.hidden)
+    const storedVertices: Record<string, Position[]> = {}
+    for (const link of view.data.layoutLinks) {
+      storedVertices[link.relationship] = link.vertices
+    }
+    rememberVertices(draft ? { ...storedVertices, ...draft.vertices } : storedVertices)
     setRouter(draft?.router ?? view.data.router)
     routerRef.current = draft?.router ?? view.data.router
     setDirty(draft != null)
     setGeometryFor(view.data.key)
     setGeometryVersion((version) => version + 1)
-  }, [view.data, workspace, rememberParents, rememberOrder, rememberHidden])
+  }, [view.data, workspace, rememberParents, rememberOrder, rememberHidden, rememberVertices])
 
   const refresh = useCallback(async () => {
     await Promise.all([
@@ -366,7 +383,14 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   /** Coordinates go to their own endpoint, never through a command (ADR-0003). */
   const saveLayout = useMutation({
     mutationFn: (geometry: Geometry & { router: ConnectionRouter; hidden: string[] }) =>
-      api.saveLayout(workspace, viewKey!, layoutNodes(geometry), geometry.router, geometry.hidden),
+      api.saveLayout(
+        workspace,
+        viewKey!,
+        layoutNodes(geometry),
+        geometry.router,
+        geometry.hidden,
+        layoutLinks(geometry),
+      ),
     /**
      * Tells the cache what was just written.
      *
@@ -392,6 +416,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           ? {
               ...current,
               layout: layoutNodes(geometry),
+              layoutLinks: layoutLinks(geometry),
               hidden: geometry.hidden,
               router: geometry.router,
             }
@@ -424,6 +449,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         parents: nextParents ?? parentsRef.current,
         order: orderRef.current,
         hidden: hiddenRef.current,
+        vertices: verticesRef.current,
         router: nextRouter ?? routerRef.current,
       }
       setDirty(true)
@@ -455,6 +481,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       parents: parentsRef.current,
       order: orderRef.current,
       hidden: hiddenRef.current,
+      vertices: verticesRef.current,
       router,
     })
     clearDraft(workspace, viewKey)
@@ -642,9 +669,10 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       setPositions(next.positions)
       setSizes(next.sizes)
       rememberOrder(next.order)
+      rememberVertices(next.vertices)
       rememberChange(next.positions, next.sizes)
     },
-    [rememberChange, rememberOrder],
+    [rememberChange, rememberOrder, rememberVertices],
   )
 
   /**
@@ -1760,6 +1788,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
                 setDropping(null)
                 setDropAt(null)
               }}
+              vertices={vertices}
               restack={restack}
               exportAs={exportAs}
               onExportFailed={(text) => setMessage({ kind: 'error', text })}
@@ -1948,6 +1977,11 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
 }
 
 /** Geometry as the layout endpoint wants it. Missing sizes fall back to the default box. */
+/** Only the lines that have been bent; a straight one needs no row and gets none. */
+function layoutLinks({ vertices }: Geometry) {
+  return Object.entries(vertices).map(([relationship, points]) => ({ relationship, vertices: points }))
+}
+
 function layoutNodes({ positions, sizes, parents, order }: Geometry) {
   return Object.entries(positions).map(([element, position]) => ({
     element,
