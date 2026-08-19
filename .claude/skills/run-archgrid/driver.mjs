@@ -754,6 +754,49 @@ async function interactions(page) {
   )
   await page.screenshot({ path: `${outDir}/34-notation.png` })
 
+  /*
+   * --- a view reopens exactly as it was left ---
+   *
+   * Reported from use: make changes, reopen the view, and the elements had been rearranged. Both
+   * the effect that loads a view's layout and the one that places unplaced elements run in the
+   * same commit, so the second saw the *previous* view's coordinates, called every element of the
+   * new view unplaced, laid them on the grid and saved that over the real layout.
+   */
+  const geometryOf = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('.ag-paper .ag-node')]
+        .map((node) => {
+          const body = node.querySelector('.ag-body')
+          return `${node.getAttribute('data-key')}@${body.getAttribute('width')}x${body.getAttribute('height')}`
+        })
+        .sort()
+        .join(' '),
+    )
+  const transformsOf = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('.ag-paper .ag-node')]
+        .map((node) => `${node.getAttribute('data-key')}${node.getAttribute('transform')}`)
+        .sort()
+        .join(' '),
+    )
+
+  const asLeft = { sizes: await geometryOf(), places: await transformsOf() }
+  // Away to another view and back, which is what "reopened it" means.
+  await page.locator('.ag-tree-item').first().click()
+  await page.waitForTimeout(2500)
+  await page.locator('.ag-tree-item', { hasText: viewName }).first().click()
+  await page.waitForTimeout(3500)
+  const reopened = await transformsOf()
+  check(
+    'a view reopens with its elements where they were',
+    reopened === asLeft.places,
+    reopened === asLeft.places ? '' : `
+      left: ${asLeft.places}
+      back: ${reopened}`,
+  )
+  check('and at the sizes they were given', (await geometryOf()) === asLeft.sizes, 'sizes')
+  await page.screenshot({ path: `${outDir}/37-reopened.png` })
+
   report()
 }
 

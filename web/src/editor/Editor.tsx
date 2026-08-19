@@ -148,6 +148,20 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    * quietly put it back to null. State lags by a render; this does not.
    */
   const parentsRef = useRef<Record<string, string | null>>({})
+  /**
+   * Which view the geometry in `positions` belongs to.
+   *
+   * State, not a ref, and that is the whole point. Both the effect that loads a view's layout and
+   * the effect that places anything unplaced run in the same commit; a ref would already hold the
+   * new key while `positions` still held the previous view's coordinates, which is exactly the
+   * trap being guarded against. State changes with them, so placement waits for the commit where
+   * the coordinates are this view's own.
+   *
+   * Without the guard, opening a second view found every one of its elements "missing", laid them
+   * out on the grid and saved that over the real layout — so a view reopened later came back
+   * scrambled, and the damage was permanent.
+   */
+  const [geometryFor, setGeometryFor] = useState<string | null>(null)
   const rememberParents = useCallback((next: Record<string, string | null>) => {
     parentsRef.current = next
     setParents(next)
@@ -176,6 +190,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     setPositions(stored)
     setSizes(storedSizes)
     rememberParents(storedParents)
+    setGeometryFor(view.data.key)
     setGeometryVersion((version) => version + 1)
   }, [view.data, rememberParents])
 
@@ -292,7 +307,8 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
 
   // Place anything on the view that has no stored coordinates yet.
   useEffect(() => {
-    if (!view.data || onView.length === 0) {
+    // Only once the geometry in hand is this view's own. Anything else is the previous view's.
+    if (!view.data || onView.length === 0 || geometryFor !== view.data.key) {
       return
     }
     const missing = onView.filter((element) => !positions[element.key])
@@ -319,7 +335,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       setPositions(next)
       scheduleLayoutSave(next)
     }
-  }, [view.data, onView, positions, sizes, scheduleLayoutSave])
+  }, [view.data, onView, positions, sizes, geometryFor, scheduleLayoutSave])
 
   // Fitting waits for real coordinates. Auto-layout resolves through ELK after the canvas mounts,
   // and refitting before that opens the view zoomed into an empty corner.
