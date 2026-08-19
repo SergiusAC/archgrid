@@ -1220,6 +1220,16 @@ body.ag-resizing {
   box-shadow: 0 6px 20px rgb(0 0 0 / 0.18);
 }
 
+/* Two buttons that belong together, side by side inside the menu. */
+.ag-menu-row {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.ag-menu-row button {
+  flex: 1;
+}
+
 /* A view that leaves a line out says so here, in the same weight as the rest of the toolbar. */
 .ag-hidden-count {
   font-size: 0.78rem;

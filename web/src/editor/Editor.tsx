@@ -69,6 +69,8 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    * own gesture (ADR-0008 — the repository is the thing, diagrams are windows on it).
    */
   const [clipboard, setClipboard] = useState<string[]>([])
+  const [exportAs, setExportAs] = useState<{ format: 'svg' | 'png'; name: string; token: number } | null>(null)
+  const exportToken = useRef(0)
   const [hiddenOpen, setHiddenOpen] = useState(false)
   const [sidebar, setSidebar] = useState<'views' | 'palette' | 'repository'>('views')
   // The element whose name is being typed in place, straight after creation.
@@ -1369,6 +1371,23 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
                       <option value="orthogonal">Orthogonal</option>
                     </select>
                   </label>
+                  {/* The diagram as a file: needed by any document that embeds it, and the only
+                      way a view leaves the product before phase 5 brings documentation. */}
+                  <div className="ag-menu-row">
+                    {(['svg', 'png'] as const).map((format) => (
+                      <button
+                        key={format}
+                        type="button"
+                        onClick={() => {
+                          setMenuOpen(false)
+                          exportToken.current += 1
+                          setExportAs({ format, name: view.data?.name ?? 'diagram', token: exportToken.current })
+                        }}
+                      >
+                        Export {format.toUpperCase()}
+                      </button>
+                    ))}
+                  </div>
                   <button
                     type="button"
                     onClick={() => {
@@ -1514,6 +1533,8 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
                 setDropAt(null)
               }}
               restack={restack}
+              exportAs={exportAs}
+              onExportFailed={(text) => setMessage({ kind: 'error', text })}
               fitToken={fitToken}
               geometryVersion={geometryVersion}
             />

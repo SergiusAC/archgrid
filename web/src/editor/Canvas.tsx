@@ -2,6 +2,7 @@ import * as joint from '@joint/core'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { ConnectionRouter, Layer } from '../api/types.ts'
+import { downloadDiagram } from './export.ts'
 import { GRID, NEST_PADDING } from './layout.ts'
 import { notationFor } from './notation.ts'
 import { bodyShape, iconFor, iconPlacement } from './shapes.ts'
@@ -108,6 +109,14 @@ interface CanvasProps {
    * inventing z values that could put a container over its own contents.
    */
   restack: { keys: string[]; to: 'front' | 'back'; token: number } | null
+  /**
+   * A request to write the diagram to a file.
+   *
+   * Performed here because the picture is here: the SVG on screen is the export, minus the
+   * editor's own furniture. What comes back out knows nothing about JointJS.
+   */
+  exportAs: { format: 'svg' | 'png'; name: string; token: number } | null
+  onExportFailed: (message: string) => void
   /** Changing this refits the content; the caller changes it when a view opens. */
   fitToken: string | null
   /**
@@ -969,6 +978,25 @@ export default function Canvas(props: CanvasProps) {
     // Read back rather than assume: JointJS decides the final numbers.
     latest.current.onGeometry(geometry())
   }, [props.restack, geometry, ready])
+
+  // ------------------------------------------------------------------ export
+  useEffect(() => {
+    const view = paper.current
+    const model = graph.current
+    if (!view || !model || !ready || !props.exportAs) {
+      return
+    }
+    // The whole content, not `graph.getBBox()`: that measures elements, and a line that routes
+    // above the topmost box — or its label — would be cropped off the exported image.
+    const box = view.getContentArea()
+    if (!box || box.width === 0 || box.height === 0) {
+      latest.current.onExportFailed('There is nothing on this view to export yet.')
+      return
+    }
+    void downloadDiagram(view.svg, box, props.exportAs.name, props.exportAs.format).catch(
+      (error: unknown) => latest.current.onExportFailed(error instanceof Error ? error.message : String(error)),
+    )
+  }, [props.exportAs, ready])
 
   // ------------------------------------------------------------------ fit
   useEffect(() => {

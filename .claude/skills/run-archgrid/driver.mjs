@@ -17,7 +17,7 @@
  * user-profile default. See SKILL.md.
  */
 
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync, statSync } from 'node:fs'
 import { argv, env, exit } from 'node:process'
 
 // Resolved relative to this file so the driver works from any working directory.
@@ -1257,6 +1257,41 @@ async function interactions(page) {
     `${beforePaste} -> ${await repositorySize()}`,
   )
   await page.screenshot({ path: `${outDir}/44-paste.png` })
+
+  /*
+   * --- the diagram as a file ---
+   *
+   * A view has to be able to leave the product: every document that embeds architecture embeds a
+   * picture of it. The export is the SVG on screen minus the editor's furniture, carrying the
+   * stylesheet, because nothing that opens the file will consult ours.
+   */
+  // Back to the view with containers and lines on it: exporting one lone box proves very little.
+  await page.locator('.ag-tree-item', { hasText: viewName }).first().click()
+  await page.waitForTimeout(3000)
+  for (const format of ['svg', 'png']) {
+    await openMenu()
+    const downloading = page.waitForEvent('download', { timeout: 15000 })
+    await page.locator('.ag-menu-popover button', { hasText: `Export ${format.toUpperCase()}` }).click()
+    const file = await downloading
+    const saved = `${outDir}/export.${format}`
+    await file.saveAs(saved)
+    const size = statSync(saved).size
+    if (format === 'svg') {
+      const text = readFileSync(saved, 'utf8')
+      check(
+        'exported SVG carries the diagram and its styles',
+        text.includes('<svg') && text.includes('ag-node') && text.includes('.ag-body'),
+        `${size} bytes`,
+      )
+      check(
+        'and none of the editor furniture',
+        !text.includes('ag-marquee') || !text.includes('joint-tools-layer'),
+      )
+    } else {
+      const magic = readFileSync(saved).subarray(0, 8).toString('hex')
+      check('exported PNG is a PNG', magic === '89504e470d0a1a0a' && size > 1000, `${magic}, ${size} bytes`)
+    }
+  }
 
   report()
 }
