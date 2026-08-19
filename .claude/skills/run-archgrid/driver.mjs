@@ -950,6 +950,18 @@ async function interactions(page) {
    * A palette that has gone monochrome, a notice that cannot be dismissed, a rename that commits
    * because you clicked elsewhere, a relationship you can read but not remove.
    */
+  // The tree is a tree: rows walk with the arrow keys, as they do in a file browser.
+  await page.getByRole('tab', { name: /^Views/ }).click()
+  await page.waitForTimeout(400)
+  await page.locator('.ag-tree-row').first().focus()
+  await page.keyboard.press('ArrowDown')
+  await page.waitForTimeout(200)
+  const walked = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.ag-tree-row')]
+    return rows.indexOf(document.activeElement)
+  })
+  check('the tree walks with the arrow keys', walked === 1, `focus on row ${walked}`)
+
   await page.getByRole('tab', { name: /^Palette/ }).click()
   await page.waitForTimeout(400)
   check(

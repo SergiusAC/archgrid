@@ -769,104 +769,125 @@ code {
 .ag-tree-toolbar {
   display: flex;
   justify-content: flex-end;
-  margin-bottom: 0.25rem;
+  padding: 0 0 0.35rem;
 }
 
+/*
+ * A file tree, drawn as one flat list of identical rows.
+ *
+ * The old one nested a list inside a list per level, which meant a folder row and an item row
+ * were different shapes with different indentation rules — the reason it read as a heap rather
+ * than a hierarchy.
+ */
 .ag-tree-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
 }
 
-.ag-tree-list li {
+.ag-tree-row {
   display: flex;
   align-items: center;
   gap: 0.25rem;
-}
-
-.ag-tree-folder {
-  display: block !important;
-}
-
-.ag-tree-folder-row {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  font-size: 0.78rem;
-  color: var(--muted);
-  padding: 0.1rem 0;
-}
-
-.ag-tree-folder-name {
-  flex: 1;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ag-tree-toggle {
-  border: none;
-  background: none;
-  padding: 0 0.15rem;
-  color: var(--muted);
+  height: 1.55rem;
+  padding-right: 0.25rem;
+  border-radius: 0.2rem;
   cursor: pointer;
+  user-select: none;
 }
 
-.ag-tree-tiny {
-  font-size: 0.72rem;
-  padding: 0;
+.ag-tree-row:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
-.ag-tree-item {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  border: none;
-  background: none;
-  padding: 0.15rem 0.3rem;
-  border-radius: 0.25rem;
-  text-align: left;
+.ag-tree-row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 
-.ag-tree-item:hover {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-
-.ag-tree-selected .ag-tree-item {
+.ag-tree-selected {
   background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
+/* One per level: the line a child is followed back along to whatever holds it. */
+.ag-tree-guide {
+  flex: 0 0 auto;
+  width: 12px;
+  align-self: stretch;
+  border-left: 1px solid var(--line);
+}
+
+.ag-tree-twisty {
+  flex: 0 0 auto;
+  width: 12px;
+  font-size: 0.6rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.ag-tree-icon {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+}
+
+.ag-tree-folder > .ag-tree-icon {
+  fill: color-mix(in srgb, var(--muted) 22%, transparent);
+}
+
 .ag-tree-label {
-  font-size: 0.85rem;
+  flex: 1;
+  min-width: 0;
+  font-size: 0.82rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 100%;
+}
+
+.ag-tree-folder > .ag-tree-label {
+  font-weight: 600;
 }
 
 .ag-tree-meta {
+  flex: 0 0 auto;
   font-size: 0.68rem;
   color: var(--muted);
 }
 
-/* The folder picker stays out of the way until the row is hovered. */
-.ag-tree-move {
-  width: 1.6rem;
-  font-size: 0.7rem;
-  padding: 0 0.1rem;
-  opacity: 0.25;
-  border-color: transparent;
+/* A tree is for reading; the controls appear when a row is being worked on, not before. */
+.ag-tree-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  opacity: 0;
 }
 
-.ag-tree-list li:hover .ag-tree-move {
+.ag-tree-row:hover .ag-tree-actions,
+.ag-tree-row:focus-within .ag-tree-actions {
   opacity: 1;
-  border-color: var(--line);
+}
+
+.ag-tree-tiny {
+  border: none;
+  background: none;
+  padding: 0 0.2rem;
+  font-size: 0.75rem;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.ag-tree-tiny:hover {
+  color: var(--accent);
+}
+
+.ag-tree-move {
+  padding: 0 0.15rem;
+  font-size: 0.65rem;
+  max-width: 4.5rem;
 }
 
 .ag-tree-onview {
