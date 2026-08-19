@@ -82,7 +82,13 @@ export async function autoLayout(
   const laid = await (await elk()).layout(graph)
   const positions: Record<string, Position> = {}
   for (const child of laid.children ?? []) {
-    positions[child.id] = { x: child.x ?? 0, y: child.y ?? 0 }
+    // Rounded to the grid, like everything else that places an element. ELK answers in whatever
+    // coordinates its algorithm arrives at, and an element half a step off the lattice is one the
+    // alignment guides can never quite agree with.
+    positions[child.id] = {
+      x: Math.round((child.x ?? 0) / GRID) * GRID,
+      y: Math.round((child.y ?? 0) / GRID) * GRID,
+    }
   }
   return positions
 }

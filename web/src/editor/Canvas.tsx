@@ -102,13 +102,14 @@ const MIN_WIDTH = 120
 const MIN_HEIGHT = 60
 
 /**
- * How near counts as aligned, in model units.
+ * How near counts as aligned: exactly the grid step.
  *
- * Wider than the grid step on purpose. Dragging snaps to the grid first, so an element can only
- * land on multiples of it — with a tolerance below the step, a near-miss is always exactly one
- * step away and the guide never fires. The guide has to be able to reach across it.
+ * It has to reach a whole step, because dragging snaps to the grid first and a near miss is
+ * therefore always exactly one step away — a smaller tolerance never fires at all. It must not
+ * reach further either: everything now lands on the lattice, so anything beyond one step is a
+ * deliberate gap and grabbing at it is the editor arguing with the user.
  */
-const GUIDE_TOLERANCE = 12
+const GUIDE_TOLERANCE = GRID
 
 /** The six lines of a box worth lining up with, and how to read each one. */
 const GUIDE_AXES = [
@@ -346,7 +347,7 @@ export default function Canvas(props: CanvasProps) {
        * The help does not describe how Archi computes the anchor, so this is our own reading of
        * the requirement rather than a port of a documented algorithm.
        */
-      defaultAnchor: { name: 'midSide', args: { padding: 0 } },
+      defaultAnchor: { name: 'perpendicular', args: { padding: 0 } },
       embeddingMode: true,
       findParentBy: 'bbox',
       frontParentOnly: false,

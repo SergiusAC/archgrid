@@ -1071,3 +1071,64 @@ body.ag-resizing {
   pointer-events: none;
   user-select: none;
 }
+
+/* A notice can be dismissed: one that cannot is still taking up room after it stopped meaning anything. */
+.ag-banner {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.ag-banner span {
+  flex: 1;
+}
+
+.ag-banner-close {
+  border: none;
+  background: none;
+  padding: 0 0.25rem;
+  font-size: 1.1rem;
+  line-height: 1;
+  color: inherit;
+  opacity: 0.7;
+}
+
+.ag-banner-close:hover {
+  opacity: 1;
+}
+
+/*
+ * The palette carries its layer colour.
+ *
+ * It is the one place a type is seen before it exists, and it had gone monochrome when the canvas
+ * moved to SVG and the layer rules stopped painting a background. A tinted body with a solid edge
+ * rather than a flat fill: the layer vars are pale in light mode and dark in the dark one, so a
+ * full-strength background would leave the label unreadable in one of them.
+ */
+.ag-palette-item {
+  border-left: 4px solid var(--layer, var(--layer-other));
+  background: color-mix(in srgb, var(--layer, var(--layer-other)) 22%, var(--surface));
+}
+
+.ag-palette-item:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--layer, var(--layer-other)) 45%, var(--surface));
+}
+
+/* Save and Discard appear only once something has been typed. */
+.ag-props-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.ag-props-remove {
+  border: none;
+  background: none;
+  padding: 0 0.3rem;
+  font-size: 0.95rem;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.ag-props-remove:hover:not(:disabled) {
+  color: var(--error);
+}

@@ -360,6 +360,20 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     await queryClient.invalidateQueries({ queryKey: ['view', workspace] })
   }, [viewKey, workspace, queryClient])
 
+  /**
+   * A notice that has served its purpose goes away by itself; a refusal does not.
+   *
+   * "View saved" is worth a glance and nothing more, while an error is the only account of why
+   * something did not happen — clearing it on a timer would hide the one message worth keeping.
+   */
+  useEffect(() => {
+    if (message?.kind !== 'info') {
+      return
+    }
+    const timer = window.setTimeout(() => setMessage(null), 4000)
+    return () => window.clearTimeout(timer)
+  }, [message])
+
   // Place anything on the view that has no stored coordinates yet.
   useEffect(() => {
     // Only once the geometry in hand is this view's own. Anything else is the previous view's.
@@ -1156,7 +1170,14 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           </span>
         </div>
 
-        {message && <div className={`ag-banner ag-banner-${message.kind}`}>{message.text}</div>}
+        {message && (
+          <div className={`ag-banner ag-banner-${message.kind}`} role="status">
+            <span>{message.text}</span>
+            <button type="button" className="ag-banner-close" onClick={() => setMessage(null)} aria-label="Dismiss">
+              ×
+            </button>
+          </div>
+        )}
 
         <div className="ag-canvas">
           {viewKey ? (
@@ -1247,6 +1268,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           })
         }
         onSelect={(key) => setSelected([key])}
+        onDeleteRelationship={deleteRelationship}
       />
       )}
 

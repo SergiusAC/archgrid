@@ -140,16 +140,42 @@ async function smoke(page) {
   mkdirSync(outDir, { recursive: true })
   const shot = (name) => page.screenshot({ path: `${outDir}/${name}.png` })
 
-  let nodes = await page.locator('.ag-paper .ag-node').count()
-  if (nodes === 0) {
-    log('view is empty, adding two elements so there is something to look at')
-    await page.getByRole('tab', { name: /^Palette/ }).click()
-    for (const label of ['Application Component', 'System Software']) {
-      await page.locator('.ag-palette-item', { hasText: new RegExp(`^${label}$`) }).first().click()
-      await page.waitForTimeout(2000)
-    }
-    nodes = await page.locator('.ag-paper .ag-node').count()
+  /*
+   * Its own view, with its own two elements and a line between them.
+   *
+   * It used to open whichever view came first and assert on whatever was in it. That view has
+   * accumulated the leavings of every run ever made, so "no two nodes overlap" was reporting on
+   * elements placed by a driver months of runs ago — a check that fails for reasons unrelated to
+   * the change under test teaches you to ignore it.
+   */
+  page.once('dialog', (dialog) => dialog.accept(`smoke ${process.pid}`))
+  await page.locator('.ag-block-button').first().click()
+  await page.waitForTimeout(2500)
+  await page.getByRole('tab', { name: /^Palette/ }).click()
+  for (const label of ['Application Component', 'System Software']) {
+    await page.locator('.ag-palette-item', { hasText: new RegExp(`^${label}$`) }).first().click()
+    await page.waitForTimeout(2000)
+    await page.keyboard.press('Escape')
   }
+  await page.waitForTimeout(1500)
+
+  // A relationship, so the notation checks have something to read.
+  const keys = await page.evaluate(() =>
+    [...document.querySelectorAll('.ag-paper .ag-node')].map((node) => node.getAttribute('data-key')),
+  )
+  const bodyOf = (key) => page.locator(`.ag-paper .ag-node[data-key="${key}"] .ag-body`)
+  await page.getByRole('button', { name: /^Connect/ }).click()
+  for (const key of keys.slice(0, 2)) {
+    const box = await bodyOf(key).boundingBox()
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+    await page.waitForTimeout(400)
+  }
+  if (await page.locator('.ag-picker').count()) {
+    await page.keyboard.press('Enter')
+  }
+  await page.waitForTimeout(2500)
+
+  const nodes = await page.locator('.ag-paper .ag-node').count()
   const edges = await page.locator('.ag-paper .ag-link').count()
   await shot('01-canvas')
   check('canvas renders nodes', nodes > 0, `${nodes} nodes, ${edges} edges`)
@@ -287,7 +313,8 @@ async function smoke(page) {
   const renamed = `Renamed ${Date.now() % 100000}`
   const nameField = page.locator('.ag-properties .ag-field input').first()
   await nameField.fill(renamed)
-  await nameField.blur()
+  // Saving is a press now, not a lost focus: a click elsewhere used to be an entry in the history.
+  await page.locator('.ag-props-actions button', { hasText: 'Save' }).click()
   await page.waitForTimeout(2500)
   const onCanvasName = await page.locator('.ag-node .ag-node-label').first().textContent()
   check('renaming from the properties panel reaches the canvas', onCanvasName?.includes('Renamed'), onCanvasName ?? '')
@@ -867,6 +894,64 @@ async function interactions(page) {
     (await page.getByRole('button', { name: /^(Save|Saved)/ }).textContent())?.trim() === 'Saved',
   )
   await page.screenshot({ path: `${outDir}/39-saving.png` })
+
+  /*
+   * --- the small things that grate every day ---
+   *
+   * A palette that has gone monochrome, a notice that cannot be dismissed, a rename that commits
+   * because you clicked elsewhere, a relationship you can read but not remove.
+   */
+  await page.getByRole('tab', { name: /^Palette/ }).click()
+  await page.waitForTimeout(400)
+  check(
+    'the palette carries its layer colours',
+    await page.evaluate(() => {
+      const item = document.querySelector('.ag-palette-item')
+      if (!item) return false
+      const border = getComputedStyle(item).borderLeftColor
+      return border !== '' && border !== 'rgba(0, 0, 0, 0)'
+    }),
+  )
+
+  // Only if it is hidden: the toggle is a toggle, and closing it here is the opposite of the aim.
+  if ((await page.locator('.ag-properties').count()) === 0) {
+    await page.locator('.ag-splitter-right .ag-splitter-toggle').click()
+    await page.waitForTimeout(400)
+  }
+  await clickNode(ledgerKey, 'centre')
+  await page.waitForSelector('.ag-properties input', { timeout: 5000 })
+
+  // Typing offers the choice; discarding puts it back rather than committing anything.
+  const nameField = page.locator('.ag-properties .ag-field input').first()
+  const originalName = await nameField.inputValue()
+  await nameField.fill(`${originalName} edited`)
+  await page.waitForTimeout(200)
+  check('editing a name offers Save and Discard', (await page.locator('.ag-props-actions button').count()) === 2)
+  await page.locator('.ag-props-actions button', { hasText: 'Discard' }).click()
+  await page.waitForTimeout(500)
+  check('Discard puts the name back', (await nameField.inputValue()) === originalName, originalName)
+
+  // A relationship can be removed from where it is read.
+  const listed = await page.locator('.ag-props-usage li').count()
+  if (listed > 0) {
+    page.once('dialog', (dialog) => dialog.accept())
+    await page.locator('.ag-props-usage .ag-props-remove').first().click()
+    await page.waitForTimeout(3000)
+    check(
+      'a relationship can be deleted from the properties panel',
+      (await page.locator('.ag-props-usage li').count()) === listed - 1,
+      `${listed} -> ${await page.locator('.ag-props-usage li').count()}`,
+    )
+  }
+
+  // And a notice can be got rid of.
+  await page.keyboard.press('Control+s')
+  await page.waitForTimeout(1500)
+  if (await page.locator('.ag-banner').count()) {
+    await page.locator('.ag-banner-close').first().click()
+    await page.waitForTimeout(300)
+    check('a notice can be dismissed', (await page.locator('.ag-banner').count()) === 0)
+  }
 
   report()
 }

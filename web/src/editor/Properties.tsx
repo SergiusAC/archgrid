@@ -14,6 +14,8 @@ interface PropertiesProps {
   onRename: (key: string, name: string) => void
   onDocumentation: (key: string, documentation: string) => void
   onProperty: (key: string, property: string, value: string | null) => void
+  /** From here as well as from the canvas: this is where an element's relationships are read. */
+  onDeleteRelationship: (key: string) => void
   onSelect: (key: string) => void
 }
 
@@ -34,6 +36,7 @@ export default function Properties({
   onRename,
   onDocumentation,
   onProperty,
+  onDeleteRelationship,
   onSelect,
 }: PropertiesProps) {
   const [name, setName] = useState('')
@@ -68,6 +71,7 @@ export default function Properties({
   const used = relationships.filter(
     (relationship) => relationship.source === element.key || relationship.target === element.key,
   )
+  const edited = name !== element.name || documentation !== (element.documentation ?? '')
   const attributeKeys = new Set((profile?.attributes ?? []).map((attribute) => attribute.key))
   const extraProperties = Object.entries(element.properties).filter(([key]) => !attributeKeys.has(key))
 
@@ -79,21 +83,16 @@ export default function Properties({
       </div>
       <code className="ag-props-key">{element.key}</code>
 
+      {/*
+        A press, not a lost focus.
+        Committing on blur meant a click anywhere else was already an entry in the history, and
+        there was no way back from a rename except to type the old name again. The command still
+        goes at once when Save is pressed and is validated as always (ADR-0004) — what changed is
+        what counts as the moment of decision.
+      */}
       <label className="ag-field">
         <span>Name</span>
-        <input
-          value={name}
-          disabled={busy}
-          onChange={(event) => setName(event.target.value)}
-          onBlur={() => {
-            const trimmed = name.trim()
-            if (trimmed && trimmed !== element.name) {
-              onRename(element.key, trimmed)
-            } else if (!trimmed) {
-              setName(element.name)
-            }
-          }}
-        />
+        <input value={name} disabled={busy} onChange={(event) => setName(event.target.value)} />
       </label>
 
       <label className="ag-field">
@@ -103,13 +102,38 @@ export default function Properties({
           value={documentation}
           disabled={busy}
           onChange={(event) => setDocumentation(event.target.value)}
-          onBlur={() => {
-            if (documentation !== (element.documentation ?? '')) {
-              onDocumentation(element.key, documentation)
-            }
-          }}
         />
       </label>
+
+      {edited && (
+        <div className="ag-props-actions">
+          <button
+            type="button"
+            disabled={busy || !name.trim()}
+            onClick={() => {
+              const trimmed = name.trim()
+              if (trimmed && trimmed !== element.name) {
+                onRename(element.key, trimmed)
+              }
+              if (documentation !== (element.documentation ?? '')) {
+                onDocumentation(element.key, documentation)
+              }
+            }}
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setName(element.name)
+              setDocumentation(element.documentation ?? '')
+            }}
+          >
+            Discard
+          </button>
+        </div>
+      )}
 
       {profile && profile.attributes.length > 0 && (
         <section className="ag-props-group">
@@ -177,6 +201,16 @@ export default function Properties({
                 <span className="ag-muted">{relationship.type}</span> {outgoing ? '→' : '←'}{' '}
                 <button type="button" className="ag-link" onClick={() => other && onSelect(other.key)}>
                   {other?.name ?? '?'}
+                </button>
+                <button
+                  type="button"
+                  className="ag-props-remove"
+                  disabled={busy}
+                  title="Delete this relationship from the model"
+                  aria-label={`Delete the ${relationship.type}`}
+                  onClick={() => onDeleteRelationship(relationship.key)}
+                >
+                  ×
                 </button>
               </li>
             )
