@@ -33,7 +33,6 @@ export interface CanvasLink {
   label: string
   type: string
   /** Implied by a chain through hidden elements, so drawn faintly and named as such. */
-  derived: boolean
 }
 
 export interface Geometry {
@@ -879,7 +878,7 @@ export default function Canvas(props: CanvasProps) {
         class: 'ag-link-line',
         stroke: 'currentColor',
         strokeWidth: 1.6,
-        strokeDasharray: link.derived ? '3 5' : (notation.dash ?? 'none'),
+        strokeDasharray: notation.dash ?? 'none',
       }
       if (notation.markerStart) {
         line.sourceMarker = notation.markerStart
@@ -898,7 +897,6 @@ export default function Canvas(props: CanvasProps) {
         root: {
           class:
             `joint-cell joint-link joint-theme-default ag-link` +
-            (link.derived ? ' ag-link-derived' : '') +
             (props.selectedLink === link.key ? ' ag-link-selected' : ''),
           'data-key': link.key,
         },

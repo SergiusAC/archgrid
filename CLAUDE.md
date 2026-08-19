@@ -154,9 +154,14 @@ than deleting them.
 
 ### Derived relationships (phase 4)
 
-Computed by `RelationshipDerivation`, **never stored**: storing them would make the history
-unreadable and go stale the moment anything on the path changed. A view gets them as a separate
-list, each carrying the path it came through so a diagram can answer "why is this line here".
+**Views do not draw them** (ADR-0013): a diagram shows what the model states and nothing else. The
+decision is the product owner's, taken against the recommendation, and the cost is written down in
+the ADR along with how to reverse it — a context view of a system whose parts talk to the outside
+now shows no line to the outside.
+
+The engine stays and is not dead code: `C4Projection` needs it (a neighbour rolled up to its system
+has nothing else to draw a line from), and impact analysis will. Computed, **never stored**: storing
+would make the history unreadable and go stale the moment anything on the path changed.
 
 Two rules, along a path whose intermediate elements are all hidden: a structural chain derives
 the weakest link; a structural chain ending in one dependency or dynamic relationship derives

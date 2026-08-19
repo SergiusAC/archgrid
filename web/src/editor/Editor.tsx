@@ -654,32 +654,26 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     [hidden, view.data],
   )
 
-  const canvasLinks: CanvasLink[] = useMemo(() => {
-    const explicit = (view.data?.relationships ?? [])
-      .filter((r) => !expressedByNesting(r) && !hidden.includes(r.key))
-      .map((relationship) => ({
-        key: relationship.key,
-        source: relationship.source,
-        target: relationship.target,
-        label: relationship.name ?? relationship.type,
-        type: relationship.type,
-        derived: false,
-      }))
-
-    // Derived lines keep the notation of the relationship they stand for but are drawn faintly
-    // and labelled as such. An architect must be able to see at a glance which lines the model
-    // actually asserts and which merely follow from it.
-    const derived = (view.data?.derived ?? []).map((relationship) => ({
-      key: relationship.key,
-      source: relationship.source,
-      target: relationship.target,
-      label: `${relationship.type} (derived)`,
-      type: relationship.type,
-      derived: true,
-    }))
-
-    return [...explicit, ...derived]
-  }, [view.data, expressedByNesting, hidden])
+  /**
+   * One kind of line, and it stands for a relationship the model states (ADR-0013).
+   *
+   * Implied relationships used to be drawn faintly beside them. They are not drawn at all now,
+   * which is a decision with a cost — a context view of a system whose parts talk to the outside
+   * shows no line to the outside — and the cost is written down where the decision is.
+   */
+  const canvasLinks: CanvasLink[] = useMemo(
+    () =>
+      (view.data?.relationships ?? [])
+        .filter((r) => !expressedByNesting(r) && !hidden.includes(r.key))
+        .map((relationship) => ({
+          key: relationship.key,
+          source: relationship.source,
+          target: relationship.target,
+          label: relationship.name ?? relationship.type,
+          type: relationship.type,
+        })),
+    [view.data, expressedByNesting, hidden],
+  )
 
   /** Live geometry from a drag or resize. The save is debounced; the state is not. */
   const onGeometry = useCallback(

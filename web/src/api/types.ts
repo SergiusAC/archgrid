@@ -133,10 +133,12 @@ export interface ViewDetail {
   viewpoint: string
   folder: string | null
   elements: ModelElement[]
-  /** Computed: those with both endpoints on the view. Never stored as membership. */
+  /**
+   * Computed: those with both endpoints on the view. Never stored as membership.
+   *
+   * Stated relationships only. A view does not draw what the model merely implies (ADR-0013).
+   */
   relationships: ModelRelationship[]
-  /** Implied by chains through elements this view does not show. Also never stored. */
-  derived: DerivedRelationship[]
   layout: LayoutNode[]
   /**
    * Relationships this view declines to draw.

@@ -41,6 +41,7 @@ Architecture Knowledge Platform: архитектурный граф как sour
 | [0010](adr/0010-canvas-library.md) | Канвас на JointJS вместо React Flow | accepted |
 | [0011](adr/0011-nesting-is-presentation.md) | Вложенность — приём представления, а не поле элемента | accepted |
 | [0012](adr/0012-archimate-exchange-format.md) | Обмен — ArchiMate Model Exchange File Format, с названной ценой | accepted |
+| [0013](adr/0013-no-derived-connections-on-views.md) | Представление рисует только то, что модель утверждает | accepted |
 
 ## Ключевые вехи
 

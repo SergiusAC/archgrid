@@ -199,21 +199,10 @@ class GraphController {
                 graph.relationshipsAmong(shown).stream()
                         .map(ModelApiDtos.RelationshipResponse::from)
                         .toList(),
-                // Computed, never stored: what the model implies between the elements on this
-                // view through elements it does not show. A context diagram that omitted these
-                // would be lying by omission.
-                RelationshipDerivation.derive(graph, shown, metamodel).stream()
-                        .map(derived -> new ModelApiDtos.DerivedRelationshipResponse(
-                                derived.key(),
-                                derived.type().concept(),
-                                derived.source().value(),
-                                derived.target().value(),
-                                derived.via().stream()
-                                        .map(hidden -> graph.element(hidden)
-                                                .map(dev.archgrid.domain.model.Element::name)
-                                                .orElseGet(hidden::value))
-                                        .toList()))
-                        .toList(),
+                // A view draws what the model states and nothing else: implied relationships are
+                // not sent here, by decision (ADR-0013). The engine that computes them is intact
+                // and still answers for the C4 projection, where rolling a neighbour up to its
+                // system leaves nothing else to draw the line from.
                 layout.load(graphId, viewKey).stream()
                         .map(node -> new ModelApiDtos.LayoutNodeResponse(
                                 node.elementKey(), node.x(), node.y(), node.width(), node.height(),

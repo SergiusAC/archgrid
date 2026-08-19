@@ -983,11 +983,11 @@ async function interactions(page) {
 
   const pathOf = () =>
     page.evaluate(() => {
-      const path = document.querySelector('.ag-paper .ag-link:not(.ag-link-derived) .ag-link-line')
+      const path = document.querySelector('.ag-paper .ag-link .ag-link-line')
       return path ? (path.getAttribute('d') ?? '').replace(/\s+/g, ' ').trim() : null
     })
   const linkPoint = await page.evaluate(() => {
-    const path = document.querySelector('.ag-paper .ag-link:not(.ag-link-derived) .ag-link-line')
+    const path = document.querySelector('.ag-paper .ag-link .ag-link-line')
     if (!path) return null
     const middle = path.getPointAtLength(path.getTotalLength() / 2)
     const at = new DOMPoint(middle.x, middle.y).matrixTransform(path.getScreenCTM())
@@ -1240,7 +1240,7 @@ async function interactions(page) {
   // element's box would miss the stroke and land on the canvas.
   const pointOnLink = () =>
     page.evaluate(() => {
-      const path = document.querySelector('.ag-paper .ag-link:not(.ag-link-derived) .ag-link-line')
+      const path = document.querySelector('.ag-paper .ag-link .ag-link-line')
       if (!path) return null
       const middle = path.getPointAtLength(path.getTotalLength() / 2)
       const at = new DOMPoint(middle.x, middle.y).matrixTransform(path.getScreenCTM())
@@ -1486,12 +1486,11 @@ async function interactions(page) {
   await page.screenshot({ path: `${outDir}/45-where-used.png` })
 
   /*
-   * --- what a container's parts do, the container is understood to do ---
+   * --- one kind of line, and it is one the model states ---
    *
-   * The case context views exist for, and the one that quietly broke: containment became a
-   * relationship on the canvas (ADR-0011) while derivation went on reading the old field, so a
-   * nested element's dependencies stopped lifting to the box that holds it. Nest, take the child
-   * off the view, and the line has to reappear at the level above — derived, and saying so.
+   * Implied relationships are not drawn (ADR-0013). Nesting still works and still offers to state
+   * the relationship it expresses; what no longer happens is a faint line appearing at the level
+   * above when the child leaves the view.
    */
   const holder = await nodeAt(system).locator('.ag-body').boundingBox()
   const held = await nodeAt(ledgerKey).locator('.ag-body').boundingBox()
@@ -1506,166 +1505,20 @@ async function interactions(page) {
   await page.locator('.ag-picker button', { hasText: 'Composition' }).first().click()
   await page.waitForTimeout(3000)
 
+  const linesBeforeHiding = await page.locator('.ag-paper .ag-link').count()
   await clickNode(ledgerKey)
   await page.keyboard.press('Delete')
   await page.waitForTimeout(3000)
-  const derived = await page.evaluate(() =>
-    [...document.querySelectorAll('.ag-paper .ag-link-derived')].map(
-      (link) => link.querySelector('.ag-link-label')?.textContent ?? '',
-    ),
-  )
+  // The decision, and its price: taking the child off the view takes its line with it, and
+  // nothing appears at the level above (ADR-0013). This used to derive a Serving from the
+  // container. A view draws what the model states, and the model states nothing here.
   check(
-    'a dependency of a nested element lifts to its container',
-    derived.some((label) => label.includes('Serving')),
-    derived.join(' | ') || 'no derived lines',
+    'taking a nested element off the view leaves no implied line behind',
+    (await page.locator('.ag-paper .ag-link-derived').count()) === 0 &&
+      (await page.locator('.ag-paper .ag-link').count()) < linesBeforeHiding,
+    `${linesBeforeHiding} -> ${await page.locator('.ag-paper .ag-link').count()}`,
   )
-  await page.screenshot({ path: `${outDir}/46-derived.png` })
-
-  /*
-   * --- a derived line keeps the way it was drawn, too ---
-   *
-   * Reported from use. The routing table keyed its rows by a foreign key into `relationship`, and
-   * a derived line has no row there — its key is computed. The editor accepted the bendpoints, sent
-   * them, and the insert matched nothing: dropped without a word.
-   */
-  const derivedPath = () =>
-    page.evaluate(() => {
-      const path = document.querySelector('.ag-paper .ag-link-derived .ag-link-line')
-      return path ? (path.getAttribute('d') ?? '').replace(/\s+/g, ' ').trim() : null
-    })
-  const derivedAt = await page.evaluate(() => {
-    const path = document.querySelector('.ag-paper .ag-link-derived .ag-link-line')
-    if (!path) return null
-    const middle = path.getPointAtLength(path.getTotalLength() / 2)
-    const at = new DOMPoint(middle.x, middle.y).matrixTransform(path.getScreenCTM())
-    return { x: at.x, y: at.y }
-  })
-  if (derivedAt) {
-    const wasStraight = await derivedPath()
-    await page.mouse.move(derivedAt.x, derivedAt.y)
-    await page.waitForTimeout(400)
-    await page.mouse.down()
-    await page.mouse.move(derivedAt.x - 110, derivedAt.y + 60, { steps: 10 })
-    await page.mouse.up()
-    await page.waitForTimeout(800)
-    const bentDerived = await derivedPath()
-    check('a derived line can be routed by hand', bentDerived !== wasStraight, `${wasStraight} -> ${bentDerived}`)
-
-    await page.keyboard.press('Control+s')
-    await page.waitForTimeout(2500)
-    await page.reload({ waitUntil: 'domcontentloaded' })
-    await openRepository(page)
-    await page.locator('.ag-tree-item', { hasText: viewName }).first().click()
-    await page.waitForTimeout(3500)
-    check(
-      'and a derived line keeps that route across a reload',
-      (await derivedPath()) === bentDerived,
-      `${bentDerived} -> ${await derivedPath()}`,
-    )
-  }
-
-  /*
-   * --- a view can be narrowed without losing anything ---
-   *
-   * A filter is a condition on what the view draws, never on what belongs to it (ADR-0003), and it
-   * is applied on the server so that the lines lift through what is no longer drawn. Which is why
-   * clearing it puts every box back exactly where it was.
-   */
-  const boxesOf = () =>
-    page.evaluate(() =>
-      Object.fromEntries(
-        [...document.querySelectorAll('.ag-paper .ag-node')].map((node) => [
-          node.getAttribute('data-key'),
-          node.getAttribute('transform'),
-        ]),
-      ),
-    )
-  const unfiltered = await boxesOf()
-  await openMenu()
-  await page.locator('.ag-filter-layers button', { hasText: 'business' }).click()
-  await page.waitForTimeout(3000)
-  const narrowed = await boxesOf()
-  check(
-    'filtering to a layer draws only that layer',
-    Object.keys(narrowed).length > 0 && Object.keys(narrowed).length < Object.keys(unfiltered).length,
-    `${Object.keys(unfiltered).length} -> ${Object.keys(narrowed).length}`,
-  )
-  check(
-    'and says what it is leaving out',
-    (await page.locator('.ag-filter-foot').textContent())?.includes('left out'),
-    (await page.locator('.ag-filter-foot').textContent())?.slice(0, 80) ?? 'no note',
-  )
-  await page.screenshot({ path: `${outDir}/49-filtered.png` })
-
-  await page.locator('.ag-filter-foot .ag-link').click()
-  await page.waitForTimeout(3000)
-  const restored = await boxesOf()
-  check(
-    'clearing it brings every element back where it was',
-    JSON.stringify(restored) === JSON.stringify(unfiltered),
-    `${Object.keys(restored).length} of ${Object.keys(unfiltered).length}`,
-  )
-  await page.keyboard.press('Escape')
-
-  /*
-   * --- the same graph, read as C4 ---
-   *
-   * The product's second claim after "the repository is the source of truth": one graph, several
-   * notations. Nothing is stored for it — whether Payment System is a system or a container is
-   * depth relative to the focus (ADR-0007) — and what C4 cannot draw is named rather than dropped.
-   */
-  const c4From = async (key, level) => {
-    const box = await nodeAt(key).locator('.ag-body').boundingBox()
-    await page.mouse.click(box.x + box.width / 2, box.y + 14, { button: 'right' })
-    await page.waitForSelector('.ag-context-c4', { timeout: 5000 })
-    await page.locator('.ag-context-c4 button', { hasText: level }).click()
-    await page.waitForTimeout(4000)
-  }
-
-  await c4From(system, 'System Context')
-  const contextView = await page.locator('.ag-view-name').textContent()
-  check('a C4 context view is created from an element', contextView?.includes('System Context'), contextView ?? '')
-  const contextKeys = await page.evaluate(() =>
-    [...document.querySelectorAll('.ag-paper .ag-node')].map((node) => node.getAttribute('data-key')),
-  )
-  check(
-    'and shows the system without its insides',
-    contextKeys.includes(system) && !contextKeys.includes(api),
-    contextKeys.join(' '),
-  )
-  check(
-    'and says what C4 has no form for',
-    (await page.locator('.ag-banner').textContent())?.includes('no form in C4'),
-    (await page.locator('.ag-banner').textContent())?.slice(0, 120) ?? 'no banner',
-  )
-  await page.screenshot({ path: `${outDir}/47-c4-context.png` })
-
-  await page.locator('.ag-tree-item', { hasText: viewName }).first().click()
-  await page.waitForTimeout(3000)
-  await c4From(system, 'Container')
-  const containerKeys = await page.evaluate(() =>
-    [...document.querySelectorAll('.ag-paper .ag-node')].map((node) => node.getAttribute('data-key')),
-  )
-  check(
-    'a container view opens the system one level down',
-    containerKeys.includes(system) && containerKeys.includes(api),
-    containerKeys.join(' '),
-  )
-  const insideBoundary = await page.evaluate((keys) => {
-    const box = (key) => {
-      const body = document.querySelector(`.ag-paper .ag-node[data-key="${key}"] .ag-body`)
-      return body ? body.getBoundingClientRect() : null
-    }
-    const outer = box(keys.system)
-    const inner = box(keys.api)
-    if (!outer || !inner) return false
-    return inner.left >= outer.left && inner.right <= outer.right && inner.top >= outer.top && inner.bottom <= outer.bottom
-  }, { system, api })
-  check('and draws the container inside the boundary, as C4 does', insideBoundary)
-  await page.screenshot({ path: `${outDir}/48-c4-container.png` })
-
-  await page.locator('.ag-tree-item', { hasText: viewName }).first().click()
-  await page.waitForTimeout(3000)
+  await page.screenshot({ path: `${outDir}/46-nesting.png` })
 
   // Back to the view with containers and lines on it: exporting one lone box proves very little.
   await page.locator('.ag-tree-item', { hasText: viewName }).first().click()

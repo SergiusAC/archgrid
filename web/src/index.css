@@ -569,15 +569,6 @@ code {
   stroke: none;
 }
 
-/* Drawn faintly: an architect must see which lines the model asserts and which merely follow. */
-.ag-link-derived {
-  opacity: 0.6;
-}
-
-.ag-link-derived .ag-link-label {
-  font-style: italic;
-}
-
 /* ---------------------------------------------------------------- canvas furniture */
 
 .ag-controls {

@@ -177,6 +177,7 @@ final class ModelApiDtos {
      * A view with everything needed to draw it.
      *
      * <p>Relationships are computed rather than stored: those with both endpoints on the view.
+     * Only stated ones — a view does not draw what the model merely implies (ADR-0013).
      */
     record ViewResponse(
             String key,
@@ -185,7 +186,6 @@ final class ModelApiDtos {
             String folder,
             List<ElementResponse> elements,
             List<RelationshipResponse> relationships,
-            List<DerivedRelationshipResponse> derived,
             List<LayoutNodeResponse> layout,
             /** How the lines are routed here. Empty for every connection nobody has bent. */
             List<LayoutLinkResponse> layoutLinks,
