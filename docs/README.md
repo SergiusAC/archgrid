@@ -38,6 +38,9 @@ Architecture Knowledge Platform: архитектурный граф как sour
 | [0007](adr/0007-c4-projection.md) | C4 — проекция поверх ArchiMate, а не второй набор типов | accepted |
 | [0008](adr/0008-one-graph-per-workspace.md) | Workspace — это репозиторий: один связный граф | accepted |
 | [0009](adr/0009-views-and-folders.md) | Представления как первоклассная сущность; папки — организация, а не смысл | accepted |
+| [0010](adr/0010-canvas-library.md) | Канвас на JointJS вместо React Flow | accepted |
+| [0011](adr/0011-nesting-is-presentation.md) | Вложенность — приём представления, а не поле элемента | accepted |
+| [0012](adr/0012-archimate-exchange-format.md) | Обмен — ArchiMate Model Exchange File Format, с названной ценой | accepted |
 
 ## Ключевые вехи
 
