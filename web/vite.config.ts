@@ -15,6 +15,18 @@ export default defineConfig({
       },
     },
   },
+  // The same proxy for the built bundle. `server.proxy` is development only, and without this the
+  // preview server answers /api with its own 404 — which is how the browser checks in CI would
+  // fail on the first request while the application itself was perfectly healthy.
+  preview: {
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: process.env.ARCHGRID_API_URL ?? 'http://localhost:8080',
+        changeOrigin: true,
+      },
+    },
+  },
   build: {
     outDir: 'dist',
     sourcemap: true,

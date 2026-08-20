@@ -37,6 +37,7 @@ All Gradle commands run from `server/`; all npm commands from `web/`.
 
 # Web
 npm run lint      # oxlint (not eslint)
+npm test          # vitest, pure client logic only
 npm run build     # tsc -b && vite build — this is also the type-check
 npm run dev
 

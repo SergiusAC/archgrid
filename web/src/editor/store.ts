@@ -82,11 +82,37 @@ export function describeEntry(entry: UndoEntry | undefined): string {
  * Order is reversed: undoing "create A, then put B inside A" has to remove B from A before A
  * can go.
  */
+/**
+ * @param before the model as it was when the command was issued. `view` is the diagram the user is
+ *     looking at and what it showed: deleting an element takes it off every view, and undo has to
+ *     put it back somewhere or the user watches nothing happen. Only that one view is restored —
+ *     the client does not know which others showed it, and phase 5's commit diff will.
+ */
 export function invert(
   commands: Command[],
-  before: { elements: Record<string, ModelElement>; relationships: Record<string, ModelRelationship> },
+  before: {
+    elements: Record<string, ModelElement>
+    relationships: Record<string, ModelRelationship>
+    view?: { key: string; elements: Iterable<string> } | null
+  },
 ): Command[] {
+  /*
+   * One entry per command, not one flat list.
+   *
+   * A batch is undone in reverse — the last thing done is the first thing taken back — but the
+   * commands that undo a *single* command have an order of their own that must survive that
+   * reversal. Undoing the deletion of an element means creating it and then re-adding the
+   * relationships that went with it; flattening first put those relationships ahead of the element
+   * they refer to, and the server refused the whole batch as a dangling endpoint. Which meant undo
+   * of a delete simply did not work for any element anybody had connected to anything.
+   */
+  const steps: Command[][] = []
   const inverse: Command[] = []
+  const step = () => {
+    if (inverse.length > 0) {
+      steps.push(inverse.splice(0, inverse.length))
+    }
+  }
 
   for (const command of commands) {
     switch (command.op) {
@@ -134,6 +160,12 @@ export function invert(
             name: previous.name,
             documentation: previous.documentation ?? undefined,
           })
+          // Back onto the diagram it was deleted from. Without this the element returns to the
+          // repository and the canvas does not change, which reads as "undo did nothing" — and
+          // the relationships below would have nowhere to be drawn either.
+          if (before.view && [...before.view.elements].includes(command.key)) {
+            inverse.push({ op: 'add-to-view', key: before.view.key, element: command.key })
+          }
           // Deleting an element takes its relationships with it, so undoing has to put them back.
           for (const relationship of Object.values(before.relationships)) {
             if (relationship.source === command.key || relationship.target === command.key) {
@@ -182,7 +214,8 @@ export function invert(
       case 'delete-view':
         break
     }
+    step()
   }
 
-  return inverse.reverse()
+  return steps.reverse().flat()
 }

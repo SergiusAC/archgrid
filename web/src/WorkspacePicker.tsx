@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 
 import { ApiError, type Api } from './api/client.ts'
+import { slugify } from './editor/keys.ts'
 
 interface WorkspacePickerProps {
   api: Api
@@ -34,7 +35,7 @@ export default function WorkspacePicker({ api, onPick, explicit = false }: Works
 
   const create = useMutation({
     mutationFn: (repositoryName: string) =>
-      api.createWorkspace({ key: slugify(repositoryName), name: repositoryName }),
+      api.createWorkspace({ key: slugify(repositoryName, 'repository', 60), name: repositoryName }),
     onSuccess: async (created) => {
       setError(null)
       setName('')
@@ -106,12 +107,4 @@ export default function WorkspacePicker({ api, onPick, explicit = false }: Works
   )
 }
 
-function slugify(value: string): string {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 60) || 'repository'
-  )
-}
+

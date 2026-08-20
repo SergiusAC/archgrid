@@ -1015,6 +1015,39 @@ async function interactions(page) {
   }
 
   /*
+   * --- undoing a deletion puts the relationships back with the element ---
+   *
+   * Found by a unit test on `invert` and confirmed here, because only the server can say whether
+   * the batch is acceptable: the inverse of "delete element" is "create it, then re-add every
+   * relationship it took with it", and those have to arrive in that order. Reversing the whole
+   * flattened list put the relationships first, the server refused the batch as a dangling
+   * endpoint, and undo of a deletion silently did nothing for any element anyone had connected.
+   */
+  const doomed = await keyOf('Application Service')
+  const linesBeforeDelete = await page.locator('.ag-paper .ag-link').count()
+  const nodesBeforeDelete = await page.locator('.ag-paper .ag-node').count()
+  const doomedBox = await nodeAt(doomed).locator('.ag-body').boundingBox()
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.mouse.click(doomedBox.x + doomedBox.width / 2, doomedBox.y + 14, { button: 'right' })
+  await page.waitForSelector('.ag-context', { timeout: 5000 })
+  await page.locator('.ag-context-actions > button', { hasText: 'Delete from the model' }).click()
+  await page.waitForTimeout(3000)
+  check(
+    'deleting from the model takes its relationships with it',
+    (await page.locator('.ag-paper .ag-node').count()) === nodesBeforeDelete - 1 &&
+      (await page.locator('.ag-paper .ag-link').count()) < linesBeforeDelete,
+  )
+
+  await page.keyboard.press('Control+z')
+  await page.waitForTimeout(3000)
+  check(
+    'and undo brings back both the element and its relationships',
+    (await page.locator('.ag-paper .ag-node').count()) === nodesBeforeDelete &&
+      (await page.locator('.ag-paper .ag-link').count()) === linesBeforeDelete,
+    `${nodesBeforeDelete} nodes / ${linesBeforeDelete} lines -> ${await page.locator('.ag-paper .ag-node').count()} / ${await page.locator('.ag-paper .ag-link').count()}`,
+  )
+
+  /*
    * --- Discard puts back what the server holds ---
    *
    * Reported from use: Discard threw away the draft and left the canvas exactly as it had been

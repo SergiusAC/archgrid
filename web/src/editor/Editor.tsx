@@ -19,6 +19,7 @@ import { Metamodel } from '../metamodel/Metamodel.ts'
 import Canvas, { type CanvasElement, type CanvasLink, type Geometry } from './Canvas.tsx'
 import ContextMenu, { type ContextTarget } from './ContextMenu.tsx'
 import Filters from './Filters.tsx'
+import { uniqueKey } from './keys.ts'
 import LinkMenu, { type LinkTarget } from './LinkMenu.tsx'
 import Explorer from './Explorer.tsx'
 import FolderTree, { type TreeItem } from './FolderTree.tsx'
@@ -341,7 +342,11 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
 
   const apply = useMutation({
     mutationFn: async ({ commands, label }: { commands: Command[]; label: string }) => {
-      const inverse = invert(commands, { elements: byKey, relationships: relationshipsByKey })
+      const inverse = invert(commands, {
+        elements: byKey,
+        relationships: relationshipsByKey,
+        view: viewKey ? { key: viewKey, elements: onViewKeys } : null,
+      })
       const result = await api.applyCommands(workspace, {
         baseCommitId: currentHead(),
         message: label,
@@ -2009,29 +2014,6 @@ function layoutNodes({ positions, sizes, parents, order }: Geometry) {
     parent: parents[element] ?? null,
     z: order[element] ?? null,
   }))
-}
-
-function slugify(value: string): string {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 56) || 'element'
-  )
-}
-
-function uniqueKey(base: string, taken: Record<string, unknown>): string {
-  const root = slugify(base)
-  if (!(root in taken)) {
-    return root
-  }
-  for (let suffix = 2; ; suffix++) {
-    const candidate = `${root}-${suffix}`
-    if (!(candidate in taken)) {
-      return candidate
-    }
-  }
 }
 
 function describe(error: unknown): string {
