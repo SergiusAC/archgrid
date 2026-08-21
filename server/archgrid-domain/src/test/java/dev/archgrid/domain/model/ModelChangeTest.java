@@ -258,4 +258,106 @@ class ModelChangeTest {
         assertThat(result.isSuccess()).isFalse();
         assertThat(base.elements()).isEmpty();
     }
+
+    // ------------------------------------------------------------------ import tolerance (ADR-0015)
+
+    private static ModelChange.ImportResult applyForImport(ModelCommand... commands) {
+        return ModelChange.applyForImport(ModelGraph.empty(), List.of(commands), METAMODEL, PROFILES);
+    }
+
+    @Test
+    @DisplayName("import keeps what the language permits and discards what it forbids, by name")
+    void import_discards_the_impermissible_and_keeps_the_rest() {
+        ModelChange.ImportResult result = applyForImport(
+                ModelCommand.CreateElement.of("api", "ApplicationComponent", "API"),
+                ModelCommand.CreateElement.of("db", "DataObject", "DB"),
+                ModelCommand.CreateElement.of("runtime", "SystemSoftware", "Runtime"),
+                // Permitted, stays.
+                ModelCommand.AddRelationship.of("api-runtime", "Serving", "api", "runtime"),
+                // The matrix forbids anything from ApplicationComponent to DataObject: discarded.
+                ModelCommand.AddRelationship.of("api-db", "Flow", "api", "db"));
+
+        assertThat(result.graph().elements()).hasSize(3);
+        assertThat(result.graph().relationships())
+                .extracting(relationship -> relationship.key().value())
+                .containsExactly("api-runtime");
+        assertThat(result.discarded()).singleElement().satisfies(violation -> {
+            assertThat(violation.code()).isEqualTo(Violation.Code.RELATIONSHIP_NOT_PERMITTED.code());
+            assertThat(violation.subject()).isEqualTo("api-db");
+        });
+    }
+
+    @Test
+    @DisplayName("a composition cycle in an imported file is broken, not imported and not fatal")
+    void import_breaks_a_containment_cycle() {
+        // The strict pipeline refuses this batch whole; an import has to keep both elements and
+        // give up one of the two impossible edges. Which one is arbitrary — the cycle is the
+        // impossible claim, not any particular edge of it.
+        ModelChange.ImportResult result = applyForImport(
+                ModelCommand.CreateElement.of("a", "ApplicationComponent", "A"),
+                ModelCommand.CreateElement.of("b", "ApplicationComponent", "B"),
+                ModelCommand.AddRelationship.of("a-holds-b", "Composition", "a", "b"),
+                ModelCommand.AddRelationship.of("b-holds-a", "Composition", "b", "a"));
+
+        assertThat(result.graph().elements()).hasSize(2);
+        assertThat(result.graph().relationships()).hasSize(1);
+        assertThat(result.discarded())
+                .extracting(Violation::code)
+                .containsExactly(Violation.Code.CONTAINMENT_CYCLE.code());
+    }
+
+    @Test
+    @DisplayName("per-command refusals become report entries: the duplicate and the dangling line")
+    void import_reports_skipped_commands() {
+        ModelChange.ImportResult result = applyForImport(
+                ModelCommand.CreateElement.of("api", "ApplicationComponent", "API"),
+                // Same key again: skipped, reported, the first survives untouched.
+                ModelCommand.CreateElement.of("api", "SystemSoftware", "API again"),
+                // An endpoint the file never defines: skipped, reported.
+                ModelCommand.AddRelationship.of("api-ghost", "Serving", "api", "ghost"));
+
+        assertThat(result.graph().elements()).hasSize(1);
+        assertThat(result.graph().element(Slug.of("api")).orElseThrow().conceptType())
+                .isEqualTo("ApplicationComponent");
+        assertThat(result.graph().relationships()).isEmpty();
+        assertThat(result.discarded())
+                .extracting(Violation::code)
+                .containsExactlyInAnyOrder(
+                        Violation.Code.DUPLICATE_KEY.code(), Violation.Code.DANGLING_ENDPOINT.code());
+    }
+
+    @Test
+    @DisplayName("a clean file imports with an empty report and matches the strict pipeline")
+    void import_of_a_clean_file_discards_nothing() {
+        ModelCommand[] commands = {
+            ModelCommand.CreateElement.of("api", "ApplicationComponent", "API"),
+            ModelCommand.CreateElement.of("runtime", "SystemSoftware", "Runtime"),
+            ModelCommand.AddRelationship.of("api-runtime", "Serving", "api", "runtime"),
+        };
+
+        ModelChange.ImportResult tolerant = applyForImport(commands);
+        ModelChange.Result strict = apply(ModelGraph.empty(), commands);
+
+        assertThat(tolerant.discarded()).isEmpty();
+        assertThat(strict.isSuccess()).isTrue();
+        assertThat(tolerant.graph().elements()).hasSize(strict.graph().elements().size());
+        assertThat(tolerant.graph().relationships()).hasSize(strict.graph().relationships().size());
+    }
+
+    @Test
+    @DisplayName("what an import keeps is a graph the strict pipeline accepts")
+    void what_import_keeps_is_valid() {
+        ModelChange.ImportResult imported = applyForImport(
+                ModelCommand.CreateElement.of("a", "ApplicationComponent", "A"),
+                ModelCommand.CreateElement.of("db", "DataObject", "DB"),
+                ModelCommand.AddRelationship.of("bad", "Flow", "a", "db"),
+                ModelCommand.AddRelationship.of("worse", "Composition", "db", "a"));
+
+        // The guarantee ADR-0015 makes: after import, the repository keeps its central promise.
+        // Checked with the strict pipeline itself rather than restated here.
+        ModelChange.Result revalidated =
+                ModelChange.apply(imported.graph(), List.of(), METAMODEL, PROFILES);
+        assertThat(revalidated.isSuccess()).isTrue();
+        assertThat(imported.discarded()).hasSize(2);
+    }
 }

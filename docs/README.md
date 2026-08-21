@@ -44,6 +44,7 @@ Architecture Knowledge Platform: архитектурный граф как sour
 | [0012](adr/0012-archimate-exchange-format.md) | Обмен — ArchiMate Model Exchange File Format, с названной ценой | accepted |
 | [0013](adr/0013-no-derived-connections-on-views.md) | Представление рисует только то, что модель утверждает | accepted |
 | [0014](adr/0014-placements.md) | Бокс на представлении — размещение: элемент можно рисовать несколько раз | accepted |
+| [0015](adr/0015-import-tolerance.md) | Импорт принимает допустимое и отбрасывает недопустимое поимённо | accepted |
 
 ## Ключевые вехи
 

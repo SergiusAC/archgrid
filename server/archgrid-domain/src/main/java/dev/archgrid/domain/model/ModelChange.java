@@ -63,6 +63,113 @@ public final class ModelChange {
         return new Result(candidate, violations);
     }
 
+    /**
+     * @param discarded what the import threw away, in the same terms the strict pipeline uses to
+     *     refuse: code, culprit, explanation. Part of the result, not a log (ADR-0015).
+     */
+    public record ImportResult(ModelGraph graph, List<Violation> discarded) {
+
+        public ImportResult {
+            Objects.requireNonNull(graph, "graph must not be null");
+            discarded = List.copyOf(discarded);
+        }
+    }
+
+    /**
+     * Applies commands the way an import must: keep everything the language permits, discard what
+     * it forbids, and name every discard (ADR-0015).
+     *
+     * <p>For the importer only — {@code POST /commands} stays strict. An imported file almost
+     * always contains something somebody else's editor let through, and a pipeline that rejects
+     * the whole batch over one impermissible line closes migration rather than opening it. The
+     * precedent is migration V10, which faced the same choice with containment ArchiMate forbids
+     * and made the same call.
+     *
+     * <p>The returned graph is valid without qualification, by construction: whole-graph
+     * violations are cut out of the candidate — an impermissible or dangling relationship is
+     * removed, a containment cycle is broken, a ghost view member is taken off — and cutting rows
+     * cannot create new violations, since validation checks what exists, never what is absent. So
+     * the loop converges, and a final validation that still complains is a programming error, not
+     * a data problem.
+     */
+    public static ImportResult applyForImport(
+            ModelGraph base, List<ModelCommand> commands, Metamodel metamodel, ProfileCatalog profiles) {
+        Objects.requireNonNull(base, "base must not be null");
+        Objects.requireNonNull(commands, "commands must not be null");
+        Objects.requireNonNull(metamodel, "metamodel must not be null");
+        Objects.requireNonNull(profiles, "profiles must not be null");
+
+        ModelGraph candidate = base.copy();
+        List<Violation> discarded = new ArrayList<>();
+
+        // Per-command refusals already skip the command; here that is exactly the behaviour asked
+        // for, and the violation is the report entry.
+        for (ModelCommand command : commands) {
+            applyOne(candidate, command, metamodel, profiles, discarded);
+        }
+
+        while (true) {
+            List<Violation> found = new ArrayList<>();
+            validate(candidate, metamodel, found);
+            if (found.isEmpty()) {
+                return new ImportResult(candidate, discarded);
+            }
+            for (Violation violation : found) {
+                if (!cutOut(candidate, violation)) {
+                    // A violation this method does not know how to cut is a rule added to
+                    // validate() without a matching branch here — a defect to fix, not a file to
+                    // tolerate. Failing loudly beats looping forever or returning an invalid graph.
+                    throw new IllegalStateException(
+                            "import tolerance cannot resolve " + violation.code() + " on '"
+                                    + violation.subject() + "': " + violation.detail());
+                }
+            }
+            discarded.addAll(found);
+        }
+    }
+
+    /** Removes the culprit a whole-graph violation names. True when something was cut. */
+    private static boolean cutOut(ModelGraph graph, Violation violation) {
+        Slug subject = Slug.of(violation.subject());
+
+        if (violation.code().equals(Violation.Code.RELATIONSHIP_NOT_PERMITTED.code())) {
+            graph.removeRelationship(subject);
+            return true;
+        }
+        if (violation.code().equals(Violation.Code.DANGLING_ENDPOINT.code())) {
+            if (graph.relationship(subject).isPresent()) {
+                graph.removeRelationship(subject);
+                return true;
+            }
+            // The other shape of the same code: a view showing an element the model lost.
+            Optional<View> view = graph.view(subject);
+            if (view.isPresent()) {
+                View pruned = view.get();
+                for (Slug member : view.get().elements()) {
+                    if (!graph.containsElement(member)) {
+                        pruned = pruned.without(member);
+                    }
+                }
+                graph.put(pruned);
+                return true;
+            }
+            return false;
+        }
+        if (violation.code().equals(Violation.Code.CONTAINMENT_CYCLE.code())) {
+            // Every element on a cycle has an incoming Composition; removing one breaks it. Which
+            // one is arbitrary, and arbitrariness is fine — the cycle itself is the impossible
+            // claim, not any particular edge of it.
+            for (Relationship relationship : graph.relationships()) {
+                if ("Composition".equals(relationship.conceptType()) && subject.equals(relationship.target())) {
+                    graph.removeRelationship(relationship.key());
+                    return true;
+                }
+            }
+            return false;
+        }
+        return false;
+    }
+
     // ------------------------------------------------------------------ command application
 
     private static void applyOne(
