@@ -65,6 +65,8 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   const [connecting, setConnecting] = useState(false)
   const [connectFrom, setConnectFrom] = useState<string | null>(null)
   const [context, setContext] = useState<ContextTarget | null>(null)
+  const [placements, setPlacements] = useState<Record<string, string>>({})
+  const placementsRef = useRef<Record<string, string>>({})
   const [linkContext, setLinkContext] = useState<LinkTarget | null>(null)
   /**
    * Elements taken with Ctrl+C, by key.
@@ -136,21 +138,6 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     queryFn: () => api.view(workspace, viewKey!),
   })
 
-  /**
-   * Where the element in hand is used, asked of the server rather than inferred.
-   *
-   * A view lists its own elements; nothing on the client knows the other twenty views without
-   * fetching them all. And this is the answer that matters before a deletion: "it will go from
-   * these four diagrams" is a decision, "it will go from everywhere" is a leap of faith.
-   */
-  const usageKey = context?.elementKey ?? (selected.length === 1 ? selected[0] : null)
-  const usage = useQuery({
-    queryKey: ['usage', workspace, usageKey],
-    enabled: usageKey != null,
-    queryFn: () => api.usage(workspace, usageKey!),
-  })
-  const usageViews = usage.data && usage.isSuccess && usageKey ? usage.data.views : null
-
   const headCommitId = graph.data?.headCommitId ?? null
   const allElements = useMemo(() => repository.data?.elements ?? [], [repository.data])
   const allRelationships = useMemo(() => repository.data?.relationships ?? [], [repository.data])
@@ -165,7 +152,45 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
 
   const onView = useMemo(() => view.data?.elements ?? [], [view.data])
   const onViewKeys = useMemo(() => new Set(onView.map((element) => element.key)), [onView])
-  /** Absolute geometry per element: where it is and, once resized, how big. */
+  /**
+   * Which element each box on the view draws, by placement id.
+   *
+   * A box is a *placement*, not an element: the same element may be drawn several times on one
+   * view (ADR-0014). Membership — whether the element is on the view at all — stays versioned and
+   * element-keyed; how often it is drawn is layout, and lives here.
+   *
+   * Everything below is therefore keyed by placement id, not by element key.
+   */
+  /** Every box drawing this element, in the order they were made. */
+  const placementsOf = useCallback(
+    (element: string) => Object.keys(placements).filter((node) => placements[node] === element),
+    [placements],
+  )
+  /** What the selection is about, with each element named once however often it is drawn. */
+  const selectedElements = useMemo(
+    () => [...new Set(selected.map((node) => placements[node]).filter((key): key is string => key != null))],
+    [selected, placements],
+  )
+
+  /**
+   * Where the element in hand is used, asked of the server rather than inferred.
+   *
+   * A view lists its own elements; nothing on the client knows the other twenty views without
+   * fetching them all. And this is the answer that matters before a deletion: "it will go from
+   * these four diagrams" is a decision, "it will go from everywhere" is a leap of faith.
+   */
+  // From state, never from the ref beside it: a value read out of a ref during render does not
+  // make the render happen again when it changes, which is how a panel ends up describing the
+  // element that was selected a moment ago.
+  const usageKey = context?.element ?? (selectedElements.length === 1 ? selectedElements[0] : null)
+  const usage = useQuery({
+    queryKey: ['usage', workspace, usageKey],
+    enabled: usageKey != null,
+    queryFn: () => api.usage(workspace, usageKey!),
+  })
+  const usageViews = usage.data && usage.isSuccess && usageKey ? usage.data.views : null
+
+  /** Absolute geometry per placement: where it is and, once resized, how big. */
   const [positions, setPositions] = useState<Record<string, Position>>({})
   const [sizes, setSizes] = useState<Record<string, Size>>({})
   /**
@@ -183,10 +208,26 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    * quietly put it back to null. State lags by a render; this does not.
    */
   const parentsRef = useRef<Record<string, string | null>>({})
+  const rememberLinkEnds = useCallback((next: Record<string, { source: string; target: string }>) => {
+    linkEndsRef.current = next
+    setLinkEnds(next)
+  }, [])
+  const rememberPlacements = useCallback((next: Record<string, string>) => {
+    placementsRef.current = next
+    setPlacements(next)
+  }, [])
   /** Which element is drawn over which, and the request that changes it. */
   const [order, setOrder] = useState<Record<string, number>>({})
   const orderRef = useRef<Record<string, number>>({})
   const [restack, setRestack] = useState<{ keys: string[]; to: 'front' | 'back'; token: number } | null>(null)
+  /**
+   * Which box each end of a line is attached to, where the architect has said.
+   *
+   * Empty for every line on a view that draws nothing twice — the ends follow the only boxes there
+   * are. It fills up when somebody drags an end onto a second copy (ADR-0014).
+   */
+  const [linkEnds, setLinkEnds] = useState<Record<string, { source: string; target: string }>>({})
+  const linkEndsRef = useRef<Record<string, { source: string; target: string }>>({})
   /**
    * Relationships this view declines to draw.
    *
@@ -271,34 +312,50 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       const storedSizes: Record<string, { width: number; height: number }> = {}
       const storedParents: Record<string, string | null> = {}
       const storedOrder: Record<string, number> = {}
+      const storedPlacements: Record<string, string> = {}
       for (const node of data.layout) {
-        stored[node.element] = { x: node.x, y: node.y }
-        storedParents[node.element] = node.parent
+        storedPlacements[node.id] = node.element
+        stored[node.id] = { x: node.x, y: node.y }
+        storedParents[node.id] = node.parent
         if (node.z != null) {
-          storedOrder[node.element] = node.z
+          storedOrder[node.id] = node.z
         }
         if (node.width && node.height) {
-          storedSizes[node.element] = { width: node.width, height: node.height }
+          storedSizes[node.id] = { width: node.width, height: node.height }
         }
       }
       const storedVertices: Record<string, Position[]> = {}
+      const storedEnds: Record<string, { source: string; target: string }> = {}
       for (const link of data.layoutLinks) {
         storedVertices[link.key] = link.vertices
+        if (link.sourceNode && link.targetNode) {
+          storedEnds[link.key] = { source: link.sourceNode, target: link.targetNode }
+        }
       }
       const draft = withDraft ? readDraft(workspace, data.key) : null
+      rememberPlacements(draft ? { ...storedPlacements, ...draft.placements } : storedPlacements)
       setPositions(draft ? { ...stored, ...draft.positions } : stored)
       setSizes(draft ? { ...storedSizes, ...draft.sizes } : storedSizes)
       rememberParents(draft ? { ...storedParents, ...draft.parents } : storedParents)
       rememberOrder(draft ? { ...storedOrder, ...draft.order } : storedOrder)
       rememberHidden(draft?.hidden ?? data.hidden)
       rememberVertices(draft ? { ...storedVertices, ...draft.vertices } : storedVertices)
+      rememberLinkEnds(draft ? { ...storedEnds, ...draft.linkEnds } : storedEnds)
       setRouter(draft?.router ?? data.router)
       routerRef.current = draft?.router ?? data.router
       setDirty(draft != null)
       setGeometryFor(data.key)
       setGeometryVersion((version) => version + 1)
     },
-    [workspace, rememberParents, rememberOrder, rememberHidden, rememberVertices],
+    [
+      workspace,
+      rememberPlacements,
+      rememberParents,
+      rememberOrder,
+      rememberHidden,
+      rememberVertices,
+      rememberLinkEnds,
+    ],
   )
 
   useEffect(() => {
@@ -393,14 +450,20 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
 
   /** Coordinates go to their own endpoint, never through a command (ADR-0003). */
   const saveLayout = useMutation({
-    mutationFn: (geometry: Geometry & { router: ConnectionRouter; hidden: string[] }) =>
+    mutationFn: (
+      geometry: Geometry & {
+        router: ConnectionRouter
+        hidden: string[]
+        linkEnds: Record<string, { source: string; target: string }>
+      },
+    ) =>
       api.saveLayout(
         workspace,
         viewKey!,
         layoutNodes(geometry),
         geometry.router,
         geometry.hidden,
-        layoutLinks(geometry),
+        layoutLinks(geometry, geometry.linkEnds),
       ),
     /**
      * Tells the cache what was just written.
@@ -427,7 +490,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           ? {
               ...current,
               layout: layoutNodes(geometry),
-              layoutLinks: layoutLinks(geometry),
+              layoutLinks: layoutLinks(geometry, geometry.linkEnds),
               hidden: geometry.hidden,
               router: geometry.router,
             }
@@ -455,12 +518,14 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         return
       }
       const geometry = {
+        placements: placementsRef.current,
         positions: next,
         sizes: nextSizes ?? sizes,
         parents: nextParents ?? parentsRef.current,
         order: orderRef.current,
         hidden: hiddenRef.current,
         vertices: verticesRef.current,
+        linkEnds: linkEndsRef.current,
         router: nextRouter ?? routerRef.current,
       }
       setDirty(true)
@@ -487,12 +552,14 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       pendingSave.current = null
     }
     await saveLayout.mutateAsync({
+      placements: placementsRef.current,
       positions,
       sizes,
       parents: parentsRef.current,
       order: orderRef.current,
       hidden: hiddenRef.current,
       vertices: verticesRef.current,
+      linkEnds: linkEndsRef.current,
       router,
     })
     clearDraft(workspace, viewKey)
@@ -542,18 +609,42 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     if (!view.data || onView.length === 0 || geometryFor !== view.data.key) {
       return
     }
-    const missing = onView.filter((element) => !positions[element.key])
-    if (missing.length === 0) {
+    // An element on the view with no box yet: it has just been created, pasted or projected.
+    const drawn = new Set(Object.values(placementsRef.current))
+    const missing = onView.filter((element) => !drawn.has(element.key))
+    // And boxes whose element has left the view: their placement goes with it.
+    const orphaned = Object.keys(placementsRef.current).filter(
+      (node) => !onViewKeys.has(placementsRef.current[node]),
+    )
+    if (missing.length === 0 && orphaned.length === 0) {
       return
     }
+    const withPlacements = { ...placementsRef.current }
+    for (const node of orphaned) {
+      delete withPlacements[node]
+    }
+    const nodeFor = new Map<string, string>()
+    for (const element of missing) {
+      const node = crypto.randomUUID()
+      nodeFor.set(element.key, node)
+      withPlacements[node] = element.key
+    }
+    rememberPlacements(withPlacements)
     // Auto-layout only when nothing has said where these should go. A projection arranges its own
     // diagram — a boundary with its parts inside it — and handing that to a layered algorithm
     // would produce a correct drawing in which nothing is obviously the subject.
     const unrequested = missing.filter((element) => !placeAt.current[element.key])
     if (Object.keys(positions).length === 0 && unrequested.length === missing.length) {
       void autoLayout(onView, view.data.relationships).then((laid) => {
-        setPositions(laid)
-        rememberChange(laid)
+        const byNode: Record<string, Position> = {}
+        for (const [element, at] of Object.entries(laid)) {
+          const node = nodeFor.get(element)
+          if (node) {
+            byNode[node] = at
+          }
+        }
+        setPositions(byNode)
+        rememberChange(byNode)
       })
     } else {
       let taken = positions
@@ -563,14 +654,15 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         const asked = placeAt.current[element.key]
         delete placeAt.current[element.key]
         const position = asked ?? nextFreePosition(taken, sizes)
-        placed[element.key] = position
-        taken = { ...taken, [element.key]: position }
+        const node = nodeFor.get(element.key)!
+        placed[node] = position
+        taken = { ...taken, [node]: position }
       }
       const next = { ...positions, ...placed }
       setPositions(next)
       rememberChange(next)
     }
-  }, [view.data, onView, positions, sizes, geometryFor, rememberChange])
+  }, [view.data, onView, onViewKeys, positions, sizes, geometryFor, rememberChange, rememberPlacements])
 
   // Fitting waits for real coordinates. Auto-layout resolves through ELK after the canvas mounts,
   // and refitting before that opens the view zoomed into an empty corner.
@@ -578,49 +670,57 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     if (!viewKey || fittedFor.current === viewKey || onView.length === 0) {
       return
     }
-    if (onView.every((element) => positions[element.key])) {
+    if (Object.keys(placements).every((node) => positions[node])) {
       fittedFor.current = viewKey
       setFitToken(`${viewKey}:${onView.length}`)
     }
-  }, [viewKey, onView, positions])
+  }, [viewKey, onView, placements, positions])
 
-  /** Which elements on this view contain others that are also on it. */
+  /** Which boxes on this view contain others. A container is a placement, not an element. */
   const containers = useMemo(() => {
     const withChildren = new Set<string>()
-    for (const element of onView) {
-      const parent = parents[element.key]
-      if (parent && onViewKeys.has(parent)) {
+    for (const node of Object.keys(placements)) {
+      const parent = parents[node]
+      if (parent && placements[parent]) {
         withChildren.add(parent)
       }
     }
     return withChildren
-  }, [onView, onViewKeys, parents])
+  }, [placements, parents])
 
   const canvasElements: CanvasElement[] = useMemo(
     () =>
-      onView.map((element) => {
-        const type = metamodel.elementType(element.conceptType)
-        const at = positions[element.key] ?? { x: 0, y: 0 }
-        const size = sizes[element.key]
-        const container = containers.has(element.key)
-        return {
-          key: element.key,
-          name: element.name,
-          typeLabel: element.profile ?? type?.name ?? element.conceptType,
-          layer: type?.layer ?? 'other',
-          specialised: element.profile != null,
-          concept: element.conceptType,
-          // From this view's layout, and only when the container is on the view too: a parent
-          // nobody can see is not one.
-          parent: parents[element.key] && onViewKeys.has(parents[element.key]!) ? parents[element.key] : null,
-          x: at.x,
-          y: at.y,
-          width: size?.width ?? (container ? 320 : NODE_WIDTH),
-          height: size?.height ?? (container ? 200 : NODE_HEIGHT),
-          z: order[element.key] ?? null,
-        }
-      }),
-    [onView, onViewKeys, positions, sizes, parents, order, containers, metamodel],
+      Object.entries(placements)
+        .map(([node, elementKey]): CanvasElement | null => {
+          const element = byKey[elementKey]
+          if (!element || !onViewKeys.has(elementKey)) {
+            return null
+          }
+          const type = metamodel.elementType(element.conceptType)
+          const at = positions[node] ?? { x: 0, y: 0 }
+          const size = sizes[node]
+          const container = containers.has(node)
+          const parent = parents[node]
+          return {
+            key: node,
+            element: elementKey,
+            name: element.name,
+            typeLabel: element.profile ?? type?.name ?? element.conceptType,
+            layer: type?.layer ?? 'other',
+            specialised: element.profile != null,
+            concept: element.conceptType,
+            // From this view's layout, and only when the container is drawn too: a parent nobody
+            // can see is not one.
+            parent: parent && placements[parent] ? parent : null,
+            x: at.x,
+            y: at.y,
+            width: size?.width ?? (container ? 320 : NODE_WIDTH),
+            height: size?.height ?? (container ? 200 : NODE_HEIGHT),
+            z: order[node] ?? null,
+          }
+        })
+        .filter((element): element is CanvasElement => element !== null),
+    [placements, byKey, onViewKeys, positions, sizes, parents, order, containers, metamodel],
   )
 
   /**
@@ -634,14 +734,13 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    * where the two are not nested (ADR-0011).
    */
   const expressedByNesting = useCallback(
-    (relationship: ModelRelationship) => {
+    (relationship: ModelRelationship, sourceNode: string, targetNode: string) => {
       if (metamodel.relationshipType(relationship.type)?.category !== 'structural') {
         return false
       }
-      return (
-        parents[relationship.target] === relationship.source ||
-        parents[relationship.source] === relationship.target
-      )
+      // Between these two boxes, not between these two elements: a copy of the child may stand
+      // alone beside the container, and the line to that copy is the only one saying anything.
+      return parents[targetNode] === sourceNode || parents[sourceNode] === targetNode
     },
     [parents, metamodel],
   )
@@ -666,18 +765,47 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    * which is a decision with a cost — a context view of a system whose parts talk to the outside
    * shows no line to the outside — and the cost is written down where the decision is.
    */
+  /**
+   * Which box each end of a line attaches to.
+   *
+   * Chosen by the architect where they have said so — dragging an end onto another copy is how —
+   * and otherwise the first box drawing that element. With one box per element, which is every
+   * view until somebody draws a second, this is exactly what it always was.
+   */
+  const endsOf = useCallback(
+    (relationshipKey: string, source: string, target: string) => {
+      const chosen = linkEnds[relationshipKey]
+      const at = (node: string | undefined, element: string) =>
+        node && placements[node] === element ? node : placementsOf(element)[0]
+      return { source: at(chosen?.source, source), target: at(chosen?.target, target) }
+    },
+    [linkEnds, placements, placementsOf],
+  )
+
+  /**
+   * One kind of line, and it stands for a relationship the model states (ADR-0013).
+   */
   const canvasLinks: CanvasLink[] = useMemo(
     () =>
       (view.data?.relationships ?? [])
-        .filter((r) => !expressedByNesting(r) && !hidden.includes(r.key))
-        .map((relationship) => ({
-          key: relationship.key,
-          source: relationship.source,
-          target: relationship.target,
-          label: relationship.name ?? relationship.type,
-          type: relationship.type,
-        })),
-    [view.data, expressedByNesting, hidden],
+        .filter((relationship) => !hidden.includes(relationship.key))
+        .map((relationship) => {
+          const ends = endsOf(relationship.key, relationship.source, relationship.target)
+          if (!ends.source || !ends.target || expressedByNesting(relationship, ends.source, ends.target)) {
+            return null
+          }
+          return {
+            key: relationship.key,
+            source: ends.source,
+            target: ends.target,
+            sourceElement: relationship.source,
+            targetElement: relationship.target,
+            label: relationship.name ?? relationship.type,
+            type: relationship.type,
+          }
+        })
+        .filter((link): link is CanvasLink => link !== null),
+    [view.data, endsOf, expressedByNesting, hidden],
   )
 
   /** Live geometry from a drag or resize. The save is debounced; the state is not. */
@@ -733,6 +861,47 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     [rememberHidden, rememberChange, positions],
   )
 
+  /**
+   * Draws this element a second time on this view.
+   *
+   * Not a copy of the element — a second box showing the same one (ADR-0014). Membership does not
+   * change and nothing is committed: how often an element is drawn is layout, like where.
+   *
+   * The point of it is lines: a shared component drawn once pulls every line towards it and across
+   * the diagram, and drawn beside each of its users it does not. So the new box arrives empty of
+   * lines, and the architect moves the ones they want onto it by dragging an end.
+   */
+  const drawAgain = useCallback(
+    (node: string) => {
+      const element = placementsRef.current[node]
+      if (!element || !viewKey) {
+        return
+      }
+      const copy = crypto.randomUUID()
+      const at = positions[node] ?? { x: 40, y: 40 }
+      const nextPositions = { ...positions, [copy]: { x: at.x + GRID * 4, y: at.y + GRID * 4 } }
+      const size = sizes[node]
+      const nextSizes = size ? { ...sizes, [copy]: size } : sizes
+      rememberPlacements({ ...placementsRef.current, [copy]: element })
+      setPositions(nextPositions)
+      setSizes(nextSizes)
+      rememberChange(nextPositions, nextSizes)
+      setGeometryVersion((version) => version + 1)
+      // Selected, so the next drag moves the new box rather than the one it came from.
+      setSelected([copy])
+    },
+    [viewKey, positions, sizes, rememberPlacements, rememberChange],
+  )
+
+  /** A line whose end was dragged onto another box of the same element. */
+  const onLinkEnds = useCallback(
+    (key: string, source: string, target: string) => {
+      rememberLinkEnds({ ...linkEndsRef.current, [key]: { source, target } })
+      rememberChange(positions)
+    },
+    [rememberLinkEnds, rememberChange, positions],
+  )
+
   const onGeometryStart = useCallback(() => {
     dragOrigin.current = positions
   }, [positions])
@@ -767,7 +936,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    * the editor asks whether it should, exactly as Archi's ARM does.
    */
   const onNest = useCallback(
-    (key: string, parent: string | null, next: Geometry) => {
+    (node: string, parentNode: string | null, next: Geometry) => {
       setPositions(next.positions)
       setSizes(next.sizes)
       rememberParents(next.parents)
@@ -775,11 +944,14 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       // longer threatens it: the draft is laid over whatever the server returns, so the nesting
       // survives without having to be raced to the server first.
       rememberChange(next.positions, next.sizes, next.parents)
-      if (!parent) {
+      if (!parentNode) {
         return
       }
-      const container = byKey[parent]
-      const child = byKey[key]
+      // Boxes nest; the relationship the nesting might express is between the elements they draw.
+      const parent = next.placements[parentNode]
+      const key = next.placements[node]
+      const container = parent ? byKey[parent] : null
+      const child = key ? byKey[key] : null
       if (!container || !child) {
         return
       }
@@ -799,8 +971,9 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       if (permitted.length === 0) {
         return
       }
-      const node = document.querySelector(`.ag-node[data-key="${CSS.escape(key)}"]`)
-      const box = node?.getBoundingClientRect()
+      // The box that was just dropped, so the question appears beside it rather than mid-screen.
+      const dropped = document.querySelector(`.ag-node[data-node="${CSS.escape(node)}"]`)
+      const box = dropped?.getBoundingClientRect()
       setNesting({
         x: box ? box.right + 8 : window.innerWidth / 2,
         y: box ? box.top : window.innerHeight / 2,
@@ -992,15 +1165,17 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    * build a second diagram out of a first.
    */
   const copySelection = useCallback(() => {
-    if (selected.length === 0) {
+    if (selectedElements.length === 0) {
       return
     }
-    setClipboard(selected)
+    setClipboard(selectedElements)
     setMessage({
       kind: 'info',
-      text: `${selected.length} element${selected.length === 1 ? '' : 's'} copied. Ctrl+V shows them on another view; Ctrl+D makes new ones.`,
+      text: `${selectedElements.length} element${
+        selectedElements.length === 1 ? '' : 's'
+      } copied. Ctrl+V shows them on another view; Ctrl+D makes new ones.`,
     })
-  }, [selected])
+  }, [selectedElements])
 
   const pasteHere = useCallback(() => {
     if (!viewKey || clipboard.length === 0) {
@@ -1035,8 +1210,9 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     const created: string[] = []
     // Grows as it goes: two copies of the same element in one gesture must not claim the same key.
     const taken: Record<string, unknown> = { ...byKey }
-    for (const sourceKey of selected) {
-      const element = byKey[sourceKey]
+    for (const node of selected) {
+      const sourceKey = placements[node]
+      const element = sourceKey ? byKey[sourceKey] : null
       if (!element) {
         continue
       }
@@ -1044,7 +1220,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       const key = uniqueKey(name, taken)
       taken[key] = true
       created.push(key)
-      const at = positions[sourceKey]
+      const at = positions[node]
       if (at) {
         placeAt.current[key] = { x: at.x + GRID * 2, y: at.y + GRID * 2 }
       }
@@ -1059,11 +1235,11 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     }
     if (commands.length > 0) {
       apply.mutate({ commands, label: `Duplicate ${selected.length} element${selected.length === 1 ? '' : 's'}` })
-      // The copy lands a step off the original and therefore on top of it. Selecting it is what
-      // tells the two apart, and it is what lets the next gesture — a drag — move the right one.
-      setSelected(created)
+      // The copies are new elements, so their boxes do not exist yet; the placement effect makes
+      // them when the commit comes back. Clearing the selection is honest until then.
+      setSelected([])
     }
-  }, [viewKey, selected, byKey, positions, apply])
+  }, [viewKey, selected, placements, byKey, positions, apply])
 
   /**
    * Align and distribute a multiple selection.
@@ -1168,18 +1344,46 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   )
 
   /** Off this diagram only. The element stays in the repository and on every other view. */
+  /**
+   * Takes boxes off the view.
+   *
+   * A box is a placement, and an element may have several (ADR-0014). Removing one of two copies
+   * is layout and produces no commit — the element is still on the view, drawn once. Removing the
+   * last one is membership, and that is a command like it always was.
+   */
   const removeFromView = useCallback(
-    (keys: string[]) => {
-      if (!viewKey || keys.length === 0) {
+    (nodes: string[]) => {
+      if (!viewKey || nodes.length === 0) {
         return
       }
       setContext(null)
+      const remaining = { ...placementsRef.current }
+      const leaving: string[] = []
+      for (const node of nodes) {
+        const element = remaining[node]
+        if (!element) {
+          continue
+        }
+        delete remaining[node]
+        if (!Object.values(remaining).includes(element)) {
+          leaving.push(element)
+        }
+      }
+      rememberPlacements(remaining)
+      rememberChange(positions)
+      setSelected([])
+      setGeometryVersion((version) => version + 1)
+      if (leaving.length === 0) {
+        return
+      }
       apply.mutate({
-        commands: keys.map((key) => ({ op: 'remove-from-view', key: viewKey, element: key })),
-        label: `Remove ${keys.map((k) => byKey[k]?.name ?? k).join(', ')} from ${view.data?.name ?? viewKey}`,
+        commands: leaving.map((element) => ({ op: 'remove-from-view', key: viewKey, element })),
+        label: `Remove ${leaving.map((key) => byKey[key]?.name ?? key).join(', ')} from ${
+          view.data?.name ?? viewKey
+        }`,
       })
     },
-    [viewKey, byKey, view.data, apply],
+    [viewKey, byKey, view.data, apply, positions, rememberChange, rememberPlacements],
   )
 
   /** Out of the repository entirely: permanent, off every view, and it takes its relationships. */
@@ -1767,20 +1971,36 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
               onNest={onNest}
               connecting={connecting}
               connectFrom={connectFrom}
-              onConnectPick={onConnectPick}
+              onConnectPick={(node) => {
+                const element = placementsRef.current[node]
+                if (element) {
+                  onConnectPick(element)
+                }
+              }}
               onMagic={(source, x, y, at) => {
+                // Already an element: the canvas hands back what it was given, and the connector
+                // was started from an element rather than from one of its boxes.
                 setConnectFrom(null)
                 setConnecting(false)
                 setMessage(null)
                 setMagic({ source, x, y, at })
               }}
-              onContextMenu={(elementKey, x, y) => setContext({ elementKey, x, y })}
+              onContextMenu={(node, x, y) => {
+                const element = placementsRef.current[node]
+                if (element) {
+                  setContext({ node, element, x, y })
+                }
+              }}
               onLinkContextMenu={(key, x, y) => setLinkContext({ key, x, y })}
+              onLinkEnds={onLinkEnds}
               onBlankClick={() => setContext(null)}
-              onCommitName={(key, name) => {
+              onCommitName={(element, name) => {
                 setEditingKey(null)
                 if (name) {
-                  apply.mutate({ commands: [{ op: 'rename-element', key, name }], label: `Rename to ${name}` })
+                  apply.mutate({
+                    commands: [{ op: 'rename-element', key: element, name }],
+                    label: `Rename to ${name}`,
+                  })
                 }
               }}
               onCancelEdit={() => setEditingKey(null)}
@@ -1840,11 +2060,13 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
 
       {!rightCollapsed && (
       <Properties
-        element={selected.length === 1 ? (byKey[selected[0]] ?? null) : null}
+        element={selectedElements.length === 1 ? (byKey[selectedElements[0]] ?? null) : null}
         selectedCount={selected.length}
         metamodel={metamodel}
         profile={
-          selected.length === 1 ? profiles.find((p) => p.name === byKey[selected[0]]?.profile) : undefined
+          selectedElements.length === 1
+            ? profiles.find((p) => p.name === byKey[selectedElements[0]]?.profile)
+            : undefined
         }
         relationships={allRelationships}
         elementsByKey={byKey}
@@ -1864,7 +2086,8 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
             label: value === null ? `Remove ${property}` : `Set ${property}`,
           })
         }
-        onSelect={(key) => setSelected([key])}
+        // Given an element, select the box that draws it — the first, where there are several.
+        onSelect={(key) => setSelected(placementsOf(key).slice(0, 1))}
         onDeleteRelationship={deleteRelationship}
         views={usageViews}
         currentView={viewKey}
@@ -1953,10 +2176,10 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         />
       )}
 
-      {context && byKey[context.elementKey] && (
+      {context && byKey[context.element] && (
         <ContextMenu
           target={context}
-          element={byKey[context.elementKey]}
+          element={byKey[context.element]}
           relationships={allRelationships}
           elementsByKey={byKey}
           metamodel={metamodel}
@@ -1966,7 +2189,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           c4Levels={metamodel.c4Levels}
           onC4View={(level) => {
             setContext(null)
-            void createC4View(context.elementKey, level)
+            void createC4View(context.element, level)
           }}
           onArrange={(how) => {
             arrange(how)
@@ -1981,12 +2204,18 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
             duplicateSelection()
             setContext(null)
           }}
-          onRestack={(to) => {
-            restackTo([context.elementKey], to)
+          onDrawAgain={() => {
+            drawAgain(context.node)
             setContext(null)
           }}
-          onRemoveFromView={() => removeFromView([context.elementKey])}
-          onDeleteFromModel={() => deleteFromModel([context.elementKey])}
+          onRestack={(to) => {
+            restackTo([context.node], to)
+            setContext(null)
+          }}
+          // The box, not the element: where an element is drawn twice, this takes away the copy
+          // that was right-clicked and leaves the other (ADR-0014).
+          onRemoveFromView={() => removeFromView([context.node])}
+          onDeleteFromModel={() => deleteFromModel([context.element])}
         />
       )}
     </div>
@@ -1995,24 +2224,38 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
 
 /** Geometry as the layout endpoint wants it. Missing sizes fall back to the default box. */
 /**
- * Only the lines that have been bent; a straight one needs no row and gets none.
+ * Only the lines that carry something of their own: bendpoints, or ends the architect chose.
  *
- * Derived lines included: the model implies them rather than stating them, but where one is drawn
- * on this view it is drawn the way the architect routed it.
+ * A line whose ends are the only boxes there are needs no row, and gets none — which is every line
+ * on a view where nothing is drawn twice.
  */
-function layoutLinks({ vertices }: Geometry) {
-  return Object.entries(vertices).map(([key, points]) => ({ key, vertices: points }))
+function layoutLinks({ vertices }: Geometry, ends: Record<string, { source: string; target: string }>) {
+  const keys = new Set([...Object.keys(vertices), ...Object.keys(ends)])
+  return [...keys].map((key) => ({
+    key,
+    sourceNode: ends[key]?.source ?? null,
+    targetNode: ends[key]?.target ?? null,
+    vertices: vertices[key] ?? [],
+  }))
 }
 
-function layoutNodes({ positions, sizes, parents, order }: Geometry) {
-  return Object.entries(positions).map(([element, position]) => ({
+/**
+ * The view's boxes, one row per placement.
+ *
+ * Driven by the placements rather than by the positions: a box the canvas is not currently drawing
+ * — because a filter narrows what is shown, never what belongs — still has a place on this view and
+ * must not be dropped by the save.
+ */
+function layoutNodes({ placements, positions, sizes, parents, order }: Geometry) {
+  return Object.entries(placements).map(([node, element]) => ({
+    id: node,
     element,
-    x: position.x,
-    y: position.y,
-    width: sizes[element]?.width ?? NODE_WIDTH,
-    height: sizes[element]?.height ?? NODE_HEIGHT,
-    parent: parents[element] ?? null,
-    z: order[element] ?? null,
+    x: positions[node]?.x ?? 0,
+    y: positions[node]?.y ?? 0,
+    width: sizes[node]?.width ?? NODE_WIDTH,
+    height: sizes[node]?.height ?? NODE_HEIGHT,
+    parent: parents[node] ?? null,
+    z: order[node] ?? null,
   }))
 }
 

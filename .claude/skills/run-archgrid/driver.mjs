@@ -311,8 +311,8 @@ async function smoke(page) {
   check('context menu offers both delete modes', menu.actions.length === 2, menu.actions.join(' | '))
   check('context menu stays inside the window', menu.inViewport)
   check(
-    'context menu offers copying, duplicating and stacking',
-    menu.rows.join(' | ') === 'Copy | Duplicate | Bring to front | Send to back',
+    'context menu offers copying, duplicating, drawing again and stacking',
+    menu.rows.join(' | ') === 'Copy | Duplicate | Draw again | Bring to front | Send to back',
     menu.rows.join(' | '),
   )
   await page.keyboard.press('Escape')
@@ -390,6 +390,70 @@ async function smoke(page) {
     `"${renamed}" matched ${filtered} of ${explorer.items}`,
   )
   await shot('05-explorer')
+
+  /*
+   * --- the same element, drawn twice ---
+   *
+   * A shared component drawn once pulls every line towards it and across the diagram; drawn beside
+   * each of its users it does not. So a view may draw an element more than once (ADR-0014):
+   * membership is unchanged and nothing is committed, because how often something is drawn is
+   * layout, exactly like where.
+   *
+   * On a view of its own, with one element on it. Three earlier blocks leave copies of Ledger
+   * lying on top of each other, and a check that has to guess which box it just clicked is a check
+   * that fails for reasons having nothing to do with what it is testing.
+   */
+  const placementView = `${viewName} c`
+  page.once('dialog', (dialog) => dialog.accept(placementView))
+  await page.locator('.ag-block-button').first().click()
+  await page.waitForTimeout(3000)
+  await page.getByRole('tab', { name: /^Palette/ }).click()
+  await page.waitForTimeout(400)
+  const freshCanvas = await page.locator('.ag-canvas').boundingBox()
+  await dragFromPalette(page, 'Application Component', { x: freshCanvas.x + 300, y: freshCanvas.y + 200 })
+  if (await page.locator('.ag-node-name-input').count()) {
+    await page.locator('.ag-node-name-input').fill('Shared')
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(2500)
+  }
+  const sharedKey = await keyOf('Shared')
+  const boxesOfShared = () => page.locator(`.ag-paper .ag-node[data-key="${sharedKey}"]`).count()
+
+  const only = await nodeAt(sharedKey).first().locator('.ag-body').boundingBox()
+  await page.mouse.click(only.x + only.width / 2, only.y + 14, { button: 'right' })
+  await page.waitForSelector('.ag-context', { timeout: 5000 })
+  await page.locator('.ag-context-row button', { hasText: 'Draw again' }).click()
+  await page.waitForTimeout(1200)
+  const repositoryAfterDrawing = await repositorySize()
+  check('an element can be drawn a second time on the same view', (await boxesOfShared()) === 2, `${await boxesOfShared()} boxes`)
+  check(
+    'and it is the same element, not a new one',
+    repositoryAfterDrawing === (await repositorySize()) && (await page.locator('.ag-paper .ag-node').count()) === 2,
+    `${repositoryAfterDrawing} in the repository`,
+  )
+
+  // A second box is layout, and layout is what Save keeps.
+  await page.keyboard.press('Control+s')
+  await page.waitForTimeout(2500)
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await openRepository(page)
+  await page.locator('.ag-tree-item', { hasText: placementView }).first().click()
+  await page.waitForTimeout(3500)
+  check('and both boxes are still there after a reload', (await boxesOfShared()) === 2, `${await boxesOfShared()} boxes`)
+  await page.screenshot({ path: `${outDir}/50-drawn-twice.png` })
+
+  // Taking one away is layout too: the element is still on the view, drawn once.
+  const second = await nodeAt(sharedKey).last().locator('.ag-body').boundingBox()
+  await page.mouse.click(second.x + second.width / 2, second.y + 14)
+  await page.keyboard.press('Delete')
+  await page.waitForTimeout(2000)
+  check(
+    'removing one of two boxes leaves the element on the view',
+    (await boxesOfShared()) === 1 && (await page.locator('.ag-toolbar .ag-muted').last().textContent()).includes('1 on view'),
+    `${await boxesOfShared()} boxes`,
+  )
+  await page.keyboard.press('Control+s')
+  await page.waitForTimeout(2000)
 
   report()
 }
@@ -1489,11 +1553,22 @@ async function interactions(page) {
    * merely shows it, so "where is this used" has to answer with views, not only with lines. It is
    * also what turns "delete from the model" from a leap into a decision.
    */
-  await clickNode(await keyOf('Ledger'), 'centre')
+  // By key, not by label: after the duplicating above, "Ledger" also matches "Ledger (copy)",
+  // which is a different element and on one view only. And out of the pile first — the copy sits
+  // on top of it, so a click at either corner is a coin toss about which one it lands on.
+  const stacked = await nodeAt(ledgerKey).first().locator('.ag-body').boundingBox()
+  await page.mouse.move(stacked.x + stacked.width - 8, stacked.y + stacked.height - 8)
+  await page.mouse.down()
+  await page.mouse.move(stacked.x + stacked.width - 8, stacked.y + stacked.height + 220, { steps: 10 })
+  await page.mouse.up()
+  await page.waitForTimeout(800)
+  await clickNode(ledgerKey)
   await page.waitForSelector('.ag-props-group h3', { timeout: 5000 })
+  // Two, because the element was pasted onto a second view a moment ago. Waiting for "any answer"
+  // would accept a cached one from before that.
   await page.waitForFunction(
-    () => [...document.querySelectorAll('.ag-props-group h3')].some((h) => /On \d+ views?/.test(h.textContent)),
-    { timeout: 5000 },
+    () => [...document.querySelectorAll('.ag-props-group h3')].some((h) => /On 2 views/.test(h.textContent)),
+    { timeout: 10000 },
   )
   const onViews = await page.evaluate(() => {
     const heads = [...document.querySelectorAll('.ag-props-group h3')]
@@ -1508,13 +1583,14 @@ async function interactions(page) {
     onViews.heading === 'On 2 views' && onViews.names.includes(viewName),
     `${onViews.heading}: ${onViews.names.join(', ')}`,
   )
-  // And they are a way in, not only a fact: this is the walk from one diagram to another.
-  await page.locator('.ag-props-group li .ag-link', { hasText: viewName }).first().click()
+  // And they are a way in, not only a fact: this is the walk from one diagram to another. The one
+  // already open is offered as a fact rather than a link — there is nowhere to go.
+  await page.locator('.ag-props-group li .ag-link', { hasText: secondView }).first().click()
   await page.waitForTimeout(3000)
   check(
     'and opens the one you click',
-    (await page.locator('.ag-toolbar strong, .ag-view-name').first().textContent())?.includes(viewName),
-    (await page.locator('.ag-toolbar strong, .ag-view-name').first().textContent()) ?? '',
+    (await page.locator('.ag-view-name').first().textContent())?.includes(secondView),
+    (await page.locator('.ag-view-name').first().textContent()) ?? '',
   )
   await page.screenshot({ path: `${outDir}/45-where-used.png` })
 

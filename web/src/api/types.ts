@@ -101,15 +101,23 @@ export interface ViewSummary {
 /** Straight lines with bendpoints, or orthogonal runs without them — Archi's own two options. */
 export type ConnectionRouter = 'straight' | 'orthogonal'
 
+/**
+ * One placement: a single drawing of an element on one view.
+ *
+ * An element may be drawn more than once (ADR-0014) — membership says whether it is on the view,
+ * this says how often and where. `id` names the placement, and `parent` is the placement this one
+ * is drawn inside, never the element.
+ */
 export interface LayoutNode {
+  id: string
   element: string
   x: number
   y: number
   width: number | null
   height: number | null
-  /** Drawn inside this element on this view. Presentation only, per view (ADR-0011). */
+  /** The placement this one is drawn inside. Presentation only, per view (ADR-0011). */
   parent: string | null
-  /** Which element is drawn over which. Presentation only. */
+  /** Which placement is drawn over which. Presentation only. */
   z: number | null
 }
 
@@ -193,6 +201,9 @@ export interface Usage {
 export interface LayoutLink {
   /** The line as the diagram knows it: a relationship key, or the computed key of a derived line. */
   key: string
+  /** Which placements the line runs between; null while it follows the only one there is. */
+  sourceNode: string | null
+  targetNode: string | null
   vertices: { x: number; y: number }[]
 }
 

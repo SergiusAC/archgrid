@@ -249,9 +249,21 @@ final class ModelApiDtos {
 
     record DerivedRelationshipResponse(String key, String type, String source, String target, List<String> via) {}
 
-    /** `parent` is what this element is drawn inside on this view — presentation only (ADR-0011). */
+    /**
+     * One placement: a single drawing of an element on this view (ADR-0014).
+     *
+     * <p>`id` names the placement, not the element — the same element may be drawn several times,
+     * and `parent` is the placement this one sits inside rather than the element (ADR-0011).
+     */
     record LayoutNodeResponse(
-            String element, double x, double y, Double width, Double height, String parent, Integer z) {}
+            UUID id,
+            String element,
+            double x,
+            double y,
+            Double width,
+            Double height,
+            UUID parent,
+            Integer z) {}
 
     /**
      * Where a line bends on this view. Presentation, like the coordinates it travels with.
@@ -259,14 +271,22 @@ final class ModelApiDtos {
      * <p>`key` is the line as the diagram knows it: a relationship key, or the computed key of a
      * derived line. Not named `relationship`, because half of them are not one.
      */
-    record LayoutLinkResponse(String key, List<PointDto> vertices) {}
+    record LayoutLinkResponse(String key, UUID sourceNode, UUID targetNode, List<PointDto> vertices) {}
 
-    record LayoutLinkRequest(@NotBlank String key, List<PointDto> vertices) {}
+    /** `sourceNode` and `targetNode` are null while the line follows the only placement there is. */
+    record LayoutLinkRequest(@NotBlank String key, UUID sourceNode, UUID targetNode, List<PointDto> vertices) {}
 
     record PointDto(double x, double y) {}
 
     record LayoutNodeRequest(
-            @NotBlank String element, double x, double y, Double width, Double height, String parent, Integer z) {}
+            UUID id,
+            @NotBlank String element,
+            double x,
+            double y,
+            Double width,
+            Double height,
+            UUID parent,
+            Integer z) {}
 
     /** Coordinates never travel as commands: moving a box is not a model change (ADR-0003). */
     /**

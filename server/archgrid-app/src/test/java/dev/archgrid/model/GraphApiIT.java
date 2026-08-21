@@ -265,14 +265,13 @@ class GraphApiIT {
     void defines_and_refuses_profiles() throws Exception {
         mockMvc.perform(get("/api/workspaces/{ws}", WORKSPACE).with(jwt()));
 
-        mockMvc.perform(post("/api/workspaces/{ws}/profiles", WORKSPACE)
-                        .with(jwt())
+        mockMvc.perform(asContributor(post("/api/workspaces/{ws}/profiles", WORKSPACE)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(
                                 """
                                 {"name":"Microservice","concept":"ApplicationComponent",
                                  "attributes":[{"key":"owner-team","name":"Owning team","type":"string"}]}
-                                """))
+                                """)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.name").value("Microservice"));
 
@@ -288,62 +287,65 @@ class GraphApiIT {
                 .andExpect(jsonPath("$[0].conceptType").value("ApplicationComponent"));
 
         // The same name twice: a palette entry and a DSL identifier must mean one thing.
-        mockMvc.perform(post("/api/workspaces/{ws}/profiles", WORKSPACE)
-                        .with(jwt())
+        mockMvc.perform(asContributor(post("/api/workspaces/{ws}/profiles", WORKSPACE)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"name":"Microservice","concept":"Node"}
-                                """))
+                                """)))
                 .andExpect(status().isUnprocessableContent());
 
         // A name the language already uses would shadow a concept.
-        mockMvc.perform(post("/api/workspaces/{ws}/profiles", WORKSPACE)
-                        .with(jwt())
+        mockMvc.perform(asContributor(post("/api/workspaces/{ws}/profiles", WORKSPACE)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"name":"ApplicationComponent","concept":"ApplicationComponent"}
-                                """))
+                                """)))
                 .andExpect(status().isUnprocessableContent());
 
         // And a concept that cannot be specialised is refused by the matrix, not by a list here.
-        mockMvc.perform(post("/api/workspaces/{ws}/profiles", WORKSPACE)
-                        .with(jwt())
+        mockMvc.perform(asContributor(post("/api/workspaces/{ws}/profiles", WORKSPACE)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"name":"Special","concept":"Relationship"}
-                                """))
+                                """)))
                 .andExpect(status().isUnprocessableContent());
 
         // In use, so it cannot be removed: the element would be left claiming a type nothing
         // defines. The database says so through `on delete restrict`.
-        mockMvc.perform(delete("/api/workspaces/{ws}/profiles/{name}", WORKSPACE, "Microservice").with(jwt()))
+        mockMvc.perform(asContributor(delete("/api/workspaces/{ws}/profiles/{name}", WORKSPACE, "Microservice")))
                 .andExpect(status().isUnprocessableContent());
     }
 
     @Test
     @DisplayName("a relationship carries properties, and a command can set them")
     void sets_a_relationship_property() throws Exception {
-        applyCommands(
-                null,
-                "Two elements and a line",
-                """
-                [{"op":"create-element","key":"a","type":"ApplicationComponent","name":"A"},
-                 {"op":"create-element","key":"b","type":"ApplicationComponent","name":"B"},
-                 {"op":"add-relationship","key":"a-b","type":"Flow","source":"a","target":"b"}]
-                """);
+        // Each call builds on the commit the last one made: passing a stale base is refused, which
+        // is the point of the optimistic check (ADR-0004).
+        String head = applyCommands(
+                        null,
+                        "Two elements and a line",
+                        """
+                        [{"op":"create-element","key":"a","type":"ApplicationComponent","name":"A"},
+                         {"op":"create-element","key":"b","type":"ApplicationComponent","name":"B"},
+                         {"op":"add-relationship","key":"a-b","type":"Flow","source":"a","target":"b"}]
+                        """)
+                .get("commitId")
+                .asString();
 
-        applyCommands(
-                null,
-                "Annotate it",
-                """
-                [{"op":"set-relationship-property","key":"a-b","property":"protocol","value":"AMQP"}]
-                """);
+        head = applyCommands(
+                        head,
+                        "Annotate it",
+                        """
+                        [{"op":"set-relationship-property","key":"a-b","property":"protocol","value":"AMQP"}]
+                        """)
+                .get("commitId")
+                .asString();
         mockMvc.perform(get("/api/workspaces/{ws}/relationships", WORKSPACE).with(jwt()))
                 .andExpect(jsonPath("$[0].properties.protocol").value("AMQP"));
 
         // Null removes it, the same reading as on an element.
         applyCommands(
-                null,
+                head,
                 "Take it back",
                 """
                 [{"op":"set-relationship-property","key":"a-b","property":"protocol","value":null}]

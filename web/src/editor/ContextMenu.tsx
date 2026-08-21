@@ -4,7 +4,10 @@ import type { ModelElement, ModelRelationship } from '../api/types.ts'
 import type { Metamodel } from '../metamodel/Metamodel.ts'
 
 export interface ContextTarget {
-  elementKey: string
+  /** The box that was right-clicked: a placement, since an element may be drawn twice (ADR-0014). */
+  node: string
+  /** The element that box draws. */
+  element: string
   x: number
   y: number
 }
@@ -27,6 +30,8 @@ interface ContextMenuProps {
   onArrange: (how: 'left' | 'centre' | 'right' | 'top' | 'middle' | 'bottom' | 'across' | 'down') => void
   onCopy: () => void
   onDuplicate: () => void
+  /** A second box for the same element on this view — presentation, not a new element. */
+  onDrawAgain: () => void
   onRestack: (to: 'front' | 'back') => void
   onRemoveFromView: () => void
   onDeleteFromModel: () => void
@@ -72,6 +77,7 @@ export default function ContextMenu({
   onArrange,
   onCopy,
   onDuplicate,
+  onDrawAgain,
   onRestack,
   onRemoveFromView,
   onDeleteFromModel,
@@ -243,6 +249,13 @@ export default function ContextMenu({
             </button>
             <button type="button" onClick={onDuplicate}>
               Duplicate
+            </button>
+          </div>
+          {/* Three neighbouring words for three different acts: copy takes it to another view,
+              duplicate makes a second element, draw again shows this one twice here. */}
+          <div className="ag-context-row">
+            <button type="button" onClick={onDrawAgain} title="Draw this element a second time on this view">
+              Draw again
             </button>
           </div>
           {/* Stacking is presentation, not model: it rides with the coordinates and is kept by

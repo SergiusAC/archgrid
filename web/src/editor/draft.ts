@@ -18,6 +18,13 @@ import type { Position } from './store.ts'
  */
 export interface LayoutDraft {
   version: 1
+  /**
+     * Which element each placement draws, by placement id.
+     *
+     * The draft is keyed by placement rather than by element, because a view may draw the same
+     * element twice and a copy the user has just made exists only here until they save.
+     */
+  placements: Record<string, string>
   positions: Record<string, Position>
   sizes: Record<string, { width: number; height: number }>
   parents: Record<string, string | null>
@@ -27,6 +34,8 @@ export interface LayoutDraft {
   hidden: string[]
   /** Where each line bends, by relationship key. Presentation as much as the coordinates are. */
   vertices: Record<string, { x: number; y: number }[]>
+  /** Which box each end of a line is attached to, where the architect has said (ADR-0014). */
+  linkEnds: Record<string, { source: string; target: string }>
   router: ConnectionRouter
   /** When it was last touched, so a stale draft can be reasoned about later. */
   at: number

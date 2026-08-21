@@ -263,12 +263,14 @@ class GraphController {
                 // system leaves nothing else to draw the line from.
                 layout.load(graphId, viewKey).stream()
                         .map(node -> new ModelApiDtos.LayoutNodeResponse(
-                                node.elementKey(), node.x(), node.y(), node.width(), node.height(),
-                                node.parentKey(), node.z()))
+                                node.id(), node.elementKey(), node.x(), node.y(), node.width(), node.height(),
+                                node.parentId(), node.z()))
                         .toList(),
                 layout.links(graphId, viewKey).stream()
                         .map(link -> new ModelApiDtos.LayoutLinkResponse(
                                 link.linkKey(),
+                                link.sourceNodeId(),
+                                link.targetNodeId(),
                                 link.vertices().stream()
                                         .map(point -> new ModelApiDtos.PointDto(point.x(), point.y()))
                                         .toList()))
@@ -383,8 +385,15 @@ class GraphController {
                 viewKey,
                 request.nodes().stream()
                         .map(node -> new dev.archgrid.model.ViewLayoutRepository.LayoutNode(
-                                node.element(), node.x(), node.y(), node.width(), node.height(),
-                                node.parent(), node.z()))
+                                // A placement the client has not named is one it has just drawn.
+                                node.id() == null ? UUID.randomUUID() : node.id(),
+                                node.element(),
+                                node.x(),
+                                node.y(),
+                                node.width(),
+                                node.height(),
+                                node.parent(),
+                                node.z()))
                         .toList());
         if (request.links() != null) {
             layout.saveLinks(
@@ -393,6 +402,8 @@ class GraphController {
                     request.links().stream()
                             .map(link -> new dev.archgrid.model.ViewLayoutRepository.LayoutLink(
                                     link.key(),
+                                    link.sourceNode(),
+                                    link.targetNode(),
                                     (link.vertices() == null ? List.<ModelApiDtos.PointDto>of() : link.vertices())
                                             .stream()
                                                     .map(point -> new dev.archgrid.model.ViewLayoutRepository.Point(

@@ -233,7 +233,9 @@ class ModelGraphRepository {
     private String writeAttributes(List<AttributeDefinition> attributes) {
         return json.writeValueAsString(attributes.stream()
                 .map(attribute -> Map.of(
-                        "key", attribute.key(),
+                        // The slug's value, not the record: Jackson would write `{"value": "..."}`
+                        // and the reader expects a string — a round trip that only fails on read.
+                        "key", attribute.key().value(),
                         "name", attribute.name(),
                         "type", attribute.type().code()))
                 .toList());

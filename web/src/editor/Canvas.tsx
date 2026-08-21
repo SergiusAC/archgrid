@@ -9,7 +9,10 @@ import { bodyShape, iconFor, iconPlacement } from './shapes.ts'
 import type { Position } from './store.ts'
 
 export interface CanvasElement {
+  /** The placement — one drawing of an element. What the canvas addresses everything by. */
   key: string
+  /** The element being drawn. Several placements may name the same one (ADR-0014). */
+  element: string
   name: string
   typeLabel: string
   layer: Layer
@@ -28,14 +31,20 @@ export interface CanvasElement {
 
 export interface CanvasLink {
   key: string
+  /** The boxes the line runs between — placements, not elements (ADR-0014). */
   source: string
   target: string
+  /** The elements those boxes draw: what the line says, as opposed to where it is drawn. */
+  sourceElement: string
+  targetElement: string
   label: string
   type: string
   /** Implied by a chain through hidden elements, so drawn faintly and named as such. */
 }
 
 export interface Geometry {
+  /** Which element each box draws, by placement id — the canvas addresses boxes by placement. */
+  placements: Record<string, string>
   positions: Record<string, Position>
   sizes: Record<string, { width: number; height: number }>
   /** What each element is drawn inside on this view. Presentation, per view (ADR-0011). */
@@ -53,6 +62,7 @@ interface CanvasProps {
   vertices: Record<string, Position[]>
   selected: string[]
   /** The element whose name is being typed in place, straight after creation. */
+  /** The element whose name is being typed, if any. Its box is found by what it draws. */
   editingKey: string | null
   onSelect: (keys: string[]) => void
   /** The relationship the user has picked, so it can be inspected or deleted. */
@@ -79,6 +89,8 @@ interface CanvasProps {
    */
   connecting: boolean
   /** The element clicked first while the connector tool is active. */
+  /** The element the Magic Connector started from — an element, not a box: the whole point is to
+   * pick the other end, and which copy it was started from does not change what is connected. */
   connectFrom: string | null
   onConnectPick: (key: string) => void
   /**
@@ -96,6 +108,8 @@ interface CanvasProps {
   onDropHere: (at: Position) => void
   onContextMenu: (key: string, clientX: number, clientY: number) => void
   onLinkContextMenu: (key: string, clientX: number, clientY: number) => void
+  /** A line whose end was dragged onto another box of the same element (ADR-0014). */
+  onLinkEnds: (key: string, source: string, target: string) => void
   onBlankClick: () => void
   onCommitName: (key: string, name: string) => void
   onCancelEdit: () => void
@@ -338,12 +352,14 @@ export default function Canvas(props: CanvasProps) {
   const [editorBox, setEditorBox] = useState<{ x: number; y: number; width: number } | null>(null)
 
   const geometry = useCallback((): Geometry => {
+    const placements: Record<string, string> = {}
     const positions: Record<string, Position> = {}
     const sizes: Record<string, { width: number; height: number }> = {}
     const parents: Record<string, string | null> = {}
     const order: Record<string, number> = {}
     for (const element of graph.current?.getElements() ?? []) {
       const key = String(element.id)
+      placements[key] = String(element.get('agElement') ?? key)
       order[key] = element.get('z') ?? 0
       parents[key] = element.getParentCell() ? String(element.getParentCell()!.id) : null
       // Absolute, including embedded children: JointJS positions are absolute, so the stored
@@ -356,7 +372,7 @@ export default function Canvas(props: CanvasProps) {
       // Every line, bent or not: an empty list is how "this one was straightened again" travels.
       vertices[String(link.id)] = link.vertices().map((point) => ({ x: point.x, y: point.y }))
     }
-    return { positions, sizes, parents, order, vertices }
+    return { placements, positions, sizes, parents, order, vertices }
   }, [])
 
   // ------------------------------------------------------------------ mount
@@ -404,6 +420,18 @@ export default function Canvas(props: CanvasProps) {
       // altogether — the elements still selected and still opened their menu, so the canvas
       // looked alive while nothing could be moved.
       interactive: true,
+      /*
+       * A line may be moved to another box of the same element, and to nothing else.
+       *
+       * That is the whole rule. Dropping an end on a different element would silently turn one
+       * relationship into another — the diagram may choose where a line is drawn, never what it
+       * says (ADR-0014).
+       */
+      validateConnection: (sourceView, _sourceMagnet, targetView, _targetMagnet, end, linkView) => {
+        const moved = end === 'source' ? sourceView : targetView
+        const wanted = linkView?.model.get(end === 'source' ? 'agSource' : 'agTarget')
+        return Boolean(moved && wanted && moved.model.get('agElement') === wanted)
+      },
       validateEmbedding: (childView, parentView) =>
         // Never into your own descendant, which would detach the subtree from the diagram.
         !parentView.model.isEmbeddedIn(childView.model),
@@ -586,13 +614,30 @@ export default function Canvas(props: CanvasProps) {
     // -------------------------------------------------------------- routing a line by hand
     // Bendpoints appear on hover and belong to the line, not to the selection: the architect drew
     // it, so the architect routes it. Wired once — re-registering per render stacked the handlers.
+    view.on('link:connect', (linkView: joint.dia.LinkView) => {
+      const link = linkView.model
+      const source = link.get('source')?.id
+      const target = link.get('target')?.id
+      if (source && target) {
+        latest.current.onLinkEnds(String(link.id), String(source), String(target))
+      }
+    })
+
     view.on('link:mouseenter', (linkView: joint.dia.LinkView) => {
       if (latest.current.router === 'orthogonal') {
         return
       }
       linkView.addTools(
         new joint.dia.ToolsView({
-          tools: [new joint.linkTools.Vertices(), new joint.linkTools.Segments()],
+          tools: [
+            new joint.linkTools.Vertices(),
+            new joint.linkTools.Segments(),
+            // The ends, so a line can be moved to another box of the same element. Which box a
+            // line touches is presentation; what it connects is not, and validateConnection is
+            // what keeps the two apart.
+            new joint.linkTools.SourceArrowhead(),
+            new joint.linkTools.TargetArrowhead(),
+          ],
         }),
       )
     })
@@ -778,6 +823,9 @@ export default function Canvas(props: CanvasProps) {
         cell = new ArchimateShape({ id: element.key })
         cell.addTo(model)
       }
+      // Which element this box draws, carried on the cell so the geometry the canvas reports back
+      // can name it without asking anything above (ADR-0014).
+      cell.set('agElement', element.element)
       const container = props.elements.some((other) => other.parent === element.key)
       if (isNew || geometryIsNews) {
         cell.position(element.x, element.y)
@@ -799,11 +847,14 @@ export default function Canvas(props: CanvasProps) {
             `ag-layer-${element.layer}`,
             container ? 'ag-node-container' : '',
             props.selected.includes(element.key) ? 'ag-node-selected' : '',
-            props.connectFrom === element.key ? 'ag-node-connect-source' : '',
+            props.connectFrom === element.element ? 'ag-node-connect-source' : '',
           ]
             .filter(Boolean)
             .join(' '),
-          'data-key': element.key,
+          // The element, not the placement: this is what a person looking for "the Ledger box"
+          // means, and what the checks address. The placement travels beside it.
+          'data-key': element.element,
+          'data-node': element.key,
         },
         // Behaviour is rounded, a service is a pill, everything else is square — the geometry is
         // half of what the notation says, and a reader takes it in before any word.
@@ -903,6 +954,10 @@ export default function Canvas(props: CanvasProps) {
         line,
       } as joint.dia.Cell.Selectors
       cell.attr(attrs)
+      // The elements this line connects, so a dragged end can be checked against them without
+      // asking anything above the canvas.
+      cell.set('agSource', link.sourceElement)
+      cell.set('agTarget', link.targetElement)
       // Per view, not per link: the choice belongs to the diagram, and Archi puts it in the same
       // place. Orthogonal routing drops any bendpoints the line already had, which is why the
       // tools that create them are only offered on the straight router.
@@ -1066,7 +1121,8 @@ export default function Canvas(props: CanvasProps) {
       setEditorBox(null)
       return
     }
-    const cell = model.getCell(props.editingKey) as joint.dia.Element | undefined
+    const drawn = props.elements.find((element) => element.element === props.editingKey)
+    const cell = drawn ? (model.getCell(drawn.key) as joint.dia.Element | undefined) : undefined
     if (!cell) {
       setEditorBox(null)
       return
@@ -1097,7 +1153,7 @@ export default function Canvas(props: CanvasProps) {
       {editorBox && props.editingKey && (
         <NameEditor
           box={editorBox}
-          initial={props.elements.find((element) => element.key === props.editingKey)?.name ?? ''}
+          initial={props.elements.find((element) => element.element === props.editingKey)?.name ?? ''}
           onCommit={(name) => props.onCommitName(props.editingKey!, name)}
           onCancel={props.onCancelEdit}
         />
