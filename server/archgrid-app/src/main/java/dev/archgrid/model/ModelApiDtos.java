@@ -271,10 +271,12 @@ final class ModelApiDtos {
      * <p>`key` is the line as the diagram knows it: a relationship key, or the computed key of a
      * derived line. Not named `relationship`, because half of them are not one.
      */
-    record LayoutLinkResponse(String key, UUID sourceNode, UUID targetNode, List<PointDto> vertices) {}
+    record LayoutLinkResponse(
+            UUID id, String key, UUID sourceNode, UUID targetNode, List<PointDto> vertices) {}
 
     /** `sourceNode` and `targetNode` are null while the line follows the only placement there is. */
-    record LayoutLinkRequest(@NotBlank String key, UUID sourceNode, UUID targetNode, List<PointDto> vertices) {}
+    record LayoutLinkRequest(
+            UUID id, @NotBlank String key, UUID sourceNode, UUID targetNode, List<PointDto> vertices) {}
 
     record PointDto(double x, double y) {}
 

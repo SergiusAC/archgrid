@@ -268,6 +268,7 @@ class GraphController {
                         .toList(),
                 layout.links(graphId, viewKey).stream()
                         .map(link -> new ModelApiDtos.LayoutLinkResponse(
+                                link.id(),
                                 link.linkKey(),
                                 link.sourceNodeId(),
                                 link.targetNodeId(),
@@ -401,6 +402,8 @@ class GraphController {
                     viewKey,
                     request.links().stream()
                             .map(link -> new dev.archgrid.model.ViewLayoutRepository.LayoutLink(
+                                    // A line the client has not named is one it has just drawn.
+                                    link.id() == null ? UUID.randomUUID() : link.id(),
                                     link.key(),
                                     link.sourceNode(),
                                     link.targetNode(),

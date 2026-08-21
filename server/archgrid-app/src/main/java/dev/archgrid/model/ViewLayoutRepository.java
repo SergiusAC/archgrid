@@ -102,7 +102,15 @@ class ViewLayoutRepository {
      * computed key of a derived one. Keying by the relationship excluded every implied line, which
      * the editor let the user bend and then dropped in silence.
      */
-    record LayoutLink(String linkKey, UUID sourceNodeId, UUID targetNodeId, List<Point> vertices) {}
+    /**
+     * One line on one view.
+     *
+     * <p>`id` is the line; `linkKey` is what it stands for — a relationship key or a derived
+     * line's computed key — and since V15 a relationship may be drawn by several lines
+     * (ADR-0014). `sourceNodeId`/`targetNodeId` are the placements the ends attach to; null means
+     * "wherever the element is drawn".
+     */
+    record LayoutLink(UUID id, String linkKey, UUID sourceNodeId, UUID targetNodeId, List<Point> vertices) {}
 
     /**
      * The routing of every line on this view.
@@ -115,7 +123,7 @@ class ViewLayoutRepository {
         List<LayoutLink> links = new ArrayList<>();
         jdbc.sql(
                         """
-                        select l.link_key, l.source_node_id, l.target_node_id, l.vertices::text as vertices
+                        select l.id, l.link_key, l.source_node_id, l.target_node_id, l.vertices::text as vertices
                         from view_layout_link l
                         join view v on v.id = l.view_id
                         where v.model_id = :modelId and v."key" = :viewKey
@@ -124,6 +132,7 @@ class ViewLayoutRepository {
                 .param("viewKey", viewKey)
                 .query((ResultSet rs, int rowNum) -> {
                     links.add(new LayoutLink(
+                            rs.getObject("id", UUID.class),
                             rs.getString("link_key"),
                             rs.getObject("source_node_id", UUID.class),
                             rs.getObject("target_node_id", UUID.class),
@@ -140,48 +149,57 @@ class ViewLayoutRepository {
      * <p>Sent whole rather than as a change, like everything else in the layout: the client holds
      * the arrangement and the server stores what it is told.
      */
+    /**
+     * Writes the lines of a view, and removes the ones it no longer has.
+     *
+     * <p>The same shape as the nodes' save since V15: the client sends every line worth storing,
+     * and anything absent from the payload is absent on purpose — a straightened extra line, a
+     * removed duplicate. A relationship whose only line carries nothing simply has no row, which
+     * is every line on a view where nothing is drawn twice.
+     */
     void saveLinks(UUID modelId, String viewKey, List<LayoutLink> links) {
+        UUID viewId = viewId(modelId, viewKey);
+        if (viewId == null) {
+            return;
+        }
+
         for (LayoutLink link : links) {
-            // Nothing to remember at all: no bendpoints and no chosen ends.
-            if (link.vertices().isEmpty() && link.sourceNodeId() == null && link.targetNodeId() == null) {
-                jdbc.sql(
-                                """
-                                delete from view_layout_link l
-                                using view v
-                                where l.view_id = v.id
-                                  and v.model_id = :modelId and v."key" = :viewKey
-                                  and l.link_key = :linkKey
-                                """)
-                        .param("modelId", modelId)
-                        .param("viewKey", viewKey)
-                        .param("linkKey", link.linkKey())
-                        .update();
-                continue;
-            }
-            // A left join, not a join: a derived line has no row in `relationship` to match, and
-            // that is exactly the case this table used to lose. Where there is one, the reference
-            // is kept so deleting the relationship takes its routing with it.
+            // A left join, not a join: a derived line has no row in `relationship` to match.
+            // Where there is one, the reference is kept so deleting the relationship takes its
+            // lines with it.
             jdbc.sql(
                             """
-                            insert into view_layout_link (view_id, relationship_id, link_key, vertices,
+                            insert into view_layout_link (id, view_id, relationship_id, link_key, vertices,
                                                           source_node_id, target_node_id)
-                            select v.id, r.id, :linkKey, cast(:vertices as jsonb), :sourceNode, :targetNode
+                            select :id, v.id, r.id, :linkKey, cast(:vertices as jsonb), :sourceNode, :targetNode
                             from view v
                             left join relationship r on r.model_id = v.model_id and r."key" = :linkKey
-                            where v.model_id = :modelId and v."key" = :viewKey
-                            on conflict (view_id, link_key)
+                            where v.id = :viewId
+                            on conflict (id)
                             do update set relationship_id = excluded.relationship_id,
                                           vertices = excluded.vertices,
                                           source_node_id = excluded.source_node_id,
                                           target_node_id = excluded.target_node_id,
                                           updated_at = now()
                             """)
+                    .param("id", link.id())
+                    .param("viewId", viewId)
                     .param("vertices", json.writeValueAsString(link.vertices()))
                     .param("sourceNode", link.sourceNodeId())
                     .param("targetNode", link.targetNodeId())
                     .param("linkKey", link.linkKey())
-                    .param("modelId", modelId)
-                    .param("viewKey", viewKey)
+                    .update();
+        }
+
+        List<UUID> kept = links.stream().map(LayoutLink::id).toList();
+        if (kept.isEmpty()) {
+            jdbc.sql("delete from view_layout_link where view_id = :viewId")
+                    .param("viewId", viewId)
+                    .update();
+        } else {
+            jdbc.sql("delete from view_layout_link where view_id = :viewId and id <> all (:kept)")
+                    .param("viewId", viewId)
+                    .param("kept", kept.toArray(UUID[]::new))
                     .update();
         }
     }

@@ -32,10 +32,10 @@ export interface LayoutDraft {
   order: Record<string, number>
   /** Relationships this view declines to draw. Also presentation (ADR-0011). */
   hidden: string[]
-  /** Where each line bends, by relationship key. Presentation as much as the coordinates are. */
+  /** Where each line bends, by line id. Presentation as much as the coordinates are. */
   vertices: Record<string, { x: number; y: number }[]>
-  /** Which box each end of a line is attached to, where the architect has said (ADR-0014). */
-  linkEnds: Record<string, { source: string; target: string }>
+  /** The lines of this view: which relationship each stands for, and its chosen ends (V15). */
+  lines: Record<string, { key: string; source: string | null; target: string | null }>
   router: ConnectionRouter
   /** When it was last touched, so a stale draft can be reasoned about later. */
   at: number

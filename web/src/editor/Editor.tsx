@@ -208,10 +208,13 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    * quietly put it back to null. State lags by a render; this does not.
    */
   const parentsRef = useRef<Record<string, string | null>>({})
-  const rememberLinkEnds = useCallback((next: Record<string, { source: string; target: string }>) => {
-    linkEndsRef.current = next
-    setLinkEnds(next)
-  }, [])
+  const rememberLines = useCallback(
+    (next: Record<string, { key: string; source: string | null; target: string | null }>) => {
+      linesRef.current = next
+      setLines(next)
+    },
+    [],
+  )
   const rememberPlacements = useCallback((next: Record<string, string>) => {
     placementsRef.current = next
     setPlacements(next)
@@ -226,8 +229,10 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    * Empty for every line on a view that draws nothing twice — the ends follow the only boxes there
    * are. It fills up when somebody drags an end onto a second copy (ADR-0014).
    */
-  const [linkEnds, setLinkEnds] = useState<Record<string, { source: string; target: string }>>({})
-  const linkEndsRef = useRef<Record<string, { source: string; target: string }>>({})
+  const [lines, setLines] = useState<Record<string, { key: string; source: string | null; target: string | null }>>(
+    {},
+  )
+  const linesRef = useRef<Record<string, { key: string; source: string | null; target: string | null }>>({})
   /**
    * Relationships this view declines to draw.
    *
@@ -325,12 +330,10 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         }
       }
       const storedVertices: Record<string, Position[]> = {}
-      const storedEnds: Record<string, { source: string; target: string }> = {}
+      const storedLines: Record<string, { key: string; source: string | null; target: string | null }> = {}
       for (const link of data.layoutLinks) {
-        storedVertices[link.key] = link.vertices
-        if (link.sourceNode && link.targetNode) {
-          storedEnds[link.key] = { source: link.sourceNode, target: link.targetNode }
-        }
+        storedVertices[link.id] = link.vertices
+        storedLines[link.id] = { key: link.key, source: link.sourceNode, target: link.targetNode }
       }
       const draft = withDraft ? readDraft(workspace, data.key) : null
       rememberPlacements(draft ? { ...storedPlacements, ...draft.placements } : storedPlacements)
@@ -340,7 +343,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       rememberOrder(draft ? { ...storedOrder, ...draft.order } : storedOrder)
       rememberHidden(draft?.hidden ?? data.hidden)
       rememberVertices(draft ? { ...storedVertices, ...draft.vertices } : storedVertices)
-      rememberLinkEnds(draft ? { ...storedEnds, ...draft.linkEnds } : storedEnds)
+      rememberLines(draft ? { ...storedLines, ...draft.lines } : storedLines)
       setRouter(draft?.router ?? data.router)
       routerRef.current = draft?.router ?? data.router
       setDirty(draft != null)
@@ -354,7 +357,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       rememberOrder,
       rememberHidden,
       rememberVertices,
-      rememberLinkEnds,
+      rememberLines,
     ],
   )
 
@@ -454,7 +457,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       geometry: Geometry & {
         router: ConnectionRouter
         hidden: string[]
-        linkEnds: Record<string, { source: string; target: string }>
+        lines: Record<string, { key: string; source: string | null; target: string | null }>
       },
     ) =>
       api.saveLayout(
@@ -463,7 +466,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         layoutNodes(geometry),
         geometry.router,
         geometry.hidden,
-        layoutLinks(geometry, geometry.linkEnds),
+        layoutLinks(geometry.lines, geometry.vertices),
       ),
     /**
      * Tells the cache what was just written.
@@ -490,7 +493,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           ? {
               ...current,
               layout: layoutNodes(geometry),
-              layoutLinks: layoutLinks(geometry, geometry.linkEnds),
+              layoutLinks: layoutLinks(geometry.lines, geometry.vertices),
               hidden: geometry.hidden,
               router: geometry.router,
             }
@@ -525,7 +528,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         order: orderRef.current,
         hidden: hiddenRef.current,
         vertices: verticesRef.current,
-        linkEnds: linkEndsRef.current,
+        lines: linesRef.current,
         router: nextRouter ?? routerRef.current,
       }
       setDirty(true)
@@ -559,7 +562,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       order: orderRef.current,
       hidden: hiddenRef.current,
       vertices: verticesRef.current,
-      linkEnds: linkEndsRef.current,
+      lines: linesRef.current,
       router,
     })
     clearDraft(workspace, viewKey)
@@ -766,6 +769,38 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    * shows no line to the outside — and the cost is written down where the decision is.
    */
   /**
+   * Every relationship on the view has at least one line, and a line whose relationship left the
+   * model goes with it.
+   *
+   * Materialised in state rather than computed per render, because a line is a thing with an
+   * identity now: a second one can exist, and which one carries the bendpoints matters (V15).
+   */
+  useEffect(() => {
+    if (!view.data || geometryFor !== view.data.key) {
+      return
+    }
+    const known = new Set((view.data.relationships ?? []).map((relationship) => relationship.key))
+    const next = { ...linesRef.current }
+    let changed = false
+    for (const [lineId, line] of Object.entries(next)) {
+      if (!known.has(line.key)) {
+        delete next[lineId]
+        changed = true
+      }
+    }
+    const drawn = new Set(Object.values(next).map((line) => line.key))
+    for (const key of known) {
+      if (!drawn.has(key)) {
+        next[crypto.randomUUID()] = { key, source: null, target: null }
+        changed = true
+      }
+    }
+    if (changed) {
+      rememberLines(next)
+    }
+  }, [view.data, geometryFor, lines, rememberLines])
+
+  /**
    * Which box each end of a line attaches to.
    *
    * Chosen by the architect where they have said so — dragging an end onto another copy is how —
@@ -773,29 +808,33 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    * view until somebody draws a second, this is exactly what it always was.
    */
   const endsOf = useCallback(
-    (relationshipKey: string, source: string, target: string) => {
-      const chosen = linkEnds[relationshipKey]
-      const at = (node: string | undefined, element: string) =>
+    (line: { source: string | null; target: string | null }, source: string, target: string) => {
+      const at = (node: string | null, element: string) =>
         node && placements[node] === element ? node : placementsOf(element)[0]
-      return { source: at(chosen?.source, source), target: at(chosen?.target, target) }
+      return { source: at(line.source, source), target: at(line.target, target) }
     },
-    [linkEnds, placements, placementsOf],
+    [placements, placementsOf],
   )
 
   /**
-   * One kind of line, and it stands for a relationship the model states (ADR-0013).
+   * One cell per line, not per relationship — a relationship may be drawn by several (V15). Each
+   * line stands for a relationship the model states (ADR-0013).
    */
   const canvasLinks: CanvasLink[] = useMemo(
     () =>
-      (view.data?.relationships ?? [])
-        .filter((relationship) => !hidden.includes(relationship.key))
-        .map((relationship) => {
-          const ends = endsOf(relationship.key, relationship.source, relationship.target)
+      Object.entries(lines)
+        .map(([lineId, line]): CanvasLink | null => {
+          const relationship = relationshipsByKey[line.key]
+          if (!relationship || hidden.includes(line.key)) {
+            return null
+          }
+          const ends = endsOf(line, relationship.source, relationship.target)
           if (!ends.source || !ends.target || expressedByNesting(relationship, ends.source, ends.target)) {
             return null
           }
           return {
-            key: relationship.key,
+            key: lineId,
+            relationship: line.key,
             source: ends.source,
             target: ends.target,
             sourceElement: relationship.source,
@@ -805,7 +844,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           }
         })
         .filter((link): link is CanvasLink => link !== null),
-    [view.data, endsOf, expressedByNesting, hidden],
+    [lines, relationshipsByKey, endsOf, expressedByNesting, hidden],
   )
 
   /** Live geometry from a drag or resize. The save is debounced; the state is not. */
@@ -895,11 +934,69 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
 
   /** A line whose end was dragged onto another box of the same element. */
   const onLinkEnds = useCallback(
-    (key: string, source: string, target: string) => {
-      rememberLinkEnds({ ...linkEndsRef.current, [key]: { source, target } })
+    (lineId: string, source: string, target: string) => {
+      const line = linesRef.current[lineId]
+      if (!line) {
+        return
+      }
+      rememberLines({ ...linesRef.current, [lineId]: { ...line, source, target } })
       rememberChange(positions)
     },
-    [rememberLinkEnds, rememberChange, positions],
+    [rememberLines, rememberChange, positions],
+  )
+
+  /**
+   * Draws this relationship a second time — a second line, to reach a second copy (V15).
+   *
+   * Born with a bendpoint, deliberately: a new line with default ends lies exactly on top of the
+   * one it came from, and a line nobody can see or grab is not a feature. The kink makes it
+   * visible; the architect then drags its ends where they want them.
+   */
+  const drawLineAgain = useCallback(
+    (lineId: string) => {
+      const line = linesRef.current[lineId]
+      const relationship = line ? relationshipsByKey[line.key] : null
+      if (!line || !relationship) {
+        return
+      }
+      const ends = endsOf(line, relationship.source, relationship.target)
+      const from = ends.source ? positions[ends.source] : null
+      const to = ends.target ? positions[ends.target] : null
+      const middle =
+        from && to
+          ? { x: Math.round((from.x + to.x) / 2) + 60, y: Math.round((from.y + to.y) / 2) + 60 }
+          : { x: 200, y: 200 }
+      const copy = crypto.randomUUID()
+      rememberLines({ ...linesRef.current, [copy]: { key: line.key, source: line.source, target: line.target } })
+      rememberVertices({ ...verticesRef.current, [copy]: [middle] })
+      rememberChange(positions)
+      setGeometryVersion((version) => version + 1)
+    },
+    [relationshipsByKey, endsOf, positions, rememberLines, rememberVertices, rememberChange],
+  )
+
+  /** Removes one line of a relationship drawn several times. The last line is not removable. */
+  const removeLine = useCallback(
+    (lineId: string) => {
+      const line = linesRef.current[lineId]
+      if (!line) {
+        return
+      }
+      const siblings = Object.values(linesRef.current).filter((other) => other.key === line.key)
+      if (siblings.length < 2) {
+        return
+      }
+      const next = { ...linesRef.current }
+      delete next[lineId]
+      const nextVertices = { ...verticesRef.current }
+      delete nextVertices[lineId]
+      rememberLines(next)
+      rememberVertices(nextVertices)
+      rememberChange(positions)
+      setSelectedLink(null)
+      setGeometryVersion((version) => version + 1)
+    },
+    [rememberLines, rememberVertices, rememberChange, positions],
   )
 
   const onGeometryStart = useCallback(() => {
@@ -1607,7 +1704,14 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         duplicateSelection()
       } else if ((event.key === 'Delete' || event.key === 'Backspace') && selectedLink) {
         event.preventDefault()
-        deleteRelationship(selectedLink)
+        // The cell is a line; Delete on an extra line removes the line, on the last one the
+        // relationship — the same escalation the element side has with boxes and membership.
+        const line = linesRef.current[selectedLink]
+        if (line && Object.values(linesRef.current).filter((other) => other.key === line.key).length > 1) {
+          removeLine(selectedLink)
+        } else if (line) {
+          deleteRelationship(line.key)
+        }
       } else if ((event.key === 'Delete' || event.key === 'Backspace') && selected.length > 0) {
         // The easiest key to hit by accident takes things off the diagram, never out of the
         // repository.
@@ -1622,7 +1726,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [undo, redo, save, selected, selectedLink, deleteRelationship, removeFromView, copySelection, pasteHere, duplicateSelection])
+  }, [undo, redo, save, selected, selectedLink, deleteRelationship, removeLine, removeFromView, copySelection, pasteHere, duplicateSelection])
 
   const viewItems: TreeItem[] = useMemo(
     () =>
@@ -1991,7 +2095,12 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
                   setContext({ node, element, x, y })
                 }
               }}
-              onLinkContextMenu={(key, x, y) => setLinkContext({ key, x, y })}
+              onLinkContextMenu={(line, x, y) => {
+                const known = linesRef.current[line]
+                if (known) {
+                  setLinkContext({ line, key: known.key, x, y })
+                }
+              }}
               onLinkEnds={onLinkEnds}
               onBlankClick={() => setContext(null)}
               onCommitName={(element, name) => {
@@ -2162,6 +2271,15 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         <LinkMenu
           target={linkContext}
           relationship={relationshipsByKey[linkContext.key]}
+          lineCount={Object.values(lines).filter((line) => line.key === linkContext.key).length}
+          onDrawAgain={() => {
+            drawLineAgain(linkContext.line)
+            setLinkContext(null)
+          }}
+          onRemoveLine={() => {
+            removeLine(linkContext.line)
+            setLinkContext(null)
+          }}
           elementsByKey={byKey}
           onClose={() => setLinkContext(null)}
           onHide={() => {
@@ -2229,14 +2347,31 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
  * A line whose ends are the only boxes there are needs no row, and gets none — which is every line
  * on a view where nothing is drawn twice.
  */
-function layoutLinks({ vertices }: Geometry, ends: Record<string, { source: string; target: string }>) {
-  const keys = new Set([...Object.keys(vertices), ...Object.keys(ends)])
-  return [...keys].map((key) => ({
-    key,
-    sourceNode: ends[key]?.source ?? null,
-    targetNode: ends[key]?.target ?? null,
-    vertices: vertices[key] ?? [],
-  }))
+function layoutLinks(
+  lines: Record<string, { key: string; source: string | null; target: string | null }>,
+  vertices: Record<string, Position[]>,
+) {
+  // How many lines draw each relationship: a second line is worth a row even when it is straight
+  // and its ends follow the defaults, because its existence is the information.
+  const perKey = new Map<string, number>()
+  for (const line of Object.values(lines)) {
+    perKey.set(line.key, (perKey.get(line.key) ?? 0) + 1)
+  }
+  return Object.entries(lines)
+    .filter(
+      ([lineId, line]) =>
+        (vertices[lineId]?.length ?? 0) > 0 ||
+        line.source !== null ||
+        line.target !== null ||
+        (perKey.get(line.key) ?? 0) > 1,
+    )
+    .map(([lineId, line]) => ({
+      id: lineId,
+      key: line.key,
+      sourceNode: line.source,
+      targetNode: line.target,
+      vertices: vertices[lineId] ?? [],
+    }))
 }
 
 /**

@@ -3,6 +3,9 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import type { ModelElement, ModelRelationship } from '../api/types.ts'
 
 export interface LinkTarget {
+  /** The line that was right-clicked — one of possibly several drawing this relationship (V15). */
+  line: string
+  /** The relationship it stands for. */
   key: string
   x: number
   y: number
@@ -12,9 +15,15 @@ interface LinkMenuProps {
   target: LinkTarget
   relationship: ModelRelationship
   elementsByKey: Record<string, ModelElement>
+  /** How many lines draw this relationship on this view. */
+  lineCount: number
   onClose: () => void
   onHide: () => void
   onDelete: () => void
+  /** A second line for the same relationship — how it reaches a second copy (V15). */
+  onDrawAgain: () => void
+  /** Removes this line; offered only while another one remains. */
+  onRemoveLine: () => void
 }
 
 /**
@@ -29,9 +38,12 @@ export default function LinkMenu({
   target,
   relationship,
   elementsByKey,
+  lineCount,
   onClose,
   onHide,
   onDelete,
+  onDrawAgain,
+  onRemoveLine,
 }: LinkMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
   const [placement, setPlacement] = useState({ left: target.x, top: target.y })
@@ -67,6 +79,18 @@ export default function LinkMenu({
         </header>
 
         <div className="ag-context-actions">
+          {/* Line-level acts above the relationship-level ones: they change where things are
+              drawn, never what the model says (ADR-0014). */}
+          <div className="ag-context-row">
+            <button type="button" onClick={onDrawAgain} title="Draw this relationship with a second line">
+              Draw again
+            </button>
+            {lineCount > 1 && (
+              <button type="button" onClick={onRemoveLine} title="Remove this line; the relationship stays">
+                Remove this line
+              </button>
+            )}
+          </div>
           <button type="button" onClick={onHide}>
             Hide on this view
             <small>Stays in the model, drawn on other views</small>

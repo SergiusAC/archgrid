@@ -199,7 +199,9 @@ export interface Usage {
  * boxes in the way (ADR-0003).
  */
 export interface LayoutLink {
-  /** The line as the diagram knows it: a relationship key, or the computed key of a derived line. */
+  /** One line on one view. A relationship may be drawn by several (ADR-0014, V15). */
+  id: string
+  /** What the line stands for: a relationship key, or the computed key of a derived line. */
   key: string
   /** Which placements the line runs between; null while it follows the only one there is. */
   sourceNode: string | null

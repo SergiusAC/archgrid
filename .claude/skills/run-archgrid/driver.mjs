@@ -1663,6 +1663,74 @@ async function interactions(page) {
   await page.keyboard.press('Control+s')
   await page.waitForTimeout(2000)
 
+  /*
+   * --- the same relationship, drawn twice ---
+   *
+   * The other half of duplicates (V15): a relationship may be drawn by several lines, which is
+   * what lets it reach a second copy of an element instead of pulling one line across the diagram.
+   */
+  await dragFromPalette(page, 'Application Component', { x: freshCanvas.x + 700, y: freshCanvas.y + 420 })
+  if (await page.locator('.ag-node-name-input').count()) {
+    await page.locator('.ag-node-name-input').fill('User')
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(2500)
+  }
+  const userKey = await keyOf('User')
+  await page.getByRole('button', { name: /^Connect/ }).click()
+  await clickNode(userKey)
+  await page.waitForTimeout(300)
+  await clickNode(sharedKey)
+  await page.waitForTimeout(1200)
+  if (await page.locator('.ag-picker').count()) {
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(2500)
+  }
+  const oneLine = await page.locator('.ag-paper .ag-link').count()
+  check('the relationship between them is drawn', oneLine === 1, `${oneLine} lines`)
+  const relKey = await page.locator('.ag-paper .ag-link').first().getAttribute('data-key')
+
+  const lineMiddle = await page.evaluate(() => {
+    const path = document.querySelector('.ag-paper .ag-link .ag-link-line')
+    const middle = path.getPointAtLength(path.getTotalLength() / 2)
+    const at = new DOMPoint(middle.x, middle.y).matrixTransform(path.getScreenCTM())
+    return { x: at.x, y: at.y }
+  })
+  await page.mouse.click(lineMiddle.x, lineMiddle.y, { button: 'right' })
+  await page.waitForSelector('.ag-context-link', { timeout: 5000 })
+  await page.locator('.ag-context-link button', { hasText: 'Draw again' }).click()
+  await page.waitForTimeout(1200)
+  const linesOfRel = () => page.locator(`.ag-paper .ag-link[data-key="${relKey}"]`).count()
+  check('a relationship can be drawn by a second line', (await linesOfRel()) === 2, `${await linesOfRel()} lines`)
+
+  await page.keyboard.press('Control+s')
+  await page.waitForTimeout(2500)
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await openRepository(page)
+  await page.locator('.ag-tree-item', { hasText: placementView }).first().click()
+  await page.waitForTimeout(3500)
+  check('and both lines survive a reload', (await linesOfRel()) === 2, `${await linesOfRel()} lines`)
+  await page.screenshot({ path: `${outDir}/51-two-lines.png` })
+
+  // Removing the extra line is layout; the relationship stays in the model.
+  const extraMiddle = await page.evaluate(() => {
+    const paths = [...document.querySelectorAll('.ag-paper .ag-link .ag-link-line')]
+    const bent = paths.sort((a, b) => b.getTotalLength() - a.getTotalLength())[0]
+    const middle = bent.getPointAtLength(bent.getTotalLength() / 2)
+    const at = new DOMPoint(middle.x, middle.y).matrixTransform(bent.getScreenCTM())
+    return { x: at.x, y: at.y }
+  })
+  await page.mouse.click(extraMiddle.x, extraMiddle.y, { button: 'right' })
+  await page.waitForSelector('.ag-context-link', { timeout: 5000 })
+  await page.locator('.ag-context-link button', { hasText: 'Remove this line' }).click()
+  await page.waitForTimeout(1200)
+  check(
+    'removing one of two lines keeps the relationship',
+    (await linesOfRel()) === 1,
+    `${await linesOfRel()} lines`,
+  )
+  await page.keyboard.press('Control+s')
+  await page.waitForTimeout(2000)
+
   report()
 }
 

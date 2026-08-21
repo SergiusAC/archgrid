@@ -30,7 +30,10 @@ export interface CanvasElement {
 }
 
 export interface CanvasLink {
+  /** One line — a relationship may be drawn by several (V15), so the cell is the line. */
   key: string
+  /** The relationship this line stands for: what checks, hiding and deletion address. */
+  relationship: string
   /** The boxes the line runs between — placements, not elements (ADR-0014). */
   source: string
   target: string
@@ -949,7 +952,9 @@ export default function Canvas(props: CanvasProps) {
           class:
             `joint-cell joint-link joint-theme-default ag-link` +
             (props.selectedLink === link.key ? ' ag-link-selected' : ''),
-          'data-key': link.key,
+          // The relationship for the humans and the checks; the line for the machinery.
+          'data-key': link.relationship,
+          'data-line': link.key,
         },
         line,
       } as joint.dia.Cell.Selectors
@@ -987,6 +992,16 @@ export default function Canvas(props: CanvasProps) {
         const stored = props.vertices[link.key]
         if (stored) {
           cell.vertices(stored)
+        }
+        // The ends too: a second line of the same relationship differs from the first exactly in
+        // where it attaches, and an undo or reload has to be able to put an end back.
+        if (existing) {
+          if (String(cell.get('source')?.id ?? '') !== link.source) {
+            cell.source({ id: link.source })
+          }
+          if (String(cell.get('target')?.id ?? '') !== link.target) {
+            cell.target({ id: link.target })
+          }
         }
       }
       if (!existing) {
