@@ -140,6 +140,7 @@ SetElementDocumentation(key, documentation)
 SetElementProperty(key, property, value)      value = null удаляет
 DeleteElement(key)
 AddRelationship(key, type, source, target, name)
+SetRelationshipProperty(key, property, value) value = null удаляет
 DeleteRelationship(key)
 ```
 

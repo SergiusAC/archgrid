@@ -2,6 +2,7 @@ package dev.archgrid.model;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -257,6 +258,98 @@ class GraphApiIT {
         mockMvc.perform(get("/api/workspaces/{ws}/elements", WORKSPACE).with(jwt()))
                 .andExpect(jsonPath("$[0].profile").value("Microservice"))
                 .andExpect(jsonPath("$[0].conceptType").value("ApplicationComponent"));
+    }
+
+    @Test
+    @DisplayName("a profile can be defined over the API, and refuses what the language forbids")
+    void defines_and_refuses_profiles() throws Exception {
+        mockMvc.perform(get("/api/workspaces/{ws}", WORKSPACE).with(jwt()));
+
+        mockMvc.perform(post("/api/workspaces/{ws}/profiles", WORKSPACE)
+                        .with(jwt())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(
+                                """
+                                {"name":"Microservice","concept":"ApplicationComponent",
+                                 "attributes":[{"key":"owner-team","name":"Owning team","type":"string"}]}
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.name").value("Microservice"));
+
+        // Defined, therefore usable as a type — which is the whole point of a profile.
+        applyCommands(
+                null,
+                "Add a microservice",
+                """
+                [{"op":"create-element","key":"payments","type":"Microservice","name":"Payments"}]
+                """);
+        mockMvc.perform(get("/api/workspaces/{ws}/elements", WORKSPACE).with(jwt()))
+                .andExpect(jsonPath("$[0].profile").value("Microservice"))
+                .andExpect(jsonPath("$[0].conceptType").value("ApplicationComponent"));
+
+        // The same name twice: a palette entry and a DSL identifier must mean one thing.
+        mockMvc.perform(post("/api/workspaces/{ws}/profiles", WORKSPACE)
+                        .with(jwt())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Microservice","concept":"Node"}
+                                """))
+                .andExpect(status().isUnprocessableContent());
+
+        // A name the language already uses would shadow a concept.
+        mockMvc.perform(post("/api/workspaces/{ws}/profiles", WORKSPACE)
+                        .with(jwt())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"ApplicationComponent","concept":"ApplicationComponent"}
+                                """))
+                .andExpect(status().isUnprocessableContent());
+
+        // And a concept that cannot be specialised is refused by the matrix, not by a list here.
+        mockMvc.perform(post("/api/workspaces/{ws}/profiles", WORKSPACE)
+                        .with(jwt())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Special","concept":"Relationship"}
+                                """))
+                .andExpect(status().isUnprocessableContent());
+
+        // In use, so it cannot be removed: the element would be left claiming a type nothing
+        // defines. The database says so through `on delete restrict`.
+        mockMvc.perform(delete("/api/workspaces/{ws}/profiles/{name}", WORKSPACE, "Microservice").with(jwt()))
+                .andExpect(status().isUnprocessableContent());
+    }
+
+    @Test
+    @DisplayName("a relationship carries properties, and a command can set them")
+    void sets_a_relationship_property() throws Exception {
+        applyCommands(
+                null,
+                "Two elements and a line",
+                """
+                [{"op":"create-element","key":"a","type":"ApplicationComponent","name":"A"},
+                 {"op":"create-element","key":"b","type":"ApplicationComponent","name":"B"},
+                 {"op":"add-relationship","key":"a-b","type":"Flow","source":"a","target":"b"}]
+                """);
+
+        applyCommands(
+                null,
+                "Annotate it",
+                """
+                [{"op":"set-relationship-property","key":"a-b","property":"protocol","value":"AMQP"}]
+                """);
+        mockMvc.perform(get("/api/workspaces/{ws}/relationships", WORKSPACE).with(jwt()))
+                .andExpect(jsonPath("$[0].properties.protocol").value("AMQP"));
+
+        // Null removes it, the same reading as on an element.
+        applyCommands(
+                null,
+                "Take it back",
+                """
+                [{"op":"set-relationship-property","key":"a-b","property":"protocol","value":null}]
+                """);
+        mockMvc.perform(get("/api/workspaces/{ws}/relationships", WORKSPACE).with(jwt()))
+                .andExpect(jsonPath("$[0].properties.protocol").doesNotExist());
     }
 
     @Test

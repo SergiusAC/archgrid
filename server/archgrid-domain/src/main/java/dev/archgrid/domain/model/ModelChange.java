@@ -84,6 +84,11 @@ public final class ModelChange {
                     element -> element.withProperty(property.property(), property.value()));
             case ModelCommand.DeleteElement delete -> deleteElement(graph, delete, violations);
             case ModelCommand.AddRelationship add -> addRelationship(graph, add, metamodel, violations);
+            case ModelCommand.SetRelationshipProperty property -> mutateRelationship(
+                    graph,
+                    property.key(),
+                    violations,
+                    relationship -> relationship.withProperty(property.property(), property.value()));
             case ModelCommand.DeleteRelationship delete -> {
                 if (!graph.containsRelationship(delete.key())) {
                     violations.add(Violation.of(
@@ -175,6 +180,24 @@ public final class ModelChange {
             }
         }
         mutateView(graph, set.key(), violations, view -> view.withFilters(new LinkedHashSet<>(set.filters())));
+    }
+
+    private static void mutateRelationship(
+            ModelGraph graph,
+            Slug key,
+            List<Violation> violations,
+            java.util.function.UnaryOperator<Relationship> mutation) {
+        Optional<Relationship> relationship = graph.relationship(key);
+        if (relationship.isEmpty()) {
+            violations.add(Violation.of(
+                    Violation.Code.UNKNOWN_SUBJECT, key, "There is no relationship '" + key + "' in this model."));
+            return;
+        }
+        try {
+            graph.put(mutation.apply(relationship.get()));
+        } catch (IllegalArgumentException ex) {
+            violations.add(Violation.of(Violation.Code.NOT_APPLICABLE, key, ex.getMessage()));
+        }
     }
 
     private static void mutateView(

@@ -74,6 +74,8 @@ final class ModelApiDtos {
                         slug(require(source, "source"), "source"),
                         slug(require(target, "target"), "target"),
                         name);
+                case "set-relationship-property" -> new ModelCommand.SetRelationshipProperty(
+                        subject, require(property, "property"), value);
                 case "delete-relationship" -> new ModelCommand.DeleteRelationship(subject);
                 case "create-view" -> new ModelCommand.CreateView(
                         subject, require(name, "name"), require(viewpoint, "viewpoint"));
@@ -295,6 +297,34 @@ final class ModelApiDtos {
     }
 
     record AttributeResponse(String key, String name, String type) {}
+
+    /**
+     * A profile as the client defines one.
+     *
+     * <p>Attribute types are exactly the exchange format's six, so nothing an architect records
+     * here is lost on export (ADR-0002).
+     */
+    record ProfileRequest(
+            @NotBlank @Size(max = 100) String name,
+            @NotBlank String concept,
+            List<AttributeRequest> attributes) {
+
+        dev.archgrid.domain.profile.Profile toProfile() {
+            return new dev.archgrid.domain.profile.Profile(
+                    name,
+                    concept,
+                    (attributes == null ? List.<AttributeRequest>of() : attributes)
+                            .stream().map(AttributeRequest::toDefinition).toList());
+        }
+    }
+
+    record AttributeRequest(@NotBlank String key, @NotBlank String name, @NotBlank String type) {
+
+        dev.archgrid.domain.profile.AttributeDefinition toDefinition() {
+            return dev.archgrid.domain.profile.AttributeDefinition.of(
+                    key, name, dev.archgrid.domain.profile.AttributeType.fromCode(type));
+        }
+    }
 
     record CommitResponseItem(UUID id, long seq, String author, String message, Instant createdAt) {
 

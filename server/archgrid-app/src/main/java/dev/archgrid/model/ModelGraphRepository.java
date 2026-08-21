@@ -196,6 +196,50 @@ class ModelGraphRepository {
     }
 
     /**
+     * Adds a profile to a model.
+     *
+     * <p>Profiles are the customer's own vocabulary — "Microservice is a kind of Application
+     * Component" — and they are not versioned by commits: the table has no validity range, and a
+     * profile is a statement about the language this model speaks rather than about the
+     * architecture it describes (ADR-0002). Which is a wart worth naming: the history cannot say
+     * when the vocabulary changed. Versioning it is a migration and a decision, not an oversight
+     * to fix in passing.
+     */
+    void insertProfile(UUID modelId, Profile profile) {
+        jdbc.sql("insert into profile (id, model_id, name, concept_type, attributes) "
+                        + "values (:id, :modelId, :name, :concept, cast(:attributes as jsonb))")
+                .param("id", UUID.randomUUID())
+                .param("modelId", modelId)
+                .param("name", profile.name())
+                .param("concept", profile.conceptType())
+                .param("attributes", writeAttributes(profile.attributes()))
+                .update();
+    }
+
+    /**
+     * Removes a profile.
+     *
+     * <p>The database refuses while any element version — current or historical — is typed by it,
+     * through `on delete restrict`. That refusal is the point: an element that lost its profile
+     * would be left claiming a type nothing defines.
+     */
+    int deleteProfile(UUID modelId, String name) {
+        return jdbc.sql("delete from profile where model_id = :modelId and name = :name")
+                .param("modelId", modelId)
+                .param("name", name)
+                .update();
+    }
+
+    private String writeAttributes(List<AttributeDefinition> attributes) {
+        return json.writeValueAsString(attributes.stream()
+                .map(attribute -> Map.of(
+                        "key", attribute.key(),
+                        "name", attribute.name(),
+                        "type", attribute.type().code()))
+                .toList());
+    }
+
+    /**
      * A view's filters, which are conditions on what it draws and never on what belongs to it.
      *
      * <p>An entry we cannot make sense of is dropped rather than fatal: a filter is presentation

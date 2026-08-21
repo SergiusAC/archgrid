@@ -150,6 +150,16 @@ export function invert(
         })
         break
       }
+      case 'set-relationship-property': {
+        const previous = before.relationships[command.key]
+        inverse.push({
+          op: 'set-relationship-property',
+          key: command.key,
+          property: command.property,
+          value: previous?.properties[command.property] ?? null,
+        })
+        break
+      }
       case 'delete-element': {
         const previous = before.elements[command.key]
         if (previous) {

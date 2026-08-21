@@ -50,4 +50,19 @@ public record Relationship(
     public boolean touches(Slug elementKey) {
         return source.equals(elementKey) || target.equals(elementKey);
     }
+
+    /**
+     * A null {@code value} removes the property, which is how the command surface expresses
+     * deletion — the same reading as on an element.
+     */
+    public Relationship withProperty(String property, String value) {
+        Objects.requireNonNull(property, "property must not be null");
+        Map<String, String> updated = new LinkedHashMap<>(properties);
+        if (value == null) {
+            updated.remove(property);
+        } else {
+            updated.put(property, value);
+        }
+        return new Relationship(key, conceptType, source, target, name, updated);
+    }
 }

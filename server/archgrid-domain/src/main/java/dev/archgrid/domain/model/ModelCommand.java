@@ -75,6 +75,27 @@ public sealed interface ModelCommand {
     }
 
     /**
+     * A null {@code value} removes the property.
+     *
+     * <p>Relationships carry properties as elements do — ArchiMate says so, the schema has held
+     * the column since phase 2, and the exchange format carries them (ADR-0012). Until this
+     * command existed they could be read and never written, which the import would have
+     * discovered the hard way.
+     */
+    record SetRelationshipProperty(Slug key, String property, String value) implements ModelCommand {
+
+        public SetRelationshipProperty {
+            Objects.requireNonNull(key, "key must not be null");
+            Objects.requireNonNull(property, "property must not be null");
+        }
+
+        @Override
+        public Slug subject() {
+            return key;
+        }
+    }
+
+    /**
      * Deletes an element from the model entirely.
      *
      * <p>Distinct from removing it from a view, which is not a model change at all. Every

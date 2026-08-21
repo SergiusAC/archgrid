@@ -81,6 +81,12 @@ describe('invert', () => {
     ])
   })
 
+  it('undoes a relationship property the same way as an element one', () => {
+    expect(
+      undo({ op: 'set-relationship-property', key: 'api-serves-ledger', property: 'protocol', value: 'AMQP' }),
+    ).toEqual([{ op: 'set-relationship-property', key: 'api-serves-ledger', property: 'protocol', value: null }])
+  })
+
   it('undoes a deletion by putting back the element and every relationship it took with it', () => {
     const inverse = undo({ op: 'delete-element', key: 'ledger' })
 

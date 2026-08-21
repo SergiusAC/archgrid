@@ -139,6 +139,64 @@ class GraphController {
     }
 
     /**
+     * Defines a specialisation — "Microservice is a kind of Application Component".
+     *
+     * <p>This is how a customer extends the language without the product abandoning conformance,
+     * which is why arbitrary per-tenant metamodels are still refused (ADR-0002). Until now the
+     * feature could be read and validated against but never authored: nothing outside a test
+     * fixture had ever written to the table.
+     *
+     * <p>Not a command, because profiles are not versioned by commits — the table carries no
+     * validity range. That is a real limitation rather than a considered stance: the history
+     * cannot say when the vocabulary changed. Versioning it is a migration and a decision.
+     */
+    @PostMapping("/profiles")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("hasAnyRole('CONTRIBUTOR', 'OWNER', 'ADMIN')")
+    ModelApiDtos.ProfileResponse defineProfile(
+            @PathVariable String workspaceKey, @Valid @RequestBody ModelApiDtos.ProfileRequest request) {
+        dev.archgrid.domain.profile.Profile profile;
+        try {
+            profile = request.toProfile();
+        } catch (IllegalArgumentException ex) {
+            // A bad attribute type or key: the message already names what was wrong.
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_CONTENT, ex.getMessage());
+        }
+        try {
+            commands.defineProfile(graphId(workspaceKey), profile);
+        } catch (IllegalArgumentException | IllegalStateException ex) {
+            // The catalogue's own rules, phrased as sentences a user can act on: the base concept
+            // must exist and be specialisable, the name must not collide with a concept or with
+            // another profile.
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_CONTENT, ex.getMessage());
+        }
+        return ModelApiDtos.ProfileResponse.from(profile);
+    }
+
+    /**
+     * Removes a specialisation.
+     *
+     * <p>The database refuses while any element version, current or historical, is typed by it.
+     * That refusal is the feature: an element left claiming a type nothing defines is worse than
+     * a profile nobody can delete.
+     */
+    @DeleteMapping("/profiles/{name}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @PreAuthorize("hasAnyRole('CONTRIBUTOR', 'OWNER', 'ADMIN')")
+    void removeProfile(@PathVariable String workspaceKey, @PathVariable String name) {
+        try {
+            if (!commands.removeProfile(graphId(workspaceKey), name)) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No profile '" + name + "'.");
+            }
+        } catch (org.springframework.dao.DataIntegrityViolationException ex) {
+            throw new ResponseStatusException(
+                    HttpStatus.UNPROCESSABLE_CONTENT,
+                    "'" + name + "' is still the type of at least one element, including in earlier versions "
+                            + "of the model. Retype those elements before removing the profile.");
+        }
+    }
+
+    /**
      * Everywhere an element is used: its relationships and the views that show it.
      *
      * <p>The views half matters most before a deletion. "It will disappear from 4 diagrams,

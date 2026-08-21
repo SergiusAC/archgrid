@@ -251,6 +251,7 @@ export type Command =
   | { op: 'set-element-property'; key: string; property: string; value: string | null }
   | { op: 'delete-element'; key: string }
   | { op: 'add-relationship'; key: string; type: string; source: string; target: string; name?: string }
+  | { op: 'set-relationship-property'; key: string; property: string; value: string | null }
   | { op: 'delete-relationship'; key: string }
   // View commands. `key` is the view; `element` is what goes on or off it. Coordinates are
   // deliberately absent — layout has its own endpoint and never travels as a command.
