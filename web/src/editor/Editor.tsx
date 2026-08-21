@@ -1539,6 +1539,45 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         }
       }
       rememberPlacements(remaining)
+
+      /*
+       * Lines aimed at a removed box do not migrate to a surviving one.
+       *
+       * The read-side fallback would quietly re-attach them to the first box of the element, and
+       * a line that jumps to another copy reads as a relationship that moved. So a line whose
+       * chosen end sat on the box goes with the box: a sibling line keeps drawing the
+       * relationship, and the only line takes the relationship off this view the honest way —
+       * hidden, with the counter saying so (ADR-0014). Default lines are untouched: nobody aimed
+       * them anywhere, and following the surviving box is exactly what they mean.
+       */
+      const removed = new Set(nodes)
+      const anchored = Object.entries(linesRef.current).filter(
+        ([, line]) => (line.source && removed.has(line.source)) || (line.target && removed.has(line.target)),
+      )
+      if (anchored.length > 0) {
+        const nextLines = { ...linesRef.current }
+        const nextVertices = { ...verticesRef.current }
+        for (const [lineId] of anchored) {
+          delete nextLines[lineId]
+          delete nextVertices[lineId]
+        }
+        rememberLines(nextLines)
+        rememberVertices(nextVertices)
+        const left = new Set(leaving)
+        const stillDrawn = new Set(Object.values(nextLines).map((line) => line.key))
+        const toHide = [...new Set(anchored.map(([, line]) => line.key))]
+          .filter((key) => !stillDrawn.has(key) && !hiddenRef.current.includes(key))
+          .filter((key) => {
+            // An element leaving the view takes its relationships with it anyway — hiding those
+            // would leave a stale entry for when the element returns.
+            const relationship = relationshipsByKey[key]
+            return relationship && !left.has(relationship.source) && !left.has(relationship.target)
+          })
+        if (toHide.length > 0) {
+          rememberHidden([...hiddenRef.current, ...toHide])
+        }
+      }
+
       rememberChange(positions)
       setSelected([])
       setGeometryVersion((version) => version + 1)
@@ -1552,7 +1591,19 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         }`,
       })
     },
-    [viewKey, byKey, view.data, apply, positions, rememberChange, rememberPlacements],
+    [
+      viewKey,
+      byKey,
+      view.data,
+      apply,
+      positions,
+      relationshipsByKey,
+      rememberChange,
+      rememberPlacements,
+      rememberLines,
+      rememberVertices,
+      rememberHidden,
+    ],
   )
 
   /** Out of the repository entirely: permanent, off every view, and it takes its relationships. */

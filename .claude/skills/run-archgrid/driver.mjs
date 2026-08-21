@@ -1816,6 +1816,57 @@ async function interactions(page) {
   await page.keyboard.press('Control+s')
   await page.waitForTimeout(2000)
 
+  /*
+   * --- deleting a duplicate box takes its lines with it ---
+   *
+   * Reported from use: remove the duplicate, and the lines aimed at it jumped to the original.
+   * A line whose chosen end sat on the removed box goes with the box: a sibling keeps drawing
+   * the relationship, and an only line takes its relationship off the view as hidden — counted,
+   * not silently redrawn on the original.
+   */
+  // Restore the second line of the User relationship, aimed at the duplicate.
+  await page.getByRole('button', { name: /^Connect/ }).click()
+  await clickNode(userKey)
+  await page.waitForTimeout(300)
+  const dupBoxes = [
+    await nodeAt(sharedKey).first().locator('.ag-body').boundingBox(),
+    await nodeAt(sharedKey).last().locator('.ag-body').boundingBox(),
+  ]
+  const dup = dupBoxes[0].y > dupBoxes[1].y ? dupBoxes[0] : dupBoxes[1]
+  await page.mouse.click(dup.x + dup.width / 2, dup.y + dup.height - 12)
+  await page.waitForTimeout(1200)
+  if (await page.locator('.ag-picker').count()) {
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(1500)
+  }
+  check('the sibling line is back on the duplicate', (await linesOfRel()) === 2, `${await linesOfRel()} lines`)
+
+  // Now remove the duplicate box itself.
+  await page.mouse.click(dup.x + dup.width / 2, dup.y + dup.height - 12, { button: 'right' })
+  await page.waitForSelector('.ag-context', { timeout: 5000 })
+  await page.locator('.ag-context-actions > button', { hasText: 'Remove from this view' }).click()
+  await page.waitForTimeout(1500)
+
+  check(
+    'the duplicate box is gone and the element stays',
+    (await nodeAt(sharedKey).count()) === 1,
+    `${await nodeAt(sharedKey).count()} boxes`,
+  )
+  check(
+    'the line aimed at it went with it — the sibling still draws the relationship',
+    (await linesOfRel()) === 1,
+    `${await linesOfRel()} lines`,
+  )
+  check(
+    'an only line takes its relationship off the view as hidden, not onto the original',
+    (await page.locator(`.ag-paper .ag-link[data-key="${clientRel}"]`).count()) === 0 &&
+      ((await page.locator('.ag-hidden-count').textContent().catch(() => '')) ?? '').includes('1'),
+    `client lines: ${await page.locator(`.ag-paper .ag-link[data-key="${clientRel}"]`).count()}, counter: ${(await page.locator('.ag-hidden-count').textContent().catch(() => 'none')) ?? 'none'}`,
+  )
+  await page.screenshot({ path: `${outDir}/52-duplicate-removed.png` })
+  await page.keyboard.press('Control+s')
+  await page.waitForTimeout(2000)
+
   report()
 }
 
