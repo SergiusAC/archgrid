@@ -1,6 +1,6 @@
 # 07. Схема данных
 
-Текущее состояние базы: миграции `V1`–`V13`, PostgreSQL 18. Диаграмма **производна** от миграций,
+Текущее состояние базы: миграции `V1`–`V14`, PostgreSQL 18. Диаграмма **производна** от миграций,
 а не наоборот: источник правды — `server/archgrid-app/src/main/resources/db/migration/` и
 Java-миграция `V10`, и при расхождении прав тот каталог.
 
@@ -108,11 +108,12 @@ erDiagram
     view ||--o{ view_element : "состав — коммитами"
     view_element }o--|| element : ""
 
-    view ||--o{ view_layout_node : "координаты — вне коммитов"
-    view_layout_node }o--|| element : ""
-    view_layout_node }o--o| element : "parent_element_id — вложенность здесь"
-    view ||--o{ view_layout_link : "изломы линий — вне коммитов"
+    view ||--o{ view_layout_node : "размещения — вне коммитов"
+    view_layout_node }o--|| element : "что нарисовано"
+    view_layout_node }o--o| view_layout_node : "parent_node_id — вложенность боксов"
+    view ||--o{ view_layout_link : "изломы и концы линий — вне коммитов"
     view_layout_link }o--o| relationship : "null у выводимой линии"
+    view_layout_link }o--o| view_layout_node : "source/target_node_id"
     view ||--o{ view_hidden_relationship : "линии, которых это представление не рисует"
     view_hidden_relationship }o--|| relationship : ""
 
@@ -138,19 +139,22 @@ erDiagram
         bigint to_seq "null = сейчас на представлении"
     }
     view_layout_node {
-        uuid view_id PK
-        uuid element_id PK
+        uuid id PK "размещение: одно рисование элемента (ADR-0014)"
+        uuid view_id FK
+        uuid element_id FK "элемент может быть нарисован несколько раз"
         double x
         double y
         double width
         double height
-        uuid parent_element_id FK
+        uuid parent_node_id FK "внутри какого бокса нарисован"
         integer z "порядок наложения"
     }
     view_layout_link {
         uuid view_id PK
         text link_key PK "ключ связи или выводимой линии"
         uuid relationship_id FK "null, если линия выводимая"
+        uuid source_node_id FK "к какому боксу конец; null = где элемент и нарисован"
+        uuid target_node_id FK
         jsonb vertices "точки, через которые ведёт линия"
     }
     view_hidden_relationship {
@@ -204,8 +208,11 @@ workspace держит **ровно один связный граф** ([ADR-000
 Оптимистичная проверка `baseCommitId` имеет смысл только если два писателя не могут вклиниться
 между проверкой и записью ([ADR-0004](adr/0004-commands-and-versioning-from-day-one.md)).
 
-**Не версионируемое — оформление.** `view_layout_node` (координаты, размеры, вложенность на этом
-представлении, `z`), `view_layout_link` (изломы линий), `view_hidden_relationship`, `view.router`. Перетаскивание прямоугольника не
+**Не версионируемое — оформление.** `view_layout_node` — **размещения**: у бокса собственная
+идентичность, и один элемент может быть нарисован на представлении несколько раз
+([ADR-0014](adr/0014-placements.md)); вложенность — между боксами (`parent_node_id`), не между
+элементами. `view_layout_link` — изломы и концы линий (конец указывает на бокс; null — «где элемент
+и нарисован»). `view_hidden_relationship`, `view.router`. Перетаскивание прямоугольника не
 порождает коммит, иначе история модели становится нечитаемой
 ([ADR-0003](adr/0003-model-view-layout-separation.md)). Последняя запись побеждает; цена проигранной
 гонки — движение мышью, а не информация.
@@ -238,6 +245,12 @@ Composition или Aggregation в `relationship_version`. «Что внутри 
 модель целиком. Два исключения: `folder_id` у элемента и представления — `set null` (удалили папку,
 содержимое осталось), а `element_version.profile_id` — `restrict`: профиль нельзя удалить, пока по
 нему типизирован хоть один элемент, включая исторические версии.
+
+**Известные ограничения схемы записаны, а не подразумеваются.** Аудит после V14 — в
+[ADR-0014](adr/0014-placements.md): у связи на представлении пока **ровно одна линия**
+(`primary key (view_id, link_key)` на `view_layout_link`) — одну связь нельзя нарисовать к двум
+копиям сразу, и ссылки `parent_node_id` / `source_node_id` / `target_node_id` не привязаны
+ограничением к своему представлению. Обе вещи закрывает план V15 там же; делать до импортёра OEF.
 
 **Маршрут линии ключуется линией, а не связью.** `view_layout_link.link_key` — это ключ связи
 *или* вычисляемый ключ выводимой линии (`derived:source:type:target`), а `relationship_id` заполнен
