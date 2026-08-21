@@ -92,8 +92,7 @@ interface CanvasProps {
    */
   connecting: boolean
   /** The element clicked first while the connector tool is active. */
-  /** The element the Magic Connector started from — an element, not a box: the whole point is to
-   * pick the other end, and which copy it was started from does not change what is connected. */
+  /** The box the Magic Connector started from. Which copy matters now (ADR-0014). */
   connectFrom: string | null
   onConnectPick: (key: string) => void
   /**
@@ -850,7 +849,7 @@ export default function Canvas(props: CanvasProps) {
             `ag-layer-${element.layer}`,
             container ? 'ag-node-container' : '',
             props.selected.includes(element.key) ? 'ag-node-selected' : '',
-            props.connectFrom === element.element ? 'ag-node-connect-source' : '',
+            props.connectFrom === element.key ? 'ag-node-connect-source' : '',
           ]
             .filter(Boolean)
             .join(' '),

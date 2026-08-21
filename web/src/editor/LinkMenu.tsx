@@ -20,8 +20,6 @@ interface LinkMenuProps {
   onClose: () => void
   onHide: () => void
   onDelete: () => void
-  /** A second line for the same relationship — how it reaches a second copy (V15). */
-  onDrawAgain: () => void
   /** Removes this line; offered only while another one remains. */
   onRemoveLine: () => void
 }
@@ -42,7 +40,6 @@ export default function LinkMenu({
   onClose,
   onHide,
   onDelete,
-  onDrawAgain,
   onRemoveLine,
 }: LinkMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
@@ -79,18 +76,17 @@ export default function LinkMenu({
         </header>
 
         <div className="ag-context-actions">
-          {/* Line-level acts above the relationship-level ones: they change where things are
-              drawn, never what the model says (ADR-0014). */}
-          <div className="ag-context-row">
-            <button type="button" onClick={onDrawAgain} title="Draw this relationship with a second line">
-              Draw again
-            </button>
-            {lineCount > 1 && (
+          {/* A line-level act above the relationship-level ones: it changes where things are
+              drawn, never what the model says (ADR-0014). A second line is not made here — the
+              Connect tool is the one gesture for drawing lines, and connecting an already-related
+              pair of boxes draws one. */}
+          {lineCount > 1 && (
+            <div className="ag-context-row">
               <button type="button" onClick={onRemoveLine} title="Remove this line; the relationship stays">
                 Remove this line
               </button>
-            )}
-          </div>
+            </div>
+          )}
           <button type="button" onClick={onHide}>
             Hide on this view
             <small>Stays in the model, drawn on other views</small>

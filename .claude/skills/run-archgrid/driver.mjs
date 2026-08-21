@@ -1664,10 +1664,12 @@ async function interactions(page) {
   await page.waitForTimeout(2000)
 
   /*
-   * --- the same relationship, drawn twice ---
+   * --- Connect respects which copy was clicked, and a pair already related gets a line ---
    *
-   * The other half of duplicates (V15): a relationship may be drawn by several lines, which is
-   * what lets it reach a second copy of an element instead of pulling one line across the diagram.
+   * The defect this block exists for: draw an element again, Connect another element to the
+   * duplicate — and the line appeared on the original. The click names boxes, not elements, and
+   * the flow has to carry that all the way to the stored line (ADR-0014). And when the pair is
+   * already related, Connect asks for a line, not a second identical relationship.
    */
   await dragFromPalette(page, 'Application Component', { x: freshCanvas.x + 700, y: freshCanvas.y + 420 })
   if (await page.locator('.ag-node-name-input').count()) {
@@ -1689,18 +1691,54 @@ async function interactions(page) {
   check('the relationship between them is drawn', oneLine === 1, `${oneLine} lines`)
   const relKey = await page.locator('.ag-paper .ag-link').first().getAttribute('data-key')
 
-  const lineMiddle = await page.evaluate(() => {
-    const path = document.querySelector('.ag-paper .ag-link .ag-link-line')
-    const middle = path.getPointAtLength(path.getTotalLength() / 2)
-    const at = new DOMPoint(middle.x, middle.y).matrixTransform(path.getScreenCTM())
-    return { x: at.x, y: at.y }
-  })
-  await page.mouse.click(lineMiddle.x, lineMiddle.y, { button: 'right' })
-  await page.waitForSelector('.ag-context-link', { timeout: 5000 })
-  await page.locator('.ag-context-link button', { hasText: 'Draw again' }).click()
+  // A duplicate box, pulled well clear so which box a line touches is unambiguous.
+  const original = await nodeAt(sharedKey).first().locator('.ag-body').boundingBox()
+  await page.mouse.click(original.x + original.width / 2, original.y + 14, { button: 'right' })
+  await page.waitForSelector('.ag-context', { timeout: 5000 })
+  await page.locator('.ag-context-row button', { hasText: 'Draw again' }).click()
   await page.waitForTimeout(1200)
+  const copyBox2 = await nodeAt(sharedKey).last().locator('.ag-body').boundingBox()
+  await page.mouse.move(copyBox2.x + copyBox2.width / 2, copyBox2.y + 12)
+  await page.mouse.down()
+  await page.mouse.move(copyBox2.x + copyBox2.width / 2 - 320, copyBox2.y + 12 + 240, { steps: 10 })
+  await page.mouse.up()
+  await page.waitForTimeout(700)
+
+  /** Where the given line's target end lands on screen. */
+  const endOfLine = (selector) =>
+    page.evaluate((sel) => {
+      const path = document.querySelector(sel)
+      const at = path.getPointAtLength(path.getTotalLength())
+      const point = new DOMPoint(at.x, at.y).matrixTransform(path.getScreenCTM())
+      return { x: point.x, y: point.y }
+    }, selector)
+  const inside = (point, box) =>
+    point.x >= box.x - 2 && point.x <= box.x + box.width + 2 && point.y >= box.y - 2 && point.y <= box.y + box.height + 2
+
+  // Connect the already-related pair, aiming at the duplicate: a second line, not a second
+  // relationship.
+  await page.getByRole('button', { name: /^Connect/ }).click()
+  await clickNode(userKey)
+  await page.waitForTimeout(300)
+  const duplicate = await nodeAt(sharedKey).last().locator('.ag-body').boundingBox()
+  await page.mouse.click(duplicate.x + 14, duplicate.y + 12)
+  await page.waitForTimeout(1200)
+  if (await page.locator('.ag-picker').count()) {
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(1500)
+  }
   const linesOfRel = () => page.locator(`.ag-paper .ag-link[data-key="${relKey}"]`).count()
-  check('a relationship can be drawn by a second line', (await linesOfRel()) === 2, `${await linesOfRel()} lines`)
+  check(
+    'connecting an already-related pair draws a second line, not a second relationship',
+    (await linesOfRel()) === 2,
+    `${await linesOfRel()} lines`,
+  )
+  const secondEnd = await endOfLine(`.ag-paper .ag-link[data-key="${relKey}"]:last-of-type .ag-link-line`)
+  check(
+    'and that line ends at the duplicate, which is the box that was clicked',
+    inside(secondEnd, await nodeAt(sharedKey).last().locator('.ag-body').boundingBox()),
+    `end at ${Math.round(secondEnd.x)},${Math.round(secondEnd.y)}`,
+  )
 
   await page.keyboard.press('Control+s')
   await page.waitForTimeout(2500)
@@ -1711,14 +1749,61 @@ async function interactions(page) {
   check('and both lines survive a reload', (await linesOfRel()) === 2, `${await linesOfRel()} lines`)
   await page.screenshot({ path: `${outDir}/51-two-lines.png` })
 
-  // Removing the extra line is layout; the relationship stays in the model.
-  const extraMiddle = await page.evaluate(() => {
-    const paths = [...document.querySelectorAll('.ag-paper .ag-link .ag-link-line')]
+  // The defect itself, verbatim: a brand-new relationship aimed at the duplicate must attach its
+  // line there, not on the original.
+  // Well clear of the dragged duplicate: the first version of this step dropped Client beside it,
+  // the boxes overlapped, and the click meant for the duplicate landed on Client — which in the
+  // Connect flow is "click the source again" and silently cancels the pick.
+  await dragFromPalette(page, 'Application Component', { x: freshCanvas.x + 860, y: freshCanvas.y + 560 })
+  if (await page.locator('.ag-node-name-input').count()) {
+    await page.locator('.ag-node-name-input').fill('Client')
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(2500)
+  }
+  const clientKey = await keyOf('Client')
+  await page.getByRole('button', { name: /^Connect/ }).click()
+  await clickNode(clientKey)
+  await page.waitForTimeout(300)
+  // The duplicate is whichever of the two boxes sits lower — it was dragged down before the
+  // reload, and DOM order after a reload proves nothing.
+  const boxes = [
+    await nodeAt(sharedKey).first().locator('.ag-body').boundingBox(),
+    await nodeAt(sharedKey).last().locator('.ag-body').boundingBox(),
+  ]
+  const lower = boxes[0].y > boxes[1].y ? boxes[0] : boxes[1]
+  // The bottom edge, dead centre: the corner is where an overlapping neighbour bites first.
+  await page.mouse.click(lower.x + lower.width / 2, lower.y + lower.height - 12)
+  await page.waitForTimeout(1200)
+  if (await page.locator('.ag-picker').count()) {
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(2500)
+  }
+  const linkKeys = await page.evaluate(() =>
+    [...document.querySelectorAll('.ag-paper .ag-link')].map((link) => link.getAttribute('data-key')),
+  )
+  const clientRel = linkKeys.find((key) => key?.startsWith(clientKey)) ?? null
+  check(
+    'a new relationship aimed at the duplicate is created',
+    clientRel != null,
+    clientRel ?? `client=${clientKey}, lines: ${linkKeys.join(' ')}`,
+  )
+  if (clientRel) {
+    const newEnd = await endOfLine(`.ag-paper .ag-link[data-key="${clientRel}"] .ag-link-line`)
+    check(
+      'and its line ends at the duplicate — the defect this block exists for',
+      inside(newEnd, lower),
+      `end at ${Math.round(newEnd.x)},${Math.round(newEnd.y)}, duplicate at ${Math.round(lower.x)},${Math.round(lower.y)}`,
+    )
+  }
+
+  // Removing the extra line of the first relationship is layout; the relationship stays.
+  const extraMiddle = await page.evaluate((key) => {
+    const paths = [...document.querySelectorAll(`.ag-paper .ag-link[data-key="${key}"] .ag-link-line`)]
     const bent = paths.sort((a, b) => b.getTotalLength() - a.getTotalLength())[0]
     const middle = bent.getPointAtLength(bent.getTotalLength() / 2)
     const at = new DOMPoint(middle.x, middle.y).matrixTransform(bent.getScreenCTM())
     return { x: at.x, y: at.y }
-  })
+  }, relKey)
   await page.mouse.click(extraMiddle.x, extraMiddle.y, { button: 'right' })
   await page.waitForSelector('.ag-context-link', { timeout: 5000 })
   await page.locator('.ag-context-link button', { hasText: 'Remove this line' }).click()

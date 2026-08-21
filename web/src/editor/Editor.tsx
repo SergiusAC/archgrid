@@ -59,11 +59,15 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     y: number
     container: string
     child: string
+    /** The boxes the drop involved — connect() speaks in boxes since ADR-0014. */
+    containerNode: string
+    childNode: string
     permitted: RelationshipType[]
   } | null>(null)
   // The connector tool: active, and the element clicked as the source of the next line.
   const [connecting, setConnecting] = useState(false)
-  const [connectFrom, setConnectFrom] = useState<string | null>(null)
+  /** The first end of a connection in progress: the box that was clicked, and what it draws. */
+  const [connectFrom, setConnectFrom] = useState<{ node: string; element: string } | null>(null)
   const [context, setContext] = useState<ContextTarget | null>(null)
   const [placements, setPlacements] = useState<Record<string, string>>({})
   const placementsRef = useRef<Record<string, string>>({})
@@ -89,12 +93,24 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   const [picker, setPicker] = useState<{
     x: number
     y: number
+    /** The boxes that were clicked — which copy matters (ADR-0014). */
+    sourceNode: string
+    targetNode: string
     source: string
     target: string
     reason: string
   } | null>(null)
   // Positions as they were when a drag began, so the move can be undone as one action.
   const dragOrigin = useRef<Record<string, Position> | null>(null)
+  /**
+   * Which boxes the line of a not-yet-created relationship should attach to.
+   *
+   * The command travels to the server and the relationship comes back with the refetch; the click
+   * that asked for it named particular boxes, and without this the default line would fall back to
+   * the first box of each element — which was the defect: connect to a duplicate, and the line
+   * appeared on the original. Same pattern as `placeAt` for element positions.
+   */
+  const endsFor = useRef<Record<string, { source?: string; target?: string }>>({})
   /**
    * Where an element the user has just asked for should land.
    *
@@ -791,7 +807,12 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     const drawn = new Set(Object.values(next).map((line) => line.key))
     for (const key of known) {
       if (!drawn.has(key)) {
-        next[crypto.randomUUID()] = { key, source: null, target: null }
+        // The boxes the click that created this relationship named, if any: without them the
+        // default falls back to the first box of each element, which is the wrong one exactly
+        // when the user connected to a duplicate.
+        const chosen = endsFor.current[key]
+        delete endsFor.current[key]
+        next[crypto.randomUUID()] = { key, source: chosen?.source ?? null, target: chosen?.target ?? null }
         changed = true
       }
     }
@@ -945,36 +966,6 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     [rememberLines, rememberChange, positions],
   )
 
-  /**
-   * Draws this relationship a second time — a second line, to reach a second copy (V15).
-   *
-   * Born with a bendpoint, deliberately: a new line with default ends lies exactly on top of the
-   * one it came from, and a line nobody can see or grab is not a feature. The kink makes it
-   * visible; the architect then drags its ends where they want them.
-   */
-  const drawLineAgain = useCallback(
-    (lineId: string) => {
-      const line = linesRef.current[lineId]
-      const relationship = line ? relationshipsByKey[line.key] : null
-      if (!line || !relationship) {
-        return
-      }
-      const ends = endsOf(line, relationship.source, relationship.target)
-      const from = ends.source ? positions[ends.source] : null
-      const to = ends.target ? positions[ends.target] : null
-      const middle =
-        from && to
-          ? { x: Math.round((from.x + to.x) / 2) + 60, y: Math.round((from.y + to.y) / 2) + 60 }
-          : { x: 200, y: 200 }
-      const copy = crypto.randomUUID()
-      rememberLines({ ...linesRef.current, [copy]: { key: line.key, source: line.source, target: line.target } })
-      rememberVertices({ ...verticesRef.current, [copy]: [middle] })
-      rememberChange(positions)
-      setGeometryVersion((version) => version + 1)
-    },
-    [relationshipsByKey, endsOf, positions, rememberLines, rememberVertices, rememberChange],
-  )
-
   /** Removes one line of a relationship drawn several times. The last line is not removable. */
   const removeLine = useCallback(
     (lineId: string) => {
@@ -1076,6 +1067,8 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         y: box ? box.top : window.innerHeight / 2,
         container: parent,
         child: key,
+        containerNode: parentNode,
+        childNode: node,
         permitted,
       })
     },
@@ -1083,16 +1076,85 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   )
 
   const connect = useCallback(
-    (sourceKey: string, targetKey: string, type: string) => {
+    (sourceNode: string, targetNode: string, type: string) => {
+      const sourceKey = placementsRef.current[sourceNode]
+      const targetKey = placementsRef.current[targetNode]
+      if (!sourceKey || !targetKey) {
+        return
+      }
       const source = byKey[sourceKey]
       const target = byKey[targetKey]
+
+      /*
+       * Already stated? Then the gesture asks for a line, not a relationship.
+       *
+       * Connecting two boxes whose elements the model already relates this way must not assert
+       * the same relationship twice — the repository would then hold two identical claims. What
+       * the user visibly wants is the line between *these* boxes, so it becomes a second line of
+       * the existing relationship: layout, no commit (ADR-0014). This is also why a line needs no
+       * "draw again" of its own — Connect is the one gesture for drawing lines.
+       */
+      const existing = allRelationships.find(
+        (relationship) =>
+          relationship.type === type && relationship.source === sourceKey && relationship.target === targetKey,
+      )
+      if (existing) {
+        const alreadyDrawn = Object.values(linesRef.current).some((line) => {
+          if (line.key !== existing.key) {
+            return false
+          }
+          const ends = endsOf(line, existing.source, existing.target)
+          return ends.source === sourceNode && ends.target === targetNode
+        })
+        if (alreadyDrawn) {
+          setMessage({
+            kind: 'info',
+            text: `${type} from ${source?.name ?? sourceKey} to ${target?.name ?? targetKey} is already drawn here.`,
+          })
+          return
+        }
+        rememberLines({
+          ...linesRef.current,
+          [crypto.randomUUID()]: { key: existing.key, source: sourceNode, target: targetNode },
+        })
+        rememberChange(positions)
+        setGeometryVersion((version) => version + 1)
+        setMessage({
+          kind: 'info',
+          text: `${type} from ${source?.name ?? sourceKey} to ${target?.name ?? targetKey} already exists — drawn again between these boxes.`,
+        })
+        return
+      }
+
       const key = uniqueKey(`${sourceKey}-${type.toLowerCase()}-${targetKey}`, relationshipsByKey)
+      // Only when a clicked box is not the one the default would pick: the common case — nothing
+      // drawn twice — needs no stored row at all.
+      const chosen: { source?: string; target?: string } = {}
+      if (placementsOf(sourceKey)[0] !== sourceNode) {
+        chosen.source = sourceNode
+      }
+      if (placementsOf(targetKey)[0] !== targetNode) {
+        chosen.target = targetNode
+      }
+      if (chosen.source || chosen.target) {
+        endsFor.current[key] = chosen
+      }
       apply.mutate({
         commands: [{ op: 'add-relationship', key, type, source: sourceKey, target: targetKey }],
         label: `Connect ${source?.name ?? sourceKey} to ${target?.name ?? targetKey}`,
       })
     },
-    [byKey, relationshipsByKey, apply],
+    [
+      byKey,
+      relationshipsByKey,
+      allRelationships,
+      endsOf,
+      placementsOf,
+      positions,
+      rememberLines,
+      rememberChange,
+      apply,
+    ],
   )
 
   /**
@@ -1104,9 +1166,9 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    * the only way to draw a line.
    */
   const onConnect = useCallback(
-    (sourceKey: string, targetKey: string) => {
-      const source = byKey[sourceKey]
-      const target = byKey[targetKey]
+    (sourceNode: string, targetNode: string) => {
+      const source = byKey[placementsRef.current[sourceNode] ?? '']
+      const target = byKey[placementsRef.current[targetNode] ?? '']
       if (!source || !target) {
         return
       }
@@ -1121,18 +1183,21 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       if (permitted.length === 1) {
         // Asking someone to choose from a list of one is an action that carries no decision.
         // Draw it, name it, and let undo be the way back.
-        connect(source.key, target.key, permitted[0].concept)
+        connect(sourceNode, targetNode, permitted[0].concept)
         setMessage({
           kind: 'info',
           text: `${permitted[0].name} is the only relationship ArchiMate permits from ${source.name} to ${target.name}, so that is what was drawn.`,
         })
         return
       }
-      const node = document.querySelector(`.ag-node[data-key="${CSS.escape(target.key)}"]`)
-      const box = node?.getBoundingClientRect()
+      // Beside the box that was clicked, not the element's first box — they can differ now.
+      const clicked = document.querySelector(`.ag-node[data-node="${CSS.escape(targetNode)}"]`)
+      const box = clicked?.getBoundingClientRect()
       setPicker({
         x: box ? box.right + 8 : window.innerWidth / 2,
         y: box ? box.top : window.innerHeight / 2,
+        sourceNode,
+        targetNode,
         source: source.key,
         target: target.key,
         reason: `What does ${source.name} do to ${target.name}? Only what ArchiMate permits is listed.`,
@@ -1165,22 +1230,29 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    * element, so nothing about drawing lines is in the way while reading a diagram.
    */
   const onConnectPick = useCallback(
-    (key: string) => {
-      if (!connectFrom) {
-        setConnectFrom(key)
-        setMessage({ kind: 'info', text: `Connecting from ${byKey[key]?.name ?? key}. Click the other end, or Escape.` })
+    (node: string) => {
+      const element = placementsRef.current[node]
+      if (!element) {
         return
       }
-      if (connectFrom === key) {
+      if (!connectFrom) {
+        setConnectFrom({ node, element })
+        setMessage({
+          kind: 'info',
+          text: `Connecting from ${byKey[element]?.name ?? element}. Click the other end, or Escape.`,
+        })
+        return
+      }
+      if (connectFrom.node === node) {
         setConnectFrom(null)
         setMessage(null)
         return
       }
-      const source = connectFrom
+      const source = connectFrom.node
       setConnectFrom(null)
       setConnecting(false)
       setMessage(null)
-      onConnect(source, key)
+      onConnect(source, node)
     },
     [connectFrom, byKey, onConnect],
   )
@@ -2074,16 +2146,15 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
               onGeometryEnd={onGeometryEnd}
               onNest={onNest}
               connecting={connecting}
-              connectFrom={connectFrom}
-              onConnectPick={(node) => {
-                const element = placementsRef.current[node]
-                if (element) {
-                  onConnectPick(element)
+              connectFrom={connectFrom?.node ?? null}
+              onConnectPick={onConnectPick}
+              onMagic={(sourceNode, x, y, at) => {
+                // The canvas hands back the box the connector started from; the element the new
+                // relationship leaves from is what it draws.
+                const source = placementsRef.current[sourceNode]
+                if (!source) {
+                  return
                 }
-              }}
-              onMagic={(source, x, y, at) => {
-                // Already an element: the canvas hands back what it was given, and the connector
-                // was started from an element rather than from one of its boxes.
                 setConnectFrom(null)
                 setConnecting(false)
                 setMessage(null)
@@ -2239,9 +2310,9 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           }
           permitted={nesting.permitted}
           onPick={(type) => {
-            const { container, child } = nesting
+            const { containerNode, childNode } = nesting
             setNesting(null)
-            connect(container, child, type)
+            connect(containerNode, childNode, type)
           }}
           onCancel={() => setNesting(null)}
         />
@@ -2259,9 +2330,9 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
             byKey[picker.target]?.conceptType ?? '',
           )}
           onPick={(type) => {
-            const { source, target } = picker
+            const { sourceNode, targetNode } = picker
             setPicker(null)
-            connect(source, target, type)
+            connect(sourceNode, targetNode, type)
           }}
           onCancel={() => setPicker(null)}
         />
@@ -2272,10 +2343,6 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           target={linkContext}
           relationship={relationshipsByKey[linkContext.key]}
           lineCount={Object.values(lines).filter((line) => line.key === linkContext.key).length}
-          onDrawAgain={() => {
-            drawLineAgain(linkContext.line)
-            setLinkContext(null)
-          }}
           onRemoveLine={() => {
             removeLine(linkContext.line)
             setLinkContext(null)
