@@ -155,6 +155,12 @@ Each line there stands for a defect that shipped: a panel that collapsed but lef
 behind and pushed the canvas off screen, a size that saved and was immediately overwritten by the
 refetch, a new element dropped on top of a container's connection points.
 
+That output is the mode's first dozen checks; it now runs 108 of them, ending with an import.
+`fixtures/import-fixture.xml` beside the driver is a deliberately dirty exchange file — a
+composition cycle to be cut out, a label with nowhere to go, one Cyrillic name, one nested node —
+so the run proves the report says what the import cost, not merely that the happy path draws.
+It leaves three elements and a view behind in the repository each run, like every other mode here.
+
 Other commands:
 
 ```powershell

@@ -98,7 +98,13 @@ public class ModelCommandService {
         return new CommitResult(commitId, after.elements().size(), after.relationships().size());
     }
 
-    /** What an import produced: the commit, the sizes, and everything it had to throw away. */
+    /**
+     * What an import produced: the commit, what it <em>added</em>, and everything it threw away.
+     *
+     * <p>Added rather than the graph's totals, and the difference matters the moment a repository
+     * is not empty: "1248 elements" after importing a file of three says nothing about the file.
+     * An import report is about the import.
+     */
     public record ImportOutcome(UUID commitId, int elements, int relationships, List<Violation> discarded) {}
 
     /**
@@ -120,7 +126,10 @@ public class ModelCommandService {
         ModelGraph after = result.graph();
         UUID commitId = graphs.commit(modelId, before, after, author, message);
         return new ImportOutcome(
-                commitId, after.elements().size(), after.relationships().size(), result.discarded());
+                commitId,
+                after.elements().size() - before.elements().size(),
+                after.relationships().size() - before.relationships().size(),
+                result.discarded());
     }
 
     @Transactional(readOnly = true)

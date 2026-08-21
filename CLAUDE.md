@@ -10,10 +10,13 @@ principle, from which most design decisions follow:
 > The architecture graph is the source of truth. Diagrams are views of it, documentation is
 > a projection of it, AI proposes changes to it and never writes to it directly.
 
-The project is at **phase 4 (views, derivation, projections) in progress** on a nine-phase plan:
-foundation, the ArchiMate metamodel, the command pipeline, views with folders and an editor of
-roughly Archi's capability exist; C4 projections, view filters, history UI, import, AI and
-enterprise readiness do not. Before proposing work, read `docs/03-roadmap.md`
+The project is at **phase 6a (import) in progress** on a nine-phase plan. Phases 0–4 are closed:
+foundation, the ArchiMate metamodel, the command pipeline, views with folders, C4 projections,
+view filters and an editor of roughly Archi's capability exist, and an ArchiMate exchange file
+now imports whole — model, diagrams and filing. **Phase 5 was skipped for now** and its contents
+do not exist: no history UI, no DSL, no generated documentation, no full-text search. Nor does
+anything past 6a — export, the other importers, reconciliation, AI, enterprise readiness. Before
+proposing work, read `docs/03-roadmap.md`
 to see which phase the request belongs to — much of what looks "missing" is deliberately
 deferred. `docs/04-domain-model.md` explains the entities and, in particular, the four levels
 of "type-ness" that are easy to conflate.
@@ -113,6 +116,17 @@ product's value. `ApiExceptionHandler` establishes the RFC 9457 shape for that.
 
 `commit_id` already exists in the schema even though history UI arrives in phase 5.
 Retrofitting versioning later would mean rewriting every query.
+
+**Import is the one tolerant door, and it is still that pipeline** (ADR-0015). A file someone
+else's tool wrote breaks rules ours would refuse, and refusing the file wholesale means the
+product cannot be adopted. So `ModelChange.applyForImport` keeps everything the language permits
+and cuts out what it forbids **by name** — the discarded list is part of the response, never a log
+line — and the graph after an import is valid by construction. `POST /commands` stays strict:
+tolerance is a property of importing a foreign file, not of editing.
+
+`imports/` reaches the model slice only through `ImportGateway`, which is the sole public class
+there. The layout services stay package-private on purpose — an importer legitimately needs both
+the commit and the arrangement, and opening the classes to it opens them to everything.
 
 ### The workspace is the repository (ADR-0008)
 

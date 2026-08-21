@@ -145,13 +145,30 @@ class ArchimateImportIT {
             assertThat(element.get("key").asString()).matches("[a-z0-9]+(-[a-z0-9]+)*");
         }
 
-        // Imports are idempotent in effect only — a second import duplicates under fresh slugs by
-        // design (it is a new commit, not a merge). What must hold: it succeeds and reports.
-        mockMvc.perform(post("/api/workspaces/{ws}/import/archimate", WS)
+        // A second import duplicates under fresh slugs by design — it is a new commit, not a
+        // merge (matching sources is phase 6c). What this pins is the report's meaning: its
+        // counts are what the file added, so they stay the same into a repository that now holds
+        // twice as much. Reporting totals here would say "1700 elements" for the same file.
+        JsonNode second = json.readTree(mockMvc.perform(post("/api/workspaces/{ws}/import/archimate", WS)
                         .contentType(MediaType.APPLICATION_XML)
                         .content(file)
                         .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTRIBUTOR"))))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+        assertThat(second.get("elements").asInt()).isEqualTo(report.get("elements").asInt());
+        assertThat(second.get("relationships").asInt())
+                .isEqualTo(report.get("relationships").asInt());
+
+        JsonNode grown = json.readTree(mockMvc.perform(get("/api/workspaces/{ws}", WS)
+                        .with(jwt()))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+        assertThat(grown.get("elements").asInt())
+                .isEqualTo(report.get("elements").asInt() + second.get("elements").asInt());
     }
 
     @Test

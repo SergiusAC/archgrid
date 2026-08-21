@@ -2249,8 +2249,10 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
                 ×
               </button>
             </header>
+            {/* What the file added, not what the repository now holds — the two differ the moment
+                you import into a repository that is not empty. */}
             <p>
-              {importReport.elements} elements, {importReport.relationships} relationships,{' '}
+              Added {importReport.elements} elements, {importReport.relationships} relationships,{' '}
               {importReport.views} views, {importReport.folders} folders.
             </p>
             {importReport.discarded.length > 0 && (

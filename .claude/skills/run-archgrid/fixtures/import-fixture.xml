@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  A deliberately small, deliberately dirty exchange file for the driver.
+
+  Small so the check costs a second rather than the twenty the bank's file takes, and dirty
+  because the interesting part of an import is the report (ADR-0015): the composition cycle
+  below must be cut out by name, and the Label must be named as lost. A clean fixture would
+  prove only that the happy path draws.
+
+  The Cyrillic name is not decoration — it pins the transliteration in `Slugs`, which is the
+  difference between the key `katalog-tovarov` and a row of hyphens.
+-->
+<model xmlns="http://www.opengroup.org/xsd/archimate/3.0/"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       identifier="id-driver-fixture">
+  <name xml:lang="en">Driver Fixture</name>
+
+  <elements>
+    <element identifier="id-catalogue" xsi:type="ApplicationComponent">
+      <name xml:lang="ru">Каталог товаров</name>
+      <documentation xml:lang="en">Imported by the driver's fixture.</documentation>
+    </element>
+    <element identifier="id-billing" xsi:type="ApplicationComponent">
+      <name xml:lang="en">Fixture Billing</name>
+    </element>
+    <element identifier="id-host" xsi:type="Node">
+      <name xml:lang="en">Fixture Host</name>
+    </element>
+  </elements>
+
+  <relationships>
+    <relationship identifier="id-serves" source="id-catalogue" target="id-billing" xsi:type="Serving">
+      <name xml:lang="en">catalogue serves billing</name>
+    </relationship>
+    <!-- The pair below composes both ways: one of the two has to be cut out, because an element
+         cannot contain itself. Chosen over a matrix violation on purpose — the matrix is still
+         unverified against Appendix B, and a check that depends on one of its cells would break
+         the day that cell is corrected. -->
+    <relationship identifier="id-cycle-a" source="id-catalogue" target="id-billing" xsi:type="Composition"/>
+    <relationship identifier="id-cycle-b" source="id-billing" target="id-catalogue" xsi:type="Composition"/>
+  </relationships>
+
+  <organizations>
+    <item>
+      <label xml:lang="en">Fixture Folder</label>
+      <item identifierRef="id-catalogue"/>
+      <item identifierRef="id-billing"/>
+    </item>
+  </organizations>
+
+  <views>
+    <diagrams>
+      <view identifier="id-view" xsi:type="Diagram">
+        <name xml:lang="en">Fixture Diagram</name>
+        <node identifier="id-node-host" elementRef="id-host" xsi:type="Element" x="40" y="40" w="420" h="200">
+          <!-- Nested: on this view the catalogue is drawn inside the host. -->
+          <node identifier="id-node-catalogue" elementRef="id-catalogue" xsi:type="Element"
+                x="70" y="90" w="160" h="70"/>
+        </node>
+        <node identifier="id-node-billing" elementRef="id-billing" xsi:type="Element"
+              x="560" y="90" w="160" h="70"/>
+        <!-- No place for this here yet, so the report has to say so rather than swallow it. -->
+        <node identifier="id-node-label" xsi:type="Label" x="40" y="300" w="240" h="40">
+          <label xml:lang="en">A note the importer cannot keep</label>
+        </node>
+        <connection identifier="id-conn" relationshipRef="id-serves" xsi:type="Relationship"
+                    source="id-node-catalogue" target="id-node-billing">
+          <bendpoint x="500" y="130"/>
+        </connection>
+      </view>
+    </diagrams>
+  </views>
+</model>

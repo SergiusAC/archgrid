@@ -47,6 +47,7 @@ public class ArchimateImportService {
         this.gateway = gateway;
     }
 
+    /** Counts are what this import <em>added</em>, not what the repository holds afterwards. */
     public record Report(
             String modelName,
             UUID commitId,

@@ -19,9 +19,11 @@
 
 import { mkdirSync, readFileSync, statSync } from 'node:fs'
 import { argv, env, exit } from 'node:process'
+import { fileURLToPath } from 'node:url'
 
 // Resolved relative to this file so the driver works from any working directory.
 const playwrightUrl = new URL('../../../web/node_modules/playwright/index.mjs', import.meta.url)
+const FIXTURE = fileURLToPath(new URL('fixtures/import-fixture.xml', import.meta.url))
 const { chromium } = await import(playwrightUrl.href)
 
 const WEB = env.ARCHGRID_WEB ?? 'http://localhost:5173'
@@ -1866,6 +1868,88 @@ async function interactions(page) {
   await page.screenshot({ path: `${outDir}/52-duplicate-removed.png` })
   await page.keyboard.press('Control+s')
   await page.waitForTimeout(2000)
+
+  /*
+   * --- an exchange file comes in through the sidebar ---
+   *
+   * The importer has server tests; the path a person takes has none — the button, the file, the
+   * report. The report is the part worth driving: an import that cannot say what it dropped looks
+   * successful right up to the first comparison with the original (ADR-0015). So the fixture is
+   * deliberately dirty, and what it cost has to be legible on screen.
+   */
+  await page.locator('.ag-tab', { hasText: 'Views' }).click()
+  await page.waitForTimeout(500)
+  check(
+    'the Views tab offers importing an exchange file',
+    await page.getByRole('button', { name: 'Import ArchiMate file' }).isVisible(),
+  )
+  // The button opens the operating system's chooser, which the driver cannot type into. The input
+  // behind it takes the file directly and runs the same handler.
+  await page.locator('input[type="file"]').setInputFiles(FIXTURE)
+  const importPanel = await page.waitForSelector('.ag-import-report', { timeout: 60_000 }).catch(() => null)
+  check('the import answers with a report', importPanel != null)
+  if (importPanel) {
+    const summary = await page.locator('.ag-import-report p').first().innerText()
+    check(
+      'the report counts what the file added, not what the repository holds',
+      /Added 3 elements, 2 relationships, 1 views/.test(summary),
+      summary,
+    )
+    for (const details of await page.locator('.ag-import-report details').all()) {
+      await details.click()
+    }
+    await page.waitForTimeout(300)
+    const panelText = await page.locator('.ag-import-report').innerText()
+    check(
+      'and names the composition cycle it had to cut out',
+      /cycle/i.test(panelText),
+      (panelText.split('\n').find((line) => /cycle/i.test(line)) ?? 'not named').slice(0, 90),
+    )
+    check(
+      'and says the label had nowhere to go',
+      /text labels/i.test(panelText),
+      (panelText.split('\n').find((line) => /text labels/i.test(line)) ?? 'not named').slice(0, 90),
+    )
+    await page.screenshot({ path: `${outDir}/53-import-report.png` })
+    await page.locator('.ag-import-report .ag-banner-close').click()
+    await page.waitForTimeout(300)
+  }
+
+  await page.locator('.ag-tree-item', { hasText: 'Fixture Diagram' }).first().click()
+  await page.waitForTimeout(3500)
+  const importedBoxes = await page.locator('.ag-paper .ag-node').count()
+  const importedLines = await page.locator('.ag-paper .ag-link').count()
+  check(
+    'the imported diagram draws its three boxes and its one line',
+    importedBoxes === 3 && importedLines === 1,
+    `${importedBoxes} boxes, ${importedLines} lines`,
+  )
+  // The other surviving relationship has no connection in the file, so the view must not invent
+  // a line for it — it arrives hidden, and the counter says so.
+  const importedHidden = (await page.locator('.ag-hidden-count').textContent().catch(() => '')) ?? ''
+  check(
+    'a relationship the file did not draw arrives hidden, not invented',
+    importedHidden.includes('1'),
+    importedHidden || 'no counter',
+  )
+  // Cyrillic transliterates rather than dissolving into hyphens; the key is the proof.
+  const catalogue = page.locator('.ag-paper .ag-node[data-key^="katalog-tovarov"]')
+  check('a Cyrillic name became a readable slug', (await catalogue.count()) === 1, `${await catalogue.count()} matches`)
+  if ((await catalogue.count()) === 1) {
+    // And the file's nesting is nesting here too: the catalogue is drawn inside the host.
+    const child = await catalogue.locator('.ag-body').boundingBox()
+    const hosts = await page.locator('.ag-paper .ag-node[data-key^="fixture-host"] .ag-body').boundingBox()
+    check(
+      'and a node nested in the file is nested here',
+      hosts != null &&
+        child.x >= hosts.x - 2 &&
+        child.y >= hosts.y - 2 &&
+        child.x + child.width <= hosts.x + hosts.width + 2 &&
+        child.y + child.height <= hosts.y + hosts.height + 2,
+      hosts ? `child ${Math.round(child.x)},${Math.round(child.y)} in host ${Math.round(hosts.x)},${Math.round(hosts.y)}` : 'no host box',
+    )
+  }
+  await page.screenshot({ path: `${outDir}/54-imported-view.png` })
 
   report()
 }
