@@ -98,6 +98,31 @@ public class ModelCommandService {
         return new CommitResult(commitId, after.elements().size(), after.relationships().size());
     }
 
+    /** What an import produced: the commit, the sizes, and everything it had to throw away. */
+    public record ImportOutcome(UUID commitId, int elements, int relationships, List<Violation> discarded) {}
+
+    /**
+     * Applies an imported file's commands the tolerant way: keep what the language permits,
+     * discard what it forbids, name every discard (ADR-0015).
+     *
+     * <p>For the importer only — the strict {@link #apply} stays the one door for everything
+     * else. No {@code baseCommitId} from the caller: an import builds on whatever is current,
+     * and the row lock inside {@code commit} serialises it against concurrent writers exactly
+     * as it does for ordinary commands.
+     */
+    @Transactional
+    public ImportOutcome importTolerantly(UUID modelId, List<ModelCommand> commands, String author, String message) {
+        ModelGraph before = graphs.loadCurrent(modelId);
+        ProfileCatalog profiles = graphs.loadProfiles(modelId, metamodel);
+
+        ModelChange.ImportResult result = ModelChange.applyForImport(before, commands, metamodel, profiles);
+
+        ModelGraph after = result.graph();
+        UUID commitId = graphs.commit(modelId, before, after, author, message);
+        return new ImportOutcome(
+                commitId, after.elements().size(), after.relationships().size(), result.discarded());
+    }
+
     @Transactional(readOnly = true)
     public ModelGraph current(UUID modelId) {
         return graphs.loadCurrent(modelId);

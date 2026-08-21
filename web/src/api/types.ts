@@ -256,6 +256,22 @@ export interface CommitResult {
   relationships: number
 }
 
+/**
+ * What an exchange-file import did — kept, discarded by name (ADR-0015), and lost for want of
+ * a place. A silent import looks successful right up to the first comparison with the original.
+ */
+export interface ImportReport {
+  modelName: string | null
+  commitId: string
+  elements: number
+  relationships: number
+  views: number
+  folders: number
+  discarded: { code: string; subject: string; detail: string }[]
+  lost: Record<string, number>
+  interpreted: string[]
+}
+
 /** The command surface. Mirrors dev.archgrid.domain.model.ModelCommand. */
 export type Command =
   | { op: 'create-element'; key: string; type: string; name: string; documentation?: string }

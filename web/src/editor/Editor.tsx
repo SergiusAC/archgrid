@@ -8,6 +8,7 @@ import type {
   ConnectionRouter,
   ElementType,
   Graph,
+  ImportReport,
   ModelElement,
   ModelRelationship,
   Profile,
@@ -81,6 +82,11 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
    */
   const [clipboard, setClipboard] = useState<string[]>([])
   const [exportAs, setExportAs] = useState<{ format: 'svg' | 'png'; name: string; token: number } | null>(null)
+  // An import in flight, and the report of the last one — shown until dismissed, because what
+  // was dropped is the part of the answer a banner is too small for (ADR-0015).
+  const [importing, setImporting] = useState(false)
+  const [importReport, setImportReport] = useState<ImportReport | null>(null)
+  const importInput = useRef<HTMLInputElement | null>(null)
   /** A C4 view just created and not yet arranged: sizes and nesting land when it opens. */
   const projected = useRef<{ view: string; layout: ReturnType<typeof c4Layout> } | null>(null)
   const exportToken = useRef(0)
@@ -1629,6 +1635,35 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     [allRelationships, views.data, byKey, apply],
   )
 
+  /**
+   * An exchange file, whole, into this repository. One request; the server's report comes back
+   * as the result, and everything the editor shows is refetched — the import touched all of it.
+   */
+  const importFile = useCallback(
+    async (file: File) => {
+      setImporting(true)
+      try {
+        const report = await api.importArchimate(workspace, await file.arrayBuffer())
+        setImportReport(report)
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['graph', workspace] }),
+          queryClient.invalidateQueries({ queryKey: ['repository', workspace] }),
+          queryClient.invalidateQueries({ queryKey: ['views', workspace] }),
+          queryClient.invalidateQueries({ queryKey: ['view', workspace] }),
+          queryClient.invalidateQueries({ queryKey: ['folders', workspace] }),
+        ])
+      } catch (error) {
+        setMessage({
+          kind: 'error',
+          text: error instanceof Error ? error.message : 'The import failed.',
+        })
+      } finally {
+        setImporting(false)
+      }
+    },
+    [api, workspace, queryClient],
+  )
+
   const createView = useCallback(async () => {
     const name = window.prompt('Name of the new view', 'Context')
     if (!name?.trim()) {
@@ -1937,6 +1972,29 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
             <button type="button" className="ag-block-button" onClick={() => void createView()} disabled={apply.isPending}>
               + New view
             </button>
+            <button
+              type="button"
+              className="ag-block-button"
+              onClick={() => importInput.current?.click()}
+              disabled={importing}
+              title="Import an ArchiMate Model Exchange File (.xml)"
+            >
+              {importing ? 'Importing…' : 'Import ArchiMate file'}
+            </button>
+            <input
+              ref={importInput}
+              type="file"
+              accept=".xml,application/xml,text/xml"
+              hidden
+              onChange={(event) => {
+                const file = event.target.files?.[0]
+                // Reset so choosing the same file again fires onChange again.
+                event.target.value = ''
+                if (file) {
+                  void importFile(file)
+                }
+              }}
+            />
             <FolderTree
               folders={viewFolders.data ?? []}
               items={viewItems}
@@ -2179,6 +2237,51 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
             <button type="button" className="ag-banner-close" onClick={() => setMessage(null)} aria-label="Dismiss">
               ×
             </button>
+          </div>
+        )}
+
+        {/* The import's report, whole: what was dropped is part of the answer, not a log line. */}
+        {importReport && (
+          <div className="ag-import-report" role="dialog" aria-label="Import report">
+            <header>
+              <strong>Imported {importReport.modelName ?? 'exchange file'}</strong>
+              <button type="button" className="ag-banner-close" onClick={() => setImportReport(null)} aria-label="Dismiss">
+                ×
+              </button>
+            </header>
+            <p>
+              {importReport.elements} elements, {importReport.relationships} relationships,{' '}
+              {importReport.views} views, {importReport.folders} folders.
+            </p>
+            {importReport.discarded.length > 0 && (
+              <details>
+                <summary>{importReport.discarded.length} discarded — the language forbids them</summary>
+                <ul>
+                  {importReport.discarded.map((violation, index) => (
+                    <li key={index}>{violation.detail}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            {Object.keys(importReport.lost).length > 0 && (
+              <details>
+                <summary>Not imported</summary>
+                <ul>
+                  {Object.entries(importReport.lost).map(([what, count]) => (
+                    <li key={what}>
+                      {count} {what}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            {importReport.interpreted.length > 0 && (
+              <ul className="ag-import-notes">
+                {importReport.interpreted.map((note, index) => (
+                  <li key={index}>{note}</li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
 

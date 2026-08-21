@@ -390,12 +390,19 @@ Deployment View» больше не является целью: Deployment от
 единственный вендоронезависимый для ArchiMate; открывает миграцию из Archi, BiZZdesign, Sparx.
 Решения и цена расхождений — [ADR-0012](adr/0012-archimate-exchange-format.md).
 
-- [ ] Разбор `<elements>`, `<relationships>`, `<organizations>`, `<propertyDefinitions>` в команды —
+- [x] Разбор `<elements>`, `<relationships>`, `<organizations>`, `<propertyDefinitions>` в команды —
       импорт идёт через тот же конвейер, что и всё остальное ([ADR-0004](adr/0004-commands-and-versioning-from-day-one.md)),
-      а не в обход него в базу.
-- [ ] `<views>`: `node` → `view_element` + `view_layout_node`, `Container` → вложенность,
+      а не в обход него в базу. Сделано 2026-08-22: `ArchimateExchangeParser` (только чтение файла)
+      + `ArchimateImportService` (файл → команды → `importTolerantly` → layout), эндпоинт
+      `POST /api/workspaces/{key}/import/archimate`, кнопка в сайдбаре. Слаги из имён с
+      транслитерацией кириллицы (`Slugs`); `AndJunction`/`OrJunction` → `Junction`;
+      `accessType`/`isDirected` — в свойства связи. Проверено на живом файле банка:
+      850 элементов, 1086/1113 связей (27 отброшено поимённо), 18 диаграмм, 8 папок.
+- [x] `<views>`: `node` → `view_element` + `view_layout_node`, `Container` → вложенность,
       `connection` → членство, `NestingRelationship` → вложенность плюс скрытая связь,
-      отсутствующее соединение → `view_hidden_relationship`.
+      отсутствующее соединение → `view_hidden_relationship`. Сделано 2026-08-22; `Label` и
+      `Container` без элемента — в отчёт как потерянные, предок сквозь прозрачный контейнер —
+      ближайший реальный.
 - [x] ~~Схлопывание дублей узлов~~ — отменено: дубли импортируются как размещения, и с V15 то же
       верно для линий — несколько `connection` одной связи ложатся строками `view_layout_link`
       ([ADR-0014](adr/0014-placements.md)). Узел ↔ размещение, connection ↔ линия: соответствие
@@ -405,7 +412,9 @@ Deployment View» больше не является целью: Deployment от
 - [ ] Экспорт: обратное преобразование, включая `NestingRelationship` и пропуск скрытых связей.
 - [ ] **Тест валидирует экспорт против XSD** и проходит round-trip на моделях из Archi. Формат,
       который мы не проверяем схемой, — это формат, про который мы узнаем от клиента.
-- [ ] Отчёт импорта: что схлопнуто, что потеряно (стили), что интерпретировано.
+- [x] Отчёт импорта: что отброшено (поимённо, с правилом и разрешённым), что потеряно
+      (надписи, свободные линии, стили), что интерпретировано. Сделано 2026-08-22 — отчёт
+      это тело ответа эндпоинта и панель в редакторе, не лог.
 
 *Остальные инструменты (1.5 недели).*
 - Structurizr DSL — импорт.

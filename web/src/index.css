@@ -396,6 +396,8 @@ code {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  /* The import report anchors to this area, not to whatever ancestor happens to be positioned. */
+  position: relative;
 }
 
 .ag-toolbar {
@@ -929,6 +931,62 @@ code {
   gap: 0.6rem;
   max-width: 32rem;
   padding: 3rem;
+}
+
+/* ---------------------------------------------------------------- import report */
+
+.ag-import-report {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  z-index: 30;
+  width: 26rem;
+  max-width: calc(100% - 1.5rem);
+  max-height: calc(100% - 1.5rem);
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.22);
+  padding: 0.75rem 0.9rem;
+  font-size: 0.85rem;
+}
+
+.ag-import-report header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+
+.ag-import-report p {
+  margin: 0.3rem 0;
+}
+
+.ag-import-report details {
+  margin: 0.4rem 0;
+}
+
+.ag-import-report summary {
+  cursor: pointer;
+}
+
+.ag-import-report ul {
+  margin: 0.3rem 0 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+}
+
+.ag-import-notes {
+  color: var(--muted);
+  list-style: none;
+  padding-left: 0 !important;
 }
 
 /* ---------------------------------------------------------------- relationship picker */

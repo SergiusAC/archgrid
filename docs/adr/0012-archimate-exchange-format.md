@@ -1,6 +1,8 @@
 # ADR-0012. Обмен — ArchiMate Model Exchange File Format, с названной ценой
 
-- **Статус:** accepted; реализация в фазе 6 (импорт/экспорт) и фазе 5 (общая сериализация)
+- **Статус:** accepted; **импорт реализован 2026-08-22** (`imports/ArchimateExchangeParser` +
+  `ArchimateImportService`, `POST /api/workspaces/{key}/import/archimate`, проверен на живом
+  файле банка — 850 элементов, 18 диаграмм); экспорт — фаза 6, общая сериализация — фаза 5
 - **Дата:** 2026-08-20
 - **Связано с:** [ADR-0002](0002-metamodel-as-data.md), [ADR-0003](0003-model-view-layout-separation.md),
   [ADR-0009](0009-views-and-folders.md), [ADR-0011](0011-nesting-is-presentation.md)

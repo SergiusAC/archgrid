@@ -4,6 +4,7 @@ import type {
   CommandRequest,
   Folder,
   Graph,
+  ImportReport,
   ConnectionRouter,
   LayoutLink,
   LayoutNode,
@@ -160,6 +161,17 @@ export function createApi(token: string) {
       request<CommitResult>(`/api/workspaces/${encode(workspace)}/commands`, token, {
         method: 'POST',
         body: JSON.stringify(body),
+      }),
+
+    /**
+     * The other way in: an ArchiMate exchange file, whole, through the tolerant pipeline
+     * (ADR-0015). The response is the import's own report of what it kept and dropped.
+     */
+    importArchimate: (workspace: string, file: ArrayBuffer) =>
+      request<ImportReport>(`/api/workspaces/${encode(workspace)}/import/archimate`, token, {
+        method: 'POST',
+        body: file,
+        headers: { 'Content-Type': 'application/xml' },
       }),
   }
 }
