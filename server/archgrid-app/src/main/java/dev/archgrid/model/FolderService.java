@@ -84,13 +84,13 @@ class FolderService {
     }
 
     @Transactional
-    void assign(UUID graphId, String kind, String key, UUID folderId) {
+    void assign(UUID graphId, String kind, UUID id, UUID folderId) {
         if (folderId != null) {
             requireFolder(graphId, folderId);
         }
         switch (requireKind(kind)) {
-            case "elements" -> repository.assignElement(graphId, key, folderId);
-            case "views" -> repository.assignView(graphId, key, folderId);
+            case "elements" -> repository.assignElement(graphId, id, folderId);
+            case "views" -> repository.assignView(graphId, id, folderId);
             default -> throw new IllegalStateException("unreachable");
         }
     }

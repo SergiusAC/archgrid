@@ -8,7 +8,7 @@ import dev.archgrid.domain.metamodel.Layer;
 import dev.archgrid.domain.metamodel.Metamodel;
 import dev.archgrid.domain.metamodel.RelationshipCategory;
 import dev.archgrid.domain.metamodel.RelationshipType;
-import dev.archgrid.domain.shared.Slug;
+import dev.archgrid.domain.shared.Id;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -35,7 +35,7 @@ class ViewFiltersTest {
             .build();
 
     private static Element element(String key, ElementType type, Map<String, String> properties) {
-        return new Element(Slug.of(key), type.concept(), null, key, null, properties);
+        return new Element(id(key), type.concept(), null, key, null, properties);
     }
 
     private static ModelGraph graph() {
@@ -50,15 +50,24 @@ class ViewFiltersTest {
 
     private static View view(ViewFilter... filters) {
         return new View(
-                Slug.of("v"),
+                id("v"),
                 "View",
                 "layered",
-                Set.of(Slug.of("api"), Slug.of("ledger"), Slug.of("cluster"), Slug.of("clerk")),
+                Set.of(id("api"), id("ledger"), id("cluster"), id("clerk")),
                 Set.of(filters));
     }
 
-    private static List<String> keys(Set<Slug> slugs) {
-        return slugs.stream().map(Slug::value).toList();
+    private static List<String> keys(Set<Id> slugs) {
+        return slugs.stream().map(NAMES::get).toList();
+    }
+
+    /** Readable identities for a scenario, and the way back from an id to the name it was made from. */
+    private static final java.util.Map<Id, String> NAMES = new java.util.HashMap<>();
+
+    private static Id id(String name) {
+        Id id = Id.named(name);
+        NAMES.put(id, name);
+        return id;
     }
 
     @Test
@@ -71,7 +80,7 @@ class ViewFiltersTest {
     @Test
     @DisplayName("two filters of one kind are alternatives")
     void filters_of_one_kind_widen() {
-        Set<Slug> visible =
+        Set<Id> visible =
                 ViewFilters.visible(graph(), view(ViewFilter.layer("application"), ViewFilter.layer("business")), METAMODEL);
 
         // "Application or business" — the other reading, where every filter narrows, would make a
@@ -82,7 +91,7 @@ class ViewFiltersTest {
     @Test
     @DisplayName("filters of different kinds must all hold")
     void filters_of_different_kinds_narrow() {
-        Set<Slug> visible = ViewFilters.visible(
+        Set<Id> visible = ViewFilters.visible(
                 graph(), view(ViewFilter.layer("application"), ViewFilter.property("tag", "legacy")), METAMODEL);
 
         assertThat(keys(visible)).containsExactly("api");

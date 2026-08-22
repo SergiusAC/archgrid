@@ -1,7 +1,7 @@
 package dev.archgrid.domain.model;
 
 import dev.archgrid.domain.metamodel.RelationshipType;
-import dev.archgrid.domain.shared.Slug;
+import dev.archgrid.domain.shared.Id;
 import java.util.List;
 import java.util.Objects;
 
@@ -16,7 +16,7 @@ import java.util.Objects;
  *     answer "why is this line here", which is the first thing an architect asks of a
  *     relationship they did not draw.
  */
-public record DerivedRelationship(Slug source, Slug target, RelationshipType type, List<Slug> via) {
+public record DerivedRelationship(Id source, Id target, RelationshipType type, List<Id> via) {
 
     public DerivedRelationship {
         Objects.requireNonNull(source, "source must not be null");
@@ -25,10 +25,15 @@ public record DerivedRelationship(Slug source, Slug target, RelationshipType typ
         via = List.copyOf(via);
     }
 
-    /** A stable synthetic key, so the same derived line keeps its identity between renders. */
+    /**
+     * A stable synthetic key, so the same derived line keeps its identity between renders and a
+     * route dragged into it survives in {@code view_layout_link}.
+     *
+     * <p>Built from the endpoints' ids, never their names: ids are bounded and do not change when
+     * something is renamed, which is exactly what a stored routing needs of its key.
+     */
     public String key() {
-        return "derived:" + source.value() + ":" + type.concept().toLowerCase(java.util.Locale.ROOT) + ":"
-                + target.value();
+        return "derived:" + source + ":" + type.concept().toLowerCase(java.util.Locale.ROOT) + ":" + target;
     }
 
     public String explain(String sourceName, String targetName, List<String> viaNames) {

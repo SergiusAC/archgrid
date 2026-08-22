@@ -1,6 +1,6 @@
 package dev.archgrid.domain.model;
 
-import dev.archgrid.domain.shared.Slug;
+import dev.archgrid.domain.shared.Id;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -14,10 +14,15 @@ import java.util.Optional;
  * of structural links — are computed from the graph when a view asks for them and are never
  * stored, because storing them would make the model's own history unreadable.
  *
+ * <p>Type, source and target are fixed for the relationship's life; there is no command to change
+ * them, and together they are what makes it unique in a repository ({@link #triple()}). The name
+ * is the one attribute an architect edits, and it is optional and never unique: two Flows out of
+ * one component are told apart by what they carry, not by where they go.
+ *
  * @param conceptType one of the eleven ArchiMate relationship types
  */
 public record Relationship(
-        Slug key, String conceptType, Slug source, Slug target, String name, Map<String, String> properties) {
+        Id key, String conceptType, Id source, Id target, String name, Map<String, String> properties) {
 
     public static final int MAX_NAME_LENGTH = 200;
 
@@ -34,7 +39,7 @@ public record Relationship(
         properties = Collections.unmodifiableMap(new LinkedHashMap<>(properties));
     }
 
-    public static Relationship of(Slug key, String conceptType, Slug source, Slug target) {
+    public static Relationship of(Id key, String conceptType, Id source, Id target) {
         return new Relationship(key, conceptType, source, target, null, Map.of());
     }
 
@@ -47,8 +52,30 @@ public record Relationship(
         return source.equals(target);
     }
 
-    public boolean touches(Slug elementKey) {
+    public boolean touches(Id elementKey) {
         return source.equals(elementKey) || target.equals(elementKey);
+    }
+
+    /**
+     * What makes this relationship unique in a repository: its type and its two ends.
+     *
+     * <p>A second relationship of the same type between the same pair is refused (docs/09, a
+     * deliberate step beyond what ArchiMate itself requires), so this is the key the rule and the
+     * importer's merge both compare by. The database agrees, with a unique index on the same
+     * three columns.
+     */
+    public String triple() {
+        return triple(conceptType, source, target);
+    }
+
+    public static String triple(String conceptType, Id source, Id target) {
+        return conceptType + "|" + source + "|" + target;
+    }
+
+    /** A null {@code newName} unnames the relationship; the type alone then labels its line. */
+    public Relationship withName(String newName) {
+        String trimmed = newName == null || newName.isBlank() ? null : newName.strip();
+        return new Relationship(key, conceptType, source, target, trimmed, properties);
     }
 
     /**

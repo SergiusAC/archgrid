@@ -25,8 +25,12 @@ import tools.jackson.databind.ObjectMapper;
 
 /**
  * The whole importer against the file it was built for: a real bank's repository, 850 elements,
- * 18 diagrams, Russian names, junctions, duplicate names — everything ADR-0012 and ADR-0015 were
- * written about, exercised in one request.
+ * 18 diagrams, Russian names, junctions, duplicate names — everything ADR-0012, ADR-0015 and
+ * docs/09 were written about, exercised in one request.
+ *
+ * <p>The numbers below come from the file itself: 850 elements of which 118 share a name and a
+ * type with an earlier one and 21 share a name with something of another type; 1113 relationships
+ * of which 24 restate another once their ends have been merged; 676 element nodes on 18 views.
  */
 @SpringBootTest(
         properties = "spring.security.oauth2.resourceserver.jwt.jwk-set-uri=http://localhost/jwks-not-used")
@@ -36,6 +40,9 @@ import tools.jackson.databind.ObjectMapper;
 class ArchimateImportIT {
 
     private static final String WS = "bank";
+
+    /** The file's first element, as Archi wrote its identifier and as we hold it. */
+    private static final String FIRST_ELEMENT_IN_FILE = "cfeed7b0-4817-4c23-b2c6-d207fda5f130";
 
     @Autowired
     private MockMvc mockMvc;
@@ -65,66 +72,100 @@ class ArchimateImportIT {
                 .update();
     }
 
-    @Test
-    @DisplayName("the sample bank repository imports whole: model, diagrams, folders, and an exact report")
-    void imports_the_sample_file() throws Exception {
-        byte[] file = getClass().getResourceAsStream("/imports/bbank_schemas.xml").readAllBytes();
-
-        String response = mockMvc.perform(post("/api/workspaces/{ws}/import/archimate", WS)
+    private JsonNode importFile(byte[] file) throws Exception {
+        return json.readTree(mockMvc.perform(post("/api/workspaces/{ws}/import/archimate", WS)
                         .contentType(MediaType.APPLICATION_XML)
                         .content(file)
                         .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTRIBUTOR"))))
                 .andExpect(status().isOk())
                 .andReturn()
                 .getResponse()
-                .getContentAsString();
-        JsonNode report = json.readTree(response);
+                .getContentAsString());
+    }
 
-        // The file defines 850 elements and 1113 relationships. The tolerant pipeline may discard
-        // what the matrix forbids — by name, in the report — but the bulk must arrive.
+    private JsonNode getJson(String path, Object... variables) throws Exception {
+        return json.readTree(mockMvc.perform(get(path, variables).with(jwt()))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+    }
+
+    @Test
+    @DisplayName("the sample bank repository imports whole: model, diagrams, folders, and an exact report")
+    void imports_the_sample_file() throws Exception {
+        byte[] file = getClass().getResourceAsStream("/imports/bbank_schemas.xml").readAllBytes();
+
+        JsonNode report = importFile(file);
+
+        // 850 elements in the file, 118 of them a second "QazID" or "B-Connect" of the same type —
+        // merged into the first (docs/09), so 732 arrive. The tolerant pipeline may still discard
+        // what the matrix forbids, by name, in the report.
         assertThat(report.get("commitId").isNull()).isFalse();
-        assertThat(report.get("elements").asInt()).isBetween(840, 850);
-        assertThat(report.get("relationships").asInt()).isBetween(1000, 1113);
+        assertThat(report.get("elements").asInt()).isBetween(720, 740);
+        assertThat(report.get("relationships").asInt()).isBetween(1000, 1095);
         assertThat(report.get("views").asInt()).isEqualTo(18);
         assertThat(report.get("folders").asInt()).isGreaterThanOrEqualTo(8);
         for (JsonNode discarded : report.get("discarded")) {
             assertThat(discarded.get("detail").asString()).isNotBlank();
         }
 
+        // The merge is in the report, by name: what was folded and into how many, what was renamed
+        // because something of another type held the name, and nothing skipped — the repository
+        // was empty.
+        int folded = 0;
+        for (JsonNode count : report.get("merged")) {
+            folded += count.asInt();
+        }
+        assertThat(folded + report.get("elements").asInt() + report.get("renamed").size())
+                .as("merged + created + renamed accounts for the 850 elements in the file, minus discards")
+                .isBetween(840, 850 + report.get("renamed").size());
+        assertThat(folded).isBetween(100, 130);
+        assertThat(report.get("merged").has("QazID (ApplicationComponent)")).isTrue();
+        assertThat(report.get("renamed").size()).isBetween(10, 30);
+        assertThat(report.get("renamed").get(0).asString()).contains(" → ");
+        assertThat(report.get("skipped")).isEmpty();
+
         // The graph the import left behind is the graph the API serves.
-        JsonNode graph = json.readTree(mockMvc.perform(get("/api/workspaces/{ws}", WS)
-                        .with(jwt()))
-                .andExpect(status().isOk())
-                .andReturn()
-                .getResponse()
-                .getContentAsString());
+        JsonNode graph = getJson("/api/workspaces/{ws}", WS);
         assertThat(graph.get("elements").asInt()).isEqualTo(report.get("elements").asInt());
         assertThat(graph.get("relationships").asInt())
                 .isEqualTo(report.get("relationships").asInt());
 
+        // Identity came from the file: Archi's `id-<32 hex>` is the UUID we hold, so the first
+        // element of the file is findable by the identifier Archi gave it.
+        JsonNode elements = getJson("/api/workspaces/{ws}/elements", WS);
+        assertThat(elements).isNotEmpty();
+        for (JsonNode element : elements) {
+            assertThat(element.get("key").asString())
+                    .matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
+        }
+        JsonNode usage = getJson("/api/workspaces/{ws}/elements/{id}/usage", WS, FIRST_ELEMENT_IN_FILE);
+        assertThat(usage.get("relationships")).isNotNull();
+        // Names are unique now, and the file's Cyrillic names arrived as they were, not
+        // transliterated into anything.
+        boolean firstByName = false;
+        for (JsonNode element : elements) {
+            if (element.get("key").asString().equals(FIRST_ELEMENT_IN_FILE)) {
+                assertThat(element.get("name").asString()).isEqualTo("Клиент ФЛ");
+                firstByName = true;
+            }
+        }
+        assertThat(firstByName).isTrue();
+
         // Every view arrived with an arrangement, not just a membership: placements with real
         // geometry (ADR-0014 — a node is a placement) and, on the views that draw connections,
-        // lines anchored to those placements.
-        JsonNode views = json.readTree(mockMvc.perform(get("/api/workspaces/{ws}/views", WS)
-                        .with(jwt()))
-                .andExpect(status().isOk())
-                .andReturn()
-                .getResponse()
-                .getContentAsString());
+        // lines anchored to those placements. Merging elements loses no boxes: a second drawing of
+        // "QazID" is a second placement of the one element.
+        JsonNode views = getJson("/api/workspaces/{ws}/views", WS);
         assertThat(views).hasSize(18);
 
         int placements = 0;
         int lines = 0;
         for (JsonNode summary : views) {
-            JsonNode view = json.readTree(mockMvc.perform(get(
-                                    "/api/workspaces/{ws}/views/{key}", WS, summary.get("key").asString())
-                            .with(jwt()))
-                    .andExpect(status().isOk())
-                    .andReturn()
-                    .getResponse()
-                    .getContentAsString());
+            JsonNode view = getJson("/api/workspaces/{ws}/views/{key}", WS, summary.get("key").asString());
             assertThat(view.get("layout").size())
-                    .as("view %s has placements", summary.get("key").asString())
+                    .as("view %s has placements", summary.get("name").asString())
                     .isGreaterThan(0);
             placements += view.get("layout").size();
             lines += view.get("layoutLinks").size();
@@ -133,42 +174,27 @@ class ArchimateImportIT {
         assertThat(placements).isBetween(650, 676);
         assertThat(lines).isGreaterThan(400);
 
-        // Cyrillic names became readable slugs, not hyphen soup.
-        JsonNode elements = json.readTree(mockMvc.perform(get("/api/workspaces/{ws}/elements", WS)
-                        .with(jwt()))
-                .andExpect(status().isOk())
-                .andReturn()
-                .getResponse()
-                .getContentAsString());
-        assertThat(elements).isNotEmpty();
-        for (JsonNode element : elements) {
-            assertThat(element.get("key").asString()).matches("[a-z0-9]+(-[a-z0-9]+)*");
-        }
+        // A second import of the same file finds everything it made the first time — the ids are
+        // the file's — and adds nothing. The report says so by name: every object skipped, nothing
+        // created, the repository exactly as it was.
+        JsonNode second = importFile(file);
+        assertThat(second.get("elements").asInt()).isZero();
+        // Zero here also pins the cycle cut: the file's composition cycles are broken by cutting
+        // what the file brought, so the second import cuts the same edges again rather than
+        // trading one for a neighbour the repository already held.
+        assertThat(second.get("relationships").asInt()).isZero();
+        java.util.Set<String> firstKeys = new java.util.HashSet<>();
+        elements.forEach(element -> firstKeys.add(element.get("key").asString()));
+        java.util.Set<String> secondKeys = new java.util.HashSet<>();
+        getJson("/api/workspaces/{ws}/elements", WS).forEach(element -> secondKeys.add(element.get("key").asString()));
+        assertThat(secondKeys).isEqualTo(firstKeys);
+        assertThat(second.get("views").asInt()).isZero();
+        assertThat(second.get("skipped").size()).isGreaterThanOrEqualTo(report.get("elements").asInt() + 18);
 
-        // A second import duplicates under fresh slugs by design — it is a new commit, not a
-        // merge (matching sources is phase 6c). What this pins is the report's meaning: its
-        // counts are what the file added, so they stay the same into a repository that now holds
-        // twice as much. Reporting totals here would say "1700 elements" for the same file.
-        JsonNode second = json.readTree(mockMvc.perform(post("/api/workspaces/{ws}/import/archimate", WS)
-                        .contentType(MediaType.APPLICATION_XML)
-                        .content(file)
-                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTRIBUTOR"))))
-                .andExpect(status().isOk())
-                .andReturn()
-                .getResponse()
-                .getContentAsString());
-        assertThat(second.get("elements").asInt()).isEqualTo(report.get("elements").asInt());
-        assertThat(second.get("relationships").asInt())
-                .isEqualTo(report.get("relationships").asInt());
-
-        JsonNode grown = json.readTree(mockMvc.perform(get("/api/workspaces/{ws}", WS)
-                        .with(jwt()))
-                .andExpect(status().isOk())
-                .andReturn()
-                .getResponse()
-                .getContentAsString());
-        assertThat(grown.get("elements").asInt())
-                .isEqualTo(report.get("elements").asInt() + second.get("elements").asInt());
+        JsonNode unchanged = getJson("/api/workspaces/{ws}", WS);
+        assertThat(unchanged.get("elements").asInt()).isEqualTo(report.get("elements").asInt());
+        assertThat(unchanged.get("relationships").asInt()).isEqualTo(report.get("relationships").asInt());
+        assertThat(getJson("/api/workspaces/{ws}/views", WS)).hasSize(18);
     }
 
     @Test

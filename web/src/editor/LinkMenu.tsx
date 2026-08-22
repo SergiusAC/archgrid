@@ -22,6 +22,8 @@ interface LinkMenuProps {
   onDelete: () => void
   /** Removes this line; offered only while another one remains. */
   onRemoveLine: () => void
+  /** Names the relationship — the one thing about it an architect edits (docs/09). */
+  onRename: () => void
 }
 
 /**
@@ -41,6 +43,7 @@ export default function LinkMenu({
   onHide,
   onDelete,
   onRemoveLine,
+  onRename,
 }: LinkMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
   const [placement, setPlacement] = useState({ left: target.x, top: target.y })
@@ -72,7 +75,6 @@ export default function LinkMenu({
           <div className="ag-context-type">
             {source} → {destination}
           </div>
-          <code>{relationship.key}</code>
         </header>
 
         <div className="ag-context-actions">
@@ -87,6 +89,10 @@ export default function LinkMenu({
               </button>
             </div>
           )}
+          <button type="button" onClick={onRename}>
+            Name the relationship…
+            <small>{relationship.name ? `Now "${relationship.name}"` : "Optional, and need not be unique"}</small>
+          </button>
           <button type="button" onClick={onHide}>
             Hide on this view
             <small>Stays in the model, drawn on other views</small>

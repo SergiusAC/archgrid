@@ -9,7 +9,7 @@ import dev.archgrid.domain.model.C4Projection;
 import dev.archgrid.domain.model.ModelGraph;
 import dev.archgrid.domain.model.RelationshipDerivation;
 import dev.archgrid.domain.model.View;
-import dev.archgrid.domain.shared.Slug;
+import dev.archgrid.domain.shared.Id;
 import dev.archgrid.domain.workspace.Workspace;
 import jakarta.validation.Valid;
 import java.security.Principal;
@@ -73,7 +73,7 @@ class GraphController {
         GraphService.GraphRef row = graphs.of(workspace.id(), workspace.name());
         ModelGraph current = commands.current(row.id());
         return new ModelApiDtos.GraphResponse(
-                workspace.key().value(),
+                workspace.key().toString(),
                 workspace.name(),
                 row.headCommitId(),
                 current.elements().size(),
@@ -114,7 +114,7 @@ class GraphController {
         // tree always drew everything at the root and moving something appeared to do nothing.
         Map<String, String> folderOf = folders.elementFolders(graphId);
         return commands.current(graphId).elements().stream()
-                .map(element -> ModelApiDtos.ElementResponse.from(element, folderOf.get(element.key().value())))
+                .map(element -> ModelApiDtos.ElementResponse.from(element, folderOf.get(element.key().toString())))
                 .toList();
     }
 
@@ -206,7 +206,7 @@ class GraphController {
     @GetMapping("/elements/{elementKey}/usage")
     ModelApiDtos.UsageResponse usage(@PathVariable String workspaceKey, @PathVariable String elementKey) {
         ModelGraph graph = commands.current(graphId(workspaceKey));
-        Slug key = Slug.of(elementKey);
+        Id key = Id.parse(elementKey);
         if (graph.element(key).isEmpty()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No element '" + elementKey + "'.");
         }
@@ -216,7 +216,7 @@ class GraphController {
                         .toList(),
                 graph.viewsShowing(key).stream()
                         .map(view -> new ModelApiDtos.ViewRefResponse(
-                                view.key().value(), view.name()))
+                                view.key().toString(), view.name()))
                         .toList());
     }
 
@@ -227,7 +227,7 @@ class GraphController {
         UUID graphId = graphId(workspaceKey);
         Map<String, String> byView = folders.viewFolders(graphId);
         return commands.current(graphId).views().stream()
-                .map(view -> ModelApiDtos.ViewSummaryResponse.from(view, byView.get(view.key().value())))
+                .map(view -> ModelApiDtos.ViewSummaryResponse.from(view, byView.get(view.key().toString())))
                 .toList();
     }
 
@@ -236,19 +236,19 @@ class GraphController {
     ModelApiDtos.ViewResponse view(@PathVariable String workspaceKey, @PathVariable String viewKey) {
         UUID graphId = graphId(workspaceKey);
         ModelGraph graph = commands.current(graphId);
-        View view = graph.view(Slug.of(viewKey))
+        View view = graph.view(Id.parse(viewKey))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No view '" + viewKey + "'."));
 
         // Filtering happens here rather than in the browser, and that is the whole value of it: a
         // view narrowed to the application layer derives the application-level lines that run
         // through the technology it no longer draws.
-        java.util.Set<Slug> shown = dev.archgrid.domain.model.ViewFilters.visible(graph, view, metamodel);
+        java.util.Set<Id> shown = dev.archgrid.domain.model.ViewFilters.visible(graph, view, metamodel);
 
         return new ModelApiDtos.ViewResponse(
-                view.key().value(),
+                view.key().toString(),
                 view.name(),
                 view.viewpoint(),
-                folders.viewFolders(graphId).get(view.key().value()),
+                folders.viewFolders(graphId).get(view.key().toString()),
                 shown.stream()
                         .map(graph::element)
                         .flatMap(java.util.Optional::stream)
@@ -261,12 +261,12 @@ class GraphController {
                 // not sent here, by decision (ADR-0013). The engine that computes them is intact
                 // and still answers for the C4 projection, where rolling a neighbour up to its
                 // system leaves nothing else to draw the line from.
-                layout.load(graphId, viewKey).stream()
+                layout.load(graphId, view.key().value()).stream()
                         .map(node -> new ModelApiDtos.LayoutNodeResponse(
-                                node.id(), node.elementKey(), node.x(), node.y(), node.width(), node.height(),
+                                node.id(), node.elementId().toString(), node.x(), node.y(), node.width(), node.height(),
                                 node.parentId(), node.z()))
                         .toList(),
-                layout.links(graphId, viewKey).stream()
+                layout.links(graphId, view.key().value()).stream()
                         .map(link -> new ModelApiDtos.LayoutLinkResponse(
                                 link.id(),
                                 link.linkKey(),
@@ -284,10 +284,10 @@ class GraphController {
                         .map(graph::element)
                         .flatMap(java.util.Optional::stream)
                         .map(element -> new ModelApiDtos.OmittedResponse(
-                                element.key().value(), element.name(), element.displayType()))
+                                element.key().toString(), element.name(), element.displayType()))
                         .toList(),
-                layout.hidden(graphId, viewKey),
-                layout.router(graphId, viewKey));
+                layout.hidden(graphId, view.key().value()).stream().map(UUID::toString).toList(),
+                layout.router(graphId, view.key().value()));
     }
 
     // ------------------------------------------------------------------ C4
@@ -314,7 +314,7 @@ class GraphController {
                         HttpStatus.UNPROCESSABLE_CONTENT,
                         "Unknown C4 level '" + level + "'. Use one of: "
                                 + c4.levels().stream().map(C4Level::code).toList() + "."));
-        Slug focusKey = Slug.of(focus);
+        Id focusKey = Id.parse(focus);
         if (graph.element(focusKey).isEmpty()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "No element '" + focus + "'.");
         }
@@ -323,7 +323,7 @@ class GraphController {
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.UNPROCESSABLE_CONTENT, explainRefusal(graph, focusKey, c4Level)));
 
-        java.util.Set<Slug> shown = new java.util.LinkedHashSet<>(result.shown());
+        java.util.Set<Id> shown = new java.util.LinkedHashSet<>(result.shown());
         return new ModelApiDtos.C4ProjectionResponse(
                 c4Level.code(),
                 c4Level.name(),
@@ -342,29 +342,29 @@ class GraphController {
                         .map(derived -> new ModelApiDtos.DerivedRelationshipResponse(
                                 derived.key(),
                                 derived.type().concept(),
-                                derived.source().value(),
-                                derived.target().value(),
+                                derived.source().toString(),
+                                derived.target().toString(),
                                 derived.via().stream()
                                         .map(hidden -> graph.element(hidden)
                                                 .map(dev.archgrid.domain.model.Element::name)
-                                                .orElseGet(hidden::value))
+                                                .orElseGet(hidden::toString))
                                         .toList()))
                         .toList(),
                 result.omitted().stream()
                         .map(graph::element)
                         .flatMap(java.util.Optional::stream)
                         .map(element -> new ModelApiDtos.OmittedResponse(
-                                element.key().value(), element.name(), element.displayType()))
+                                element.key().toString(), element.name(), element.displayType()))
                         .toList());
     }
 
     /** Says which of the two reasons applies, because "cannot be drawn" teaches nobody anything. */
-    private String explainRefusal(ModelGraph graph, Slug focus, C4Level level) {
+    private String explainRefusal(ModelGraph graph, Id focus, C4Level level) {
         String type = graph.element(focus)
                 .map(dev.archgrid.domain.model.Element::displayType)
                 .orElse("?");
         return "C4 has no way to draw a " + type + " at the " + level.name() + " level, so there is no "
-                + "diagram to be had around '" + focus.value() + "'. A C4 view is drawn around a system, "
+                + "diagram to be had around '" + focus.toString() + "'. A C4 view is drawn around a system, "
                 + "a container or a person.";
     }
 
@@ -381,14 +381,15 @@ class GraphController {
             @PathVariable String viewKey,
             @Valid @RequestBody ModelApiDtos.LayoutRequest request) {
         UUID graphId = graphId(workspaceKey);
+        UUID viewId = Id.parse(viewKey).value();
         layout.save(
                 graphId,
-                viewKey,
+                viewId,
                 request.nodes().stream()
                         .map(node -> new dev.archgrid.model.ViewLayoutRepository.LayoutNode(
                                 // A placement the client has not named is one it has just drawn.
                                 node.id() == null ? UUID.randomUUID() : node.id(),
-                                node.element(),
+                                Id.parse(node.element()).value(),
                                 node.x(),
                                 node.y(),
                                 node.width(),
@@ -399,7 +400,7 @@ class GraphController {
         if (request.links() != null) {
             layout.saveLinks(
                     graphId,
-                    viewKey,
+                    viewId,
                     request.links().stream()
                             .map(link -> new dev.archgrid.model.ViewLayoutRepository.LayoutLink(
                                     // A line the client has not named is one it has just drawn.
@@ -422,10 +423,10 @@ class GraphController {
                         HttpStatus.UNPROCESSABLE_CONTENT,
                         "Unknown connection router '" + request.router() + "'. Use 'straight' or 'orthogonal'.");
             }
-            layout.saveRouter(graphId, viewKey, request.router());
+            layout.saveRouter(graphId, viewId, request.router());
         }
         if (request.hidden() != null) {
-            layout.saveHidden(graphId, viewKey, request.hidden());
+            layout.saveHidden(graphId, viewId, request.hidden().stream().map(key -> Id.parse(key).value()).toList());
         }
     }
 
@@ -471,7 +472,7 @@ class GraphController {
             @RequestParam String kind,
             @RequestParam String key,
             @RequestParam(required = false) UUID folder) {
-        folders.assign(graphId(workspaceKey), kind, key, folder);
+        folders.assign(graphId(workspaceKey), kind, Id.parse(key).value(), folder);
     }
 
     @GetMapping("/commits")
@@ -484,7 +485,7 @@ class GraphController {
 
     private Workspace workspace(String workspaceKey) {
         return workspaces
-                .findByKey(Slug.of(workspaceKey))
+                .findByKey(dev.archgrid.domain.shared.Slug.of(workspaceKey))
                 .orElseThrow(() ->
                         new ResponseStatusException(HttpStatus.NOT_FOUND, "No workspace '" + workspaceKey + "'."));
     }

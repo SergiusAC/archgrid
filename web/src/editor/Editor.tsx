@@ -20,7 +20,7 @@ import { Metamodel } from '../metamodel/Metamodel.ts'
 import Canvas, { type CanvasElement, type CanvasLink, type Geometry } from './Canvas.tsx'
 import ContextMenu, { type ContextTarget } from './ContextMenu.tsx'
 import Filters from './Filters.tsx'
-import { uniqueKey } from './keys.ts'
+import { freeName, newKey } from './keys.ts'
 import LinkMenu, { type LinkTarget } from './LinkMenu.tsx'
 import Explorer from './Explorer.tsx'
 import FolderTree, { type TreeItem } from './FolderTree.tsx'
@@ -1132,7 +1132,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         return
       }
 
-      const key = uniqueKey(`${sourceKey}-${type.toLowerCase()}-${targetKey}`, relationshipsByKey)
+      const key = newKey()
       // Only when a clicked box is not the one the default would pick: the common case — nothing
       // drawn twice — needs no stored row at all.
       const chosen: { source?: string; target?: string } = {}
@@ -1152,7 +1152,6 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     },
     [
       byKey,
-      relationshipsByKey,
       allRelationships,
       endsOf,
       placementsOf,
@@ -1281,15 +1280,25 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     }
   }, [dropping])
 
-  /** New elements join the repository and land on the current view in one commit. */
+  /**
+   * New elements join the repository and land on the current view in one commit.
+   *
+   * The caller may hand in the key when it has already used it — to ask for a position before the
+   * element exists — otherwise one is made here. Keys are random and never derived from the name:
+   * the name is an attribute with its own uniqueness rule, and the server explains a clash.
+   */
   const createElement = useCallback(
-    (typeRef: string, displayName: string) => {
-      const key = uniqueKey(displayName, byKey)
-      const commands: Command[] = [{ op: 'create-element', key, type: typeRef, name: displayName }]
+    (typeRef: string, displayName: string, key: string = newKey()) => {
+      // Names are unique in the repository: the second Application Component is "(2)".
+      const name = freeName(
+        displayName,
+        Object.values(byKey).map((element) => element.name),
+      )
+      const commands: Command[] = [{ op: 'create-element', key, type: typeRef, name }]
       if (viewKey) {
         commands.push({ op: 'add-to-view', key: viewKey, element: key })
       }
-      apply.mutate({ commands, label: `Add ${displayName}` })
+      apply.mutate({ commands, label: `Add ${name}` })
       // It is named after its type until the user says otherwise, so put the cursor there now
       // rather than sending them to a side panel for every element they create.
       setEditingKey(key)
@@ -1310,17 +1319,21 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       if (!source || !viewKey) {
         return
       }
-      const key = uniqueKey(type.name, byKey)
+      const key = newKey()
       // Centred on where the line was dropped, not hung off it by a corner: the cursor was
       // pointing at where the element should be, not at its top-left pixel.
       // Snapped to the same grid a drag steps by: a new element half a unit off the one it came
       // from turns the line between them from vertical into very nearly vertical.
       const snap = (value: number) => Math.round(value / GRID) * GRID
       placeAt.current[key] = { x: snap(at.x - NODE_WIDTH / 2), y: snap(at.y - NODE_HEIGHT / 2) }
-      const relationshipKey = uniqueKey(`${sourceKey}-${relationship.toLowerCase()}-${key}`, relationshipsByKey)
+      const relationshipKey = newKey()
+      const name = freeName(
+        type.name,
+        Object.values(byKey).map((element) => element.name),
+      )
       apply.mutate({
         commands: [
-          { op: 'create-element', key, type: type.concept, name: type.name },
+          { op: 'create-element', key, type: type.concept, name },
           { op: 'add-to-view', key: viewKey, element: key },
           { op: 'add-relationship', key: relationshipKey, type: relationship, source: sourceKey, target: key },
         ],
@@ -1329,7 +1342,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       // Named after its type until the user says otherwise, so put the cursor there straight away.
       setEditingKey(key)
     },
-    [byKey, relationshipsByKey, viewKey, apply],
+    [byKey, viewKey, apply],
   )
 
   /**
@@ -1383,17 +1396,18 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     }
     const commands: Command[] = []
     const created: string[] = []
-    // Grows as it goes: two copies of the same element in one gesture must not claim the same key.
-    const taken: Record<string, unknown> = { ...byKey }
+    // Grows as it goes: names are unique in the repository, and two copies of the same element in
+    // one gesture must not claim the same one.
+    const taken = Object.values(byKey).map((element) => element.name)
     for (const node of selected) {
       const sourceKey = placements[node]
       const element = sourceKey ? byKey[sourceKey] : null
       if (!element) {
         continue
       }
-      const name = `${element.name} (copy)`
-      const key = uniqueKey(name, taken)
-      taken[key] = true
+      const name = freeName(`${element.name} (copy)`, taken)
+      taken.push(name)
+      const key = newKey()
       created.push(key)
       const at = positions[node]
       if (at) {
@@ -1669,13 +1683,18 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
     if (!name?.trim()) {
       return
     }
-    const key = uniqueKey(name, Object.fromEntries((views.data ?? []).map((v) => [v.key, true])))
+    const key = newKey()
+    // View names are unique too; a second "Context" becomes "Context (2)" rather than a refusal.
+    const viewName = freeName(
+      name.trim(),
+      (views.data ?? []).map((view) => view.name),
+    )
     // Open it only once the command has landed. Selecting it first made the detail query fire
     // against a view the server did not have yet, which answered 404 and left the canvas blank.
     if (
       await applySilently(
-        [{ op: 'create-view', key, name: name.trim(), viewpoint: 'layered' }],
-        `Create view ${name.trim()}`,
+        [{ op: 'create-view', key, name: viewName, viewpoint: 'layered' }],
+        `Create view ${viewName}`,
       )
     ) {
       setViewKey(key)
@@ -1700,8 +1719,11 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
         setMessage({ kind: 'error', text: describe(error) })
         return
       }
-      const name = `${byKey[focusKey]?.name ?? focusKey} — ${projection.levelName}`
-      const key = uniqueKey(name, Object.fromEntries((views.data ?? []).map((v) => [v.key, true])))
+      const name = freeName(
+        `${byKey[focusKey]?.name ?? focusKey} — ${projection.levelName}`,
+        (views.data ?? []).map((view) => view.name),
+      )
+      const key = newKey()
       const commands: Command[] = [
         { op: 'create-view', key, name, viewpoint: 'layered' },
         ...projection.elements.map((element) => ({ op: 'add-to-view', key, element: element.key }) as Command),
@@ -2277,6 +2299,44 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
                 </ul>
               </details>
             )}
+            {/* The merge, by name (docs/09): what the file said twice became one object; what it
+                said of something the repository already held was left as the repository has it;
+                what clashed with a thing of another kind was renamed. None of it is silent. */}
+            {Object.keys(importReport.merged).length > 0 && (
+              <details>
+                <summary>
+                  {Object.values(importReport.merged).reduce((sum, count) => sum + count, 0)} merged — the same
+                  name and type, folded into one element
+                </summary>
+                <ul>
+                  {Object.entries(importReport.merged).map(([what, count]) => (
+                    <li key={what}>
+                      {what} ×{count}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            {importReport.renamed.length > 0 && (
+              <details>
+                <summary>{importReport.renamed.length} renamed — the name was held by something of another kind</summary>
+                <ul>
+                  {importReport.renamed.map((entry, index) => (
+                    <li key={index}>{entry}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            {importReport.skipped.length > 0 && (
+              <details>
+                <summary>{importReport.skipped.length} already here — the repository's version was kept</summary>
+                <ul>
+                  {importReport.skipped.map((entry, index) => (
+                    <li key={index}>{entry}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
             {importReport.interpreted.length > 0 && (
               <ul className="ag-import-notes">
                 {importReport.interpreted.map((note, index) => (
@@ -2349,14 +2409,17 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
                 // Centred on the cursor: it was pointing at where the element should be, not at
                 // the pixel its top-left corner should occupy.
                 const snap = (value: number) => Math.round(value / GRID) * GRID
-                placeAt.current[uniqueKey(dropping.profile ?? dropping.type.name, byKey)] = {
+                // The key is made here and handed on, so the position asked for and the element
+                // created agree on which object they mean.
+                const key = newKey()
+                placeAt.current[key] = {
                   x: snap(at.x - NODE_WIDTH / 2),
                   y: snap(at.y - NODE_HEIGHT / 2),
                 }
                 if (dropping.profile) {
-                  createElement(dropping.profile, dropping.profile)
+                  createElement(dropping.profile, dropping.profile, key)
                 } else {
-                  createElement(dropping.type.concept, dropping.type.name)
+                  createElement(dropping.type.concept, dropping.type.name, key)
                 }
                 setDropping(null)
                 setDropAt(null)
@@ -2508,6 +2571,21 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           onHide={() => {
             hideLink(linkContext.key)
             setLinkContext(null)
+          }}
+          onRename={() => {
+            const key = linkContext.key
+            const relationship = relationshipsByKey[key]
+            setLinkContext(null)
+            // A prompt, like creating a view: a relationship's name is one short line, optional,
+            // and need not be unique — there is nothing here that earns a panel.
+            const name = window.prompt('Name of the relationship (empty to remove the name)', relationship?.name ?? '')
+            if (name === null) {
+              return
+            }
+            apply.mutate({
+              commands: [{ op: 'rename-relationship', key, name: name.trim() || null }],
+              label: name.trim() ? `Name relationship ${name.trim()}` : 'Unname relationship',
+            })
           }}
           onDelete={() => {
             const key = linkContext.key

@@ -10,7 +10,7 @@ import dev.archgrid.domain.profile.AttributeDefinition;
 import dev.archgrid.domain.profile.AttributeType;
 import dev.archgrid.domain.profile.Profile;
 import dev.archgrid.domain.profile.ProfileCatalog;
-import dev.archgrid.domain.shared.Slug;
+import dev.archgrid.domain.shared.Id;
 import java.sql.ResultSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -33,6 +33,13 @@ import tools.jackson.databind.ObjectMapper;
  * <p>Writing works by diffing the before and after graphs rather than by recording what each
  * command did. Two commands that cancel out therefore produce no rows at all, which keeps the
  * history a log of what changed instead of a log of what was attempted.
+ *
+ * <p>The domain's {@link Id} is the primary key (docs/09). There is no second key to translate to
+ * and from, so the identity row is written once, when the object first appears, and thereafter
+ * only the two columns the uniqueness indexes rest on are kept in step with the current version:
+ * an element's or view's {@code name}, a relationship's {@code (concept_type, source_id,
+ * target_id)}. Both are cleared when the object is deleted — the identity row outlives it for the
+ * history's sake, and a name still on it would block the next thing to take that name.
  */
 @Repository
 class ModelGraphRepository {
@@ -64,12 +71,12 @@ class ModelGraphRepository {
     }
 
     ModelGraph loadCurrent(UUID modelId) {
-        Map<Slug, Map<String, String>> elementProperties = loadProperties(modelId, "element");
-        Map<Slug, Map<String, String>> relationshipProperties = loadProperties(modelId, "relationship");
+        Map<Id, Map<String, String>> elementProperties = loadProperties(modelId, "element");
+        Map<Id, Map<String, String>> relationshipProperties = loadProperties(modelId, "relationship");
 
         List<Element> elements = jdbc.sql(
                         """
-                        select e."key" as element_key,
+                        select e.id as element_id,
                                ev.concept_type,
                                p.name as profile_name,
                                ev.name,
@@ -78,11 +85,11 @@ class ModelGraphRepository {
                         join element e on e.id = ev.element_id
                         left join profile p on p.id = ev.profile_id
                         where e.model_id = :modelId and ev.to_seq is null
-                        order by e."key"
+                        order by lower(ev.name), e.id
                         """)
                 .param("modelId", modelId)
                 .query((rs, rowNum) -> {
-                    Slug key = Slug.of(rs.getString("element_key"));
+                    Id key = Id.of(rs.getObject("element_id", UUID.class));
                     return new Element(
                             key,
                             rs.getString("concept_type"),
@@ -95,26 +102,24 @@ class ModelGraphRepository {
 
         List<Relationship> relationships = jdbc.sql(
                         """
-                        select r."key" as relationship_key,
+                        select r.id as relationship_id,
                                rv.concept_type,
-                               s."key" as source_key,
-                               t."key" as target_key,
+                               rv.source_id,
+                               rv.target_id,
                                rv.name
                         from relationship_version rv
                         join relationship r on r.id = rv.relationship_id
-                        join element s on s.id = rv.source_id
-                        join element t on t.id = rv.target_id
                         where r.model_id = :modelId and rv.to_seq is null
-                        order by r."key"
+                        order by r.id
                         """)
                 .param("modelId", modelId)
                 .query((rs, rowNum) -> {
-                    Slug key = Slug.of(rs.getString("relationship_key"));
+                    Id key = Id.of(rs.getObject("relationship_id", UUID.class));
                     return new Relationship(
                             key,
                             rs.getString("concept_type"),
-                            Slug.of(rs.getString("source_key")),
-                            Slug.of(rs.getString("target_key")),
+                            Id.of(rs.getObject("source_id", UUID.class)),
+                            Id.of(rs.getObject("target_id", UUID.class)),
                             rs.getString("name"),
                             relationshipProperties.getOrDefault(key, Map.of()));
                 })
@@ -124,35 +129,34 @@ class ModelGraphRepository {
     }
 
     private List<View> loadViews(UUID modelId) {
-        Map<Slug, Set<Slug>> members = new LinkedHashMap<>();
+        Map<Id, Set<Id>> members = new LinkedHashMap<>();
         jdbc.sql(
                         """
-                        select v."key" as view_key, e."key" as element_key
+                        select ve.view_id, ve.element_id
                         from view_element ve
                         join view v on v.id = ve.view_id
-                        join element e on e.id = ve.element_id
                         where v.model_id = :modelId and ve.to_seq is null
-                        order by e."key"
+                        order by ve.element_id
                         """)
                 .param("modelId", modelId)
                 .query((ResultSet rs, int rowNum) -> {
-                    members.computeIfAbsent(Slug.of(rs.getString("view_key")), key -> new LinkedHashSet<>())
-                            .add(Slug.of(rs.getString("element_key")));
+                    members.computeIfAbsent(Id.of(rs.getObject("view_id", UUID.class)), key -> new LinkedHashSet<>())
+                            .add(Id.of(rs.getObject("element_id", UUID.class)));
                     return null;
                 })
                 .list();
 
         return jdbc.sql(
                         """
-                        select v."key" as view_key, vv.name, vv.viewpoint, vv.filters::text as filters
+                        select v.id as view_id, vv.name, vv.viewpoint, vv.filters::text as filters
                         from view_version vv
                         join view v on v.id = vv.view_id
                         where v.model_id = :modelId and vv.to_seq is null
-                        order by vv.name
+                        order by lower(vv.name), v.id
                         """)
                 .param("modelId", modelId)
                 .query((ResultSet rs, int rowNum) -> {
-                    Slug key = Slug.of(rs.getString("view_key"));
+                    Id key = Id.of(rs.getObject("view_id", UUID.class));
                     return new View(
                             key,
                             rs.getString("name"),
@@ -164,19 +168,19 @@ class ModelGraphRepository {
     }
 
     /** Properties are expanded by PostgreSQL rather than parsed here — {@code jsonb_each_text} is exact and cheap. */
-    private Map<Slug, Map<String, String>> loadProperties(UUID modelId, String entity) {
+    private Map<Id, Map<String, String>> loadProperties(UUID modelId, String entity) {
         String sql =
                 """
-                select owner."key" as owner_key, kv.key as property_key, kv.value as property_value
+                select owner.id as owner_id, kv.key as property_key, kv.value as property_value
                 from %1$s_version v
                 join %1$s owner on owner.id = v.%1$s_id,
                 lateral jsonb_each_text(v.properties) kv
                 where owner.model_id = :modelId and v.to_seq is null
                 """
                         .formatted(entity);
-        Map<Slug, Map<String, String>> byOwner = new LinkedHashMap<>();
+        Map<Id, Map<String, String>> byOwner = new LinkedHashMap<>();
         jdbc.sql(sql).param("modelId", modelId).query((ResultSet rs, int rowNum) -> {
-                    byOwner.computeIfAbsent(Slug.of(rs.getString("owner_key")), key -> new LinkedHashMap<>())
+                    byOwner.computeIfAbsent(Id.of(rs.getObject("owner_id", UUID.class)), key -> new LinkedHashMap<>())
                             .put(rs.getString("property_key"), rs.getString("property_value"));
                     return null;
                 })
@@ -295,7 +299,9 @@ class ModelGraphRepository {
      *
      * <p>Takes a row lock on the model, which both allocates the sequence number and serialises
      * concurrent commits — the optimistic check on {@code baseCommitId} is only meaningful if two
-     * writers cannot interleave between checking and writing.
+     * writers cannot interleave between checking and writing. The same lock is what makes the
+     * uniqueness rules safe to check in memory: two commits that would each create a 'Kafka' are
+     * applied one after the other, and the second sees the first.
      */
     UUID commit(UUID modelId, ModelGraph before, ModelGraph after, String author, String message) {
         long seq = lockAndNextSeq(modelId);
@@ -338,68 +344,111 @@ class ModelGraphRepository {
 
     private void writeElements(
             UUID modelId, ModelGraph before, ModelGraph after, long seq, Map<String, UUID> profileIds) {
-        Map<Slug, Element> old = byKey(before.elements(), Element::key);
-        Map<Slug, Element> current = byKey(after.elements(), Element::key);
+        Map<Id, Element> old = byKey(before.elements(), Element::key);
+        Map<Id, Element> current = byKey(after.elements(), Element::key);
 
-        Set<Slug> touched = new LinkedHashSet<>(old.keySet());
+        Set<Id> touched = new LinkedHashSet<>(old.keySet());
         touched.addAll(current.keySet());
 
-        // Every element that survives needs a row before any version can point a parent at it.
-        Map<Slug, UUID> ids = elementIds(modelId);
-        for (Slug key : current.keySet()) {
-            ids.computeIfAbsent(key, missing -> insertElement(modelId, missing));
+        // Every element that survives needs an identity row before a version can point at it. A
+        // row may already exist for an element that was deleted and is now back under the same id
+        // — an import replaying a file — and that is fine: identity rows are never deleted.
+        Set<UUID> known = identityRows("element", modelId);
+        for (Id key : current.keySet()) {
+            if (!known.contains(key.value())) {
+                jdbc.sql("insert into element (id, model_id) values (:id, :modelId)")
+                        .param("id", key.value())
+                        .param("modelId", modelId)
+                        .update();
+            }
         }
 
-        for (Slug key : touched) {
+        // Names first, in two passes: every name that changes hands is given up before any is
+        // taken. The unique index is checked statement by statement, and a batch that swaps two
+        // names — valid as a whole, which is what the validator judged — would otherwise trip it
+        // halfway through.
+        for (Id key : touched) {
+            Element previous = old.get(key);
+            Element updated = current.get(key);
+            boolean gaveUpName = previous != null
+                    && (updated == null || !ModelGraph.nameKey(previous.name()).equals(ModelGraph.nameKey(updated.name())));
+            if (gaveUpName) {
+                jdbc.sql("update element set name = null where id = :id")
+                        .param("id", key.value())
+                        .update();
+            }
+        }
+
+        for (Id key : touched) {
             Element previous = old.get(key);
             Element updated = current.get(key);
             if (java.util.Objects.equals(previous, updated)) {
                 continue;
             }
             if (previous != null) {
-                closeVersion("element", "element_id", ids.get(key), seq);
+                closeVersion("element", "element_id", key.value(), seq);
             }
             if (updated != null) {
-                insertElementVersion(ids, updated, seq, profileIds);
+                insertElementVersion(updated, seq, profileIds);
+                // The identity row's name is the one the uniqueness index sees. A deleted element
+                // gave its name up in the first pass, so that the next element may take it.
+                jdbc.sql("update element set name = :name where id = :id")
+                        .param("name", updated.name())
+                        .param("id", key.value())
+                        .update();
             }
         }
     }
 
     private void writeRelationships(UUID modelId, ModelGraph before, ModelGraph after, long seq) {
-        Map<Slug, Relationship> old = byKey(before.relationships(), Relationship::key);
-        Map<Slug, Relationship> current = byKey(after.relationships(), Relationship::key);
+        Map<Id, Relationship> old = byKey(before.relationships(), Relationship::key);
+        Map<Id, Relationship> current = byKey(after.relationships(), Relationship::key);
 
-        Set<Slug> touched = new LinkedHashSet<>(old.keySet());
+        Set<Id> touched = new LinkedHashSet<>(old.keySet());
         touched.addAll(current.keySet());
 
-        Map<Slug, UUID> ids = relationshipIds(modelId);
-        Map<Slug, UUID> elementIds = elementIds(modelId);
-        for (Slug key : current.keySet()) {
-            ids.computeIfAbsent(key, missing -> insertRelationship(modelId, missing));
+        Set<UUID> known = identityRows("relationship", modelId);
+        for (Id key : current.keySet()) {
+            if (!known.contains(key.value())) {
+                jdbc.sql("insert into relationship (id, model_id) values (:id, :modelId)")
+                        .param("id", key.value())
+                        .param("modelId", modelId)
+                        .update();
+            }
         }
 
-        for (Slug key : touched) {
+        for (Id key : touched) {
             Relationship previous = old.get(key);
             Relationship updated = current.get(key);
             if (java.util.Objects.equals(previous, updated)) {
                 continue;
             }
             if (previous != null) {
-                closeVersion("relationship", "relationship_id", ids.get(key), seq);
+                closeVersion("relationship", "relationship_id", key.value(), seq);
             }
             if (updated != null) {
                 jdbc.sql("insert into relationship_version "
                                 + "(relationship_id, from_seq, concept_type, source_id, target_id, name, properties) "
                                 + "values (:id, :seq, :type, :source, :target, :name, cast(:properties as jsonb))")
-                        .param("id", ids.get(key))
+                        .param("id", key.value())
                         .param("seq", seq)
                         .param("type", updated.conceptType())
-                        .param("source", elementIds.get(updated.source()))
-                        .param("target", elementIds.get(updated.target()))
+                        .param("source", updated.source().value())
+                        .param("target", updated.target().value())
                         .param("name", updated.name())
                         .param("properties", json.writeValueAsString(updated.properties()))
                         .update();
             }
+            // The triple on the identity row is what the uniqueness index sees. Type and ends never
+            // change while a relationship lives, so this only ever sets them on arrival and clears
+            // them on deletion — freeing the pair for the next relationship of that type.
+            jdbc.sql("update relationship set concept_type = :type, source_id = :source, target_id = :target "
+                            + "where id = :id")
+                    .param("type", updated == null ? null : updated.conceptType())
+                    .param("source", updated == null ? null : updated.source().value())
+                    .param("target", updated == null ? null : updated.target().value())
+                    .param("id", key.value())
+                    .update();
         }
     }
 
@@ -411,30 +460,40 @@ class ModelGraphRepository {
      * of "the membership list changed".
      */
     private void writeViews(UUID modelId, ModelGraph before, ModelGraph after, long seq) {
-        Map<Slug, View> old = byKey(before.views(), View::key);
-        Map<Slug, View> current = byKey(after.views(), View::key);
+        Map<Id, View> old = byKey(before.views(), View::key);
+        Map<Id, View> current = byKey(after.views(), View::key);
 
-        Set<Slug> touched = new LinkedHashSet<>(old.keySet());
+        Set<Id> touched = new LinkedHashSet<>(old.keySet());
         touched.addAll(current.keySet());
 
-        Map<Slug, UUID> viewIds = identifiers("view", modelId);
-        for (Slug key : current.keySet()) {
-            viewIds.computeIfAbsent(key, missing -> {
-                UUID id = UUID.randomUUID();
-                jdbc.sql("insert into view (id, model_id, \"key\") values (:id, :modelId, :key)")
-                        .param("id", id)
+        Set<UUID> known = identityRows("view", modelId);
+        for (Id key : current.keySet()) {
+            if (!known.contains(key.value())) {
+                jdbc.sql("insert into view (id, model_id) values (:id, :modelId)")
+                        .param("id", key.value())
                         .param("modelId", modelId)
-                        .param("key", missing.value())
                         .update();
-                return id;
-            });
+            }
         }
-        Map<Slug, UUID> elementIds = elementIds(modelId);
 
-        for (Slug key : touched) {
+        // Names given up before any is taken, for the same reason as for elements: a swap is valid
+        // as a whole and the index judges one statement at a time.
+        for (Id key : touched) {
             View previous = old.get(key);
             View updated = current.get(key);
-            UUID viewId = viewIds.get(key);
+            boolean gaveUpName = previous != null
+                    && (updated == null || !ModelGraph.nameKey(previous.name()).equals(ModelGraph.nameKey(updated.name())));
+            if (gaveUpName) {
+                jdbc.sql("update view set name = null where id = :id")
+                        .param("id", key.value())
+                        .update();
+            }
+        }
+
+        for (Id key : touched) {
+            View previous = old.get(key);
+            View updated = current.get(key);
+            UUID viewId = key.value();
 
             // Filters are part of the definition, not of the membership: "this diagram is about
             // the technology layer" is versioned exactly like its name (ADR-0003). Leaving them
@@ -458,27 +517,33 @@ class ModelGraphRepository {
                             .param("filters", writeFilters(updated.filters()))
                             .update();
                 }
+                if (updated != null) {
+                    jdbc.sql("update view set name = :name where id = :id")
+                            .param("name", updated.name())
+                            .param("id", viewId)
+                            .update();
+                }
             }
 
-            Set<Slug> was = previous == null ? Set.of() : previous.elements();
-            Set<Slug> now = updated == null ? Set.of() : updated.elements();
+            Set<Id> was = previous == null ? Set.of() : previous.elements();
+            Set<Id> now = updated == null ? Set.of() : updated.elements();
 
-            for (Slug gone : was) {
+            for (Id gone : was) {
                 if (!now.contains(gone)) {
                     jdbc.sql("update view_element set to_seq = :seq "
                                     + "where view_id = :view and element_id = :element and to_seq is null")
                             .param("seq", seq)
                             .param("view", viewId)
-                            .param("element", elementIds.get(gone))
+                            .param("element", gone.value())
                             .update();
                 }
             }
-            for (Slug added : now) {
+            for (Id added : now) {
                 if (!was.contains(added)) {
                     jdbc.sql("insert into view_element (view_id, element_id, from_seq) "
                                     + "values (:view, :element, :seq)")
                             .param("view", viewId)
-                            .param("element", elementIds.get(added))
+                            .param("element", added.value())
                             .param("seq", seq)
                             .update();
                 }
@@ -486,12 +551,11 @@ class ModelGraphRepository {
         }
     }
 
-    private void insertElementVersion(
-            Map<Slug, UUID> ids, Element element, long seq, Map<String, UUID> profileIds) {
+    private void insertElementVersion(Element element, long seq, Map<String, UUID> profileIds) {
         jdbc.sql("insert into element_version "
                         + "(element_id, from_seq, concept_type, profile_id, name, documentation, properties) "
                         + "values (:id, :seq, :type, :profileId, :name, :documentation, cast(:properties as jsonb))")
-                .param("id", ids.get(element.key()))
+                .param("id", element.key().value())
                 .param("seq", seq)
                 .param("type", element.conceptType())
                 .param("profileId", element.profile().map(profileIds::get).orElse(null))
@@ -508,40 +572,13 @@ class ModelGraphRepository {
                 .update();
     }
 
-    private UUID insertElement(UUID modelId, Slug key) {
-        UUID id = UUID.randomUUID();
-        jdbc.sql("insert into element (id, model_id, \"key\") values (:id, :modelId, :key)")
-                .param("id", id)
-                .param("modelId", modelId)
-                .param("key", key.value())
-                .update();
-        return id;
-    }
-
-    private UUID insertRelationship(UUID modelId, Slug key) {
-        UUID id = UUID.randomUUID();
-        jdbc.sql("insert into relationship (id, model_id, \"key\") values (:id, :modelId, :key)")
-                .param("id", id)
-                .param("modelId", modelId)
-                .param("key", key.value())
-                .update();
-        return id;
-    }
-
-    private Map<Slug, UUID> elementIds(UUID modelId) {
-        return identifiers("element", modelId);
-    }
-
-    private Map<Slug, UUID> relationshipIds(UUID modelId) {
-        return identifiers("relationship", modelId);
-    }
-
-    private Map<Slug, UUID> identifiers(String table, UUID modelId) {
-        Map<Slug, UUID> ids = new LinkedHashMap<>();
-        jdbc.sql("select id, \"key\" from %s where model_id = :modelId".formatted(table))
+    /** Every identity row of the model — current and deleted alike, since identity rows are never removed. */
+    private Set<UUID> identityRows(String table, UUID modelId) {
+        Set<UUID> ids = new LinkedHashSet<>();
+        jdbc.sql("select id from %s where model_id = :modelId".formatted(table))
                 .param("modelId", modelId)
                 .query((ResultSet rs, int rowNum) -> {
-                    ids.put(Slug.of(rs.getString("key")), rs.getObject("id", UUID.class));
+                    ids.add(rs.getObject("id", UUID.class));
                     return null;
                 })
                 .list();
@@ -560,8 +597,8 @@ class ModelGraphRepository {
         return ids;
     }
 
-    private static <T> Map<Slug, T> byKey(java.util.Collection<T> items, java.util.function.Function<T, Slug> key) {
-        Map<Slug, T> map = new LinkedHashMap<>();
+    private static <T> Map<Id, T> byKey(java.util.Collection<T> items, java.util.function.Function<T, Id> key) {
+        Map<Id, T> map = new LinkedHashMap<>();
         items.forEach(item -> map.put(key.apply(item), item));
         return map;
     }

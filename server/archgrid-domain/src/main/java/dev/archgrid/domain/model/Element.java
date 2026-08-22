@@ -1,6 +1,6 @@
 package dev.archgrid.domain.model;
 
-import dev.archgrid.domain.shared.Slug;
+import dev.archgrid.domain.shared.Id;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -26,7 +26,7 @@ import java.util.Optional;
  * @param profileName the specialisation applied, or null
  */
 public record Element(
-        Slug key,
+        Id key,
         String conceptType,
         String profileName,
         String name,
@@ -50,7 +50,7 @@ public record Element(
         properties = Collections.unmodifiableMap(new LinkedHashMap<>(properties));
     }
 
-    public static Element of(Slug key, String conceptType, String name) {
+    public static Element of(Id key, String conceptType, String name) {
         return new Element(key, conceptType, null, name, null, Map.of());
     }
 

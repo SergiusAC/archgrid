@@ -12,7 +12,7 @@ import dev.archgrid.domain.metamodel.c4.C4Level;
 import dev.archgrid.domain.metamodel.c4.C4Mapping;
 import dev.archgrid.domain.metamodel.c4.C4RelationshipIntent;
 import dev.archgrid.domain.metamodel.c4.C4Shape;
-import dev.archgrid.domain.shared.Slug;
+import dev.archgrid.domain.shared.Id;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -67,11 +67,11 @@ class C4ProjectionTest {
             .build(METAMODEL);
 
     private static Element element(String key, ElementType type) {
-        return new Element(Slug.of(key), type.concept(), null, key, null, Map.of());
+        return new Element(id(key), type.concept(), null, key, null, Map.of());
     }
 
     private static Relationship relationship(String key, String type, String source, String target) {
-        return Relationship.of(Slug.of(key), type, Slug.of(source), Slug.of(target));
+        return Relationship.of(id(key), type, id(source), id(target));
     }
 
     /** Containment as it is stored: a Composition from the whole to the part (ADR-0011). */
@@ -84,8 +84,17 @@ class C4ProjectionTest {
         return relationship(whole + "-aggregates-" + part, "Aggregation", whole, part);
     }
 
-    private static List<String> keys(List<Slug> slugs) {
-        return slugs.stream().map(Slug::value).toList();
+    private static List<String> keys(List<Id> slugs) {
+        return slugs.stream().map(NAMES::get).toList();
+    }
+
+    /** Readable identities for a scenario, and the way back from an id to the name it was made from. */
+    private static final java.util.Map<Id, String> NAMES = new java.util.HashMap<>();
+
+    private static Id id(String name) {
+        Id id = Id.named(name);
+        NAMES.put(id, name);
+        return id;
     }
 
     @Test
@@ -101,7 +110,7 @@ class C4ProjectionTest {
                         relationship("ledger-serves", "Serving", "ledger", "notifications")));
 
         C4Projection.Result result =
-                C4Projection.project(graph, METAMODEL, MAPPING, Slug.of("payments"), CONTEXT).orElseThrow();
+                C4Projection.project(graph, METAMODEL, MAPPING, id("payments"), CONTEXT).orElseThrow();
 
         // The neighbour is there because something *inside* the focus talks to it. That is the
         // whole reason a context diagram is worth drawing.
@@ -120,7 +129,7 @@ class C4ProjectionTest {
                 List.of(contains("payments", "ledger"), contains("ledger", "ledger-core")));
 
         C4Projection.Result result =
-                C4Projection.project(graph, METAMODEL, MAPPING, Slug.of("payments"), CONTAINER).orElseThrow();
+                C4Projection.project(graph, METAMODEL, MAPPING, id("payments"), CONTAINER).orElseThrow();
 
         assertThat(keys(result.shown())).containsExactlyInAnyOrder("payments", "ledger");
         assertThat(keys(result.shown())).doesNotContain("ledger-core");
@@ -139,7 +148,7 @@ class C4ProjectionTest {
                         relationship("api-serves", "Serving", "crm-api", "payments")));
 
         C4Projection.Result result =
-                C4Projection.project(graph, METAMODEL, MAPPING, Slug.of("payments"), CONTEXT).orElseThrow();
+                C4Projection.project(graph, METAMODEL, MAPPING, id("payments"), CONTEXT).orElseThrow();
 
         // A context diagram that named the particular module of the neighbouring system which
         // happens to call you would be a context diagram of nothing.
@@ -162,11 +171,11 @@ class C4ProjectionTest {
         // shared is still a part, and a context diagram that drew it beside its own system would
         // be answering a question nobody asked.
         C4Projection.Result context =
-                C4Projection.project(graph, METAMODEL, MAPPING, Slug.of("processing"), CONTEXT).orElseThrow();
+                C4Projection.project(graph, METAMODEL, MAPPING, id("processing"), CONTEXT).orElseThrow();
         assertThat(keys(context.shown())).containsExactlyInAnyOrder("processing", "mobile");
 
         C4Projection.Result container =
-                C4Projection.project(graph, METAMODEL, MAPPING, Slug.of("processing"), CONTAINER).orElseThrow();
+                C4Projection.project(graph, METAMODEL, MAPPING, id("processing"), CONTAINER).orElseThrow();
         assertThat(keys(container.shown())).containsExactlyInAnyOrder("processing", "backoffice", "mobile");
     }
 
@@ -178,7 +187,7 @@ class C4ProjectionTest {
                 List.of(relationship("serves", "Serving", "payments", "billing")));
 
         C4Projection.Result result =
-                C4Projection.project(graph, METAMODEL, MAPPING, Slug.of("payments"), CONTEXT).orElseThrow();
+                C4Projection.project(graph, METAMODEL, MAPPING, id("payments"), CONTEXT).orElseThrow();
 
         assertThat(keys(result.shown())).containsExactly("payments");
         assertThat(keys(result.omitted())).containsExactly("billing");
@@ -191,11 +200,11 @@ class C4ProjectionTest {
                 List.of(element("payments", COMPONENT), element("cluster", NODE)),
                 List.of(relationship("runs-on", "Serving", "payments", "cluster")));
 
-        assertThat(keys(C4Projection.project(graph, METAMODEL, MAPPING, Slug.of("payments"), CONTEXT)
+        assertThat(keys(C4Projection.project(graph, METAMODEL, MAPPING, id("payments"), CONTEXT)
                         .orElseThrow()
                         .shown()))
                 .containsExactly("payments");
-        assertThat(keys(C4Projection.project(graph, METAMODEL, MAPPING, Slug.of("payments"), CONTAINER)
+        assertThat(keys(C4Projection.project(graph, METAMODEL, MAPPING, id("payments"), CONTAINER)
                         .orElseThrow()
                         .shown()))
                 .containsExactlyInAnyOrder("payments", "cluster");
@@ -206,7 +215,7 @@ class C4ProjectionTest {
     void a_focus_without_a_c4_form_is_refused() {
         ModelGraph graph = ModelGraph.of(List.of(element("billing", SERVICE)), List.of());
 
-        assertThat(C4Projection.project(graph, METAMODEL, MAPPING, Slug.of("billing"), CONTEXT))
+        assertThat(C4Projection.project(graph, METAMODEL, MAPPING, id("billing"), CONTEXT))
                 .isEqualTo(Optional.empty());
     }
 }

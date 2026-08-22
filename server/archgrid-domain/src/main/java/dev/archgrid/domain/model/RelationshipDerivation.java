@@ -3,7 +3,7 @@ package dev.archgrid.domain.model;
 import dev.archgrid.domain.metamodel.Metamodel;
 import dev.archgrid.domain.metamodel.RelationshipCategory;
 import dev.archgrid.domain.metamodel.RelationshipType;
-import dev.archgrid.domain.shared.Slug;
+import dev.archgrid.domain.shared.Id;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -62,12 +62,12 @@ public final class RelationshipDerivation {
      * @return derived relationships between visible elements, excluding any pair that already
      *     has an explicit relationship of the same type — an explicit line always wins
      */
-    public static List<DerivedRelationship> derive(ModelGraph graph, Set<Slug> visible, Metamodel metamodel) {
+    public static List<DerivedRelationship> derive(ModelGraph graph, Set<Id> visible, Metamodel metamodel) {
         Objects.requireNonNull(graph, "graph must not be null");
         Objects.requireNonNull(visible, "visible must not be null");
         Objects.requireNonNull(metamodel, "metamodel must not be null");
 
-        Map<Slug, List<Edge>> outgoing = buildAdjacency(graph, metamodel);
+        Map<Id, List<Edge>> outgoing = buildAdjacency(graph, metamodel);
         Set<String> explicit = new LinkedHashSet<>();
         for (Relationship relationship : graph.relationships()) {
             if (visible.contains(relationship.source()) && visible.contains(relationship.target())) {
@@ -76,16 +76,16 @@ public final class RelationshipDerivation {
         }
 
         Map<String, DerivedRelationship> found = new LinkedHashMap<>();
-        for (Slug start : visible) {
+        for (Id start : visible) {
             walk(start, visible, outgoing, explicit, found);
         }
         return List.copyOf(found.values());
     }
 
     private static void walk(
-            Slug start,
-            Set<Slug> visible,
-            Map<Slug, List<Edge>> outgoing,
+            Id start,
+            Set<Id> visible,
+            Map<Id, List<Edge>> outgoing,
             Set<String> explicit,
             Map<String, DerivedRelationship> found) {
 
@@ -121,7 +121,7 @@ public final class RelationshipDerivation {
                 if (extended.isEmpty()) {
                     continue;
                 }
-                List<Slug> via = new ArrayList<>(step.via());
+                List<Id> via = new ArrayList<>(step.via());
                 via.add(step.at());
                 queue.add(new Step(edge.target(), extended.get(), via));
             }
@@ -161,8 +161,8 @@ public final class RelationshipDerivation {
      * else and derivation has one place to read from — which is the point: the rules are hard
      * enough without two spellings of the same edge.
      */
-    private static Map<Slug, List<Edge>> buildAdjacency(ModelGraph graph, Metamodel metamodel) {
-        Map<Slug, List<Edge>> outgoing = new LinkedHashMap<>();
+    private static Map<Id, List<Edge>> buildAdjacency(ModelGraph graph, Metamodel metamodel) {
+        Map<Id, List<Edge>> outgoing = new LinkedHashMap<>();
         for (Relationship relationship : graph.relationships()) {
             metamodel
                     .relationshipType(relationship.conceptType())
@@ -173,11 +173,11 @@ public final class RelationshipDerivation {
         return outgoing;
     }
 
-    private static String pairKey(Slug source, Slug target, String type) {
+    private static String pairKey(Id source, Id target, String type) {
         return source.value() + "|" + target.value() + "|" + type;
     }
 
-    private record Edge(Slug target, RelationshipType type) {}
+    private record Edge(Id target, RelationshipType type) {}
 
-    private record Step(Slug at, RelationshipType type, List<Slug> via) {}
+    private record Step(Id at, RelationshipType type, List<Id> via) {}
 }

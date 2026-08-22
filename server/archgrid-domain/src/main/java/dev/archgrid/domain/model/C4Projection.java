@@ -4,7 +4,7 @@ import dev.archgrid.domain.metamodel.ElementType;
 import dev.archgrid.domain.metamodel.Metamodel;
 import dev.archgrid.domain.metamodel.c4.C4Level;
 import dev.archgrid.domain.metamodel.c4.C4Mapping;
-import dev.archgrid.domain.shared.Slug;
+import dev.archgrid.domain.shared.Id;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -43,7 +43,7 @@ public final class C4Projection {
      * @param omitted elements that belong to the picture but have no C4 form — the honest answer
      *     for behaviour, interfaces and everything else the notation does not carry
      */
-    public record Result(Slug focus, C4Level level, List<Slug> shown, List<Slug> omitted) {
+    public record Result(Id focus, C4Level level, List<Id> shown, List<Id> omitted) {
 
         public Result {
             Objects.requireNonNull(focus, "focus must not be null");
@@ -61,7 +61,7 @@ public final class C4Projection {
      *     box missing — it is not a diagram. The caller is expected to say so.
      */
     public static Optional<Result> project(
-            ModelGraph graph, Metamodel metamodel, C4Mapping mapping, Slug focus, C4Level level) {
+            ModelGraph graph, Metamodel metamodel, C4Mapping mapping, Id focus, C4Level level) {
         Objects.requireNonNull(graph, "graph must not be null");
         Objects.requireNonNull(metamodel, "metamodel must not be null");
         Objects.requireNonNull(mapping, "mapping must not be null");
@@ -74,21 +74,21 @@ public final class C4Projection {
 
         // Everything the focus contains, however deep: the outside world may well touch something
         // buried, and a context diagram exists precisely to show that it does.
-        Set<Slug> within = new LinkedHashSet<>(subtree(graph, focus, Integer.MAX_VALUE));
+        Set<Id> within = new LinkedHashSet<>(subtree(graph, focus, Integer.MAX_VALUE));
         within.add(focus);
         // What the level draws of the inside: depth 0 shows none of it, 1 the children, 2 theirs.
-        Set<Slug> inside = subtree(graph, focus, level.depth());
+        Set<Id> inside = subtree(graph, focus, level.depth());
 
-        Set<Slug> candidates = new LinkedHashSet<>();
+        Set<Id> candidates = new LinkedHashSet<>();
         candidates.add(focus);
         candidates.addAll(inside);
-        for (Slug neighbour : neighbours(graph, within)) {
+        for (Id neighbour : neighbours(graph, within)) {
             candidates.add(outermost(graph, neighbour));
         }
 
-        List<Slug> shown = new ArrayList<>();
-        List<Slug> omitted = new ArrayList<>();
-        for (Slug candidate : candidates) {
+        List<Id> shown = new ArrayList<>();
+        List<Id> omitted = new ArrayList<>();
+        for (Id candidate : candidates) {
             if (isVisible(graph, metamodel, mapping, candidate, level)) {
                 shown.add(candidate);
             } else {
@@ -99,8 +99,8 @@ public final class C4Projection {
     }
 
     /** Elements outside the focus that touch anything within it, at any depth. */
-    private static Set<Slug> neighbours(ModelGraph graph, Set<Slug> subtree) {
-        Set<Slug> found = new LinkedHashSet<>();
+    private static Set<Id> neighbours(ModelGraph graph, Set<Id> subtree) {
+        Set<Id> found = new LinkedHashSet<>();
         for (Relationship relationship : graph.relationships()) {
             boolean sourceInside = subtree.contains(relationship.source());
             boolean targetInside = subtree.contains(relationship.target());
@@ -120,18 +120,18 @@ public final class C4Projection {
      * systems. Where the chain has somehow become a cycle the walk stops rather than hangs; the
      * validator reports that separately.
      */
-    private static Slug outermost(ModelGraph graph, Slug key) {
+    private static Id outermost(ModelGraph graph, Id key) {
         List<Element> ancestors = graph.ancestorsOf(key);
         return ancestors.isEmpty() ? key : ancestors.get(ancestors.size() - 1).key();
     }
 
     /** The focus's descendants down to {@code depth} composition steps; empty at depth 0. */
-    private static Set<Slug> subtree(ModelGraph graph, Slug root, int depth) {
-        Set<Slug> found = new LinkedHashSet<>();
-        List<Slug> frontier = List.of(root);
+    private static Set<Id> subtree(ModelGraph graph, Id root, int depth) {
+        Set<Id> found = new LinkedHashSet<>();
+        List<Id> frontier = List.of(root);
         for (int step = 0; step < depth && !frontier.isEmpty(); step++) {
-            List<Slug> next = new ArrayList<>();
-            for (Slug at : frontier) {
+            List<Id> next = new ArrayList<>();
+            for (Id at : frontier) {
                 for (Element child : graph.childrenOf(at)) {
                     // A cycle would otherwise walk for ever; `found` is the guard.
                     if (found.add(child.key())) {
@@ -145,7 +145,7 @@ public final class C4Projection {
     }
 
     private static boolean isVisible(
-            ModelGraph graph, Metamodel metamodel, C4Mapping mapping, Slug key, C4Level level) {
+            ModelGraph graph, Metamodel metamodel, C4Mapping mapping, Id key, C4Level level) {
         return graph.element(key)
                 .flatMap(element -> metamodel.elementType(element.conceptType()))
                 .map((ElementType type) -> mapping.isVisibleAt(type, level))

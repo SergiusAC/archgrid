@@ -270,6 +270,12 @@ export interface ImportReport {
   discarded: { code: string; subject: string; detail: string }[]
   lost: Record<string, number>
   interpreted: string[]
+  /** Objects the repository already held under the file's own ids, by name: the file was imported before. */
+  skipped: string[]
+  /** File elements folded into one of the same name and type, and how many went into each (docs/09). */
+  merged: Record<string, number>
+  /** Objects renamed with a suffix because something of another kind held the name, as "was → now". */
+  renamed: string[]
 }
 
 /** The command surface. Mirrors dev.archgrid.domain.model.ModelCommand. */
@@ -281,6 +287,7 @@ export type Command =
   | { op: 'delete-element'; key: string }
   | { op: 'add-relationship'; key: string; type: string; source: string; target: string; name?: string }
   | { op: 'set-relationship-property'; key: string; property: string; value: string | null }
+  | { op: 'rename-relationship'; key: string; name: string | null }
   | { op: 'delete-relationship'; key: string }
   // View commands. `key` is the view; `element` is what goes on or off it. Coordinates are
   // deliberately absent — layout has its own endpoint and never travels as a command.

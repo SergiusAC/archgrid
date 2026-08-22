@@ -419,6 +419,9 @@ async function interactions(page) {
   mkdirSync(outDir, { recursive: true })
 
   const viewName = `driver ${process.pid}`
+  // Names are unique in a repository (ADR-0016), and every run adds to the same one: a fixed
+  // 'Payment System' would be refused on the second run. Each run names its elements after itself.
+  const named = (base) => `${base} ${process.pid % 100000}`
   page.once('dialog', (dialog) => dialog.accept(viewName))
   await page.locator('.ag-block-button').first().click()
   await page.waitForTimeout(2500)
@@ -437,8 +440,8 @@ async function interactions(page) {
       await page.waitForTimeout(2500)
     }
   }
-  await addElement('Application Component', 'Payment System')
-  await addElement('Application Component', 'Payment API')
+  await addElement('Application Component', named('Payment System'))
+  await addElement('Application Component', named('Payment API'))
 
   /*
    * Elements are addressed by their key, never by index.
@@ -447,14 +450,29 @@ async function interactions(page) {
    * `.nth(1)` stop meaning the same element the moment a gesture starts. That cost most of a day:
    * dragging and nesting both worked, and every index-based assertion said they did not.
    */
+  /*
+   * Names are unique in a repository (ADR-0016), so an element created from the palette into a
+   * repository that already holds one of that name arrives as "Name (2)", "(3)"… — which, in a
+   * repository these runs keep adding to, is every run after the first. The label asked for
+   * matches with or without that suffix, and the highest number is the newest element, which is
+   * the one a step that just created it means.
+   */
   const keyOf = (label) =>
-    page.evaluate(
-      (text) =>
-        [...document.querySelectorAll('.ag-paper .ag-node')]
-          .find((node) => node.querySelector('.ag-node-label')?.textContent?.trim() === text)
-          ?.getAttribute('data-key') ?? null,
-      label,
-    )
+    page.evaluate((text) => {
+      const pattern = new RegExp('^' + text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?: \\((\\d+)\\))?$')
+      let best = null
+      let bestRank = -1
+      for (const node of document.querySelectorAll('.ag-paper .ag-node')) {
+        const match = node.querySelector('.ag-node-label')?.textContent?.trim().match(pattern)
+        if (!match) continue
+        const rank = match[1] ? Number(match[1]) : 0
+        if (rank >= bestRank) {
+          bestRank = rank
+          best = node
+        }
+      }
+      return best?.getAttribute('data-key') ?? null
+    }, label)
   const nodeAt = (key) => page.locator(`.ag-paper .ag-node[data-key="${key}"]`)
   /*
    * Clicks an element with the mouse rather than through the locator.
@@ -471,8 +489,8 @@ async function interactions(page) {
     )
   }
 
-  const system = await keyOf('Payment System')
-  const api = await keyOf('Payment API')
+  const system = await keyOf(named('Payment System'))
+  const api = await keyOf(named('Payment API'))
 
   // --- no handles on the element: connecting is a tool, as in Archi ---
   check('an element carries no connection dots', (await page.locator('.ag-paper .ag-handle').count()) === 0)
@@ -647,12 +665,12 @@ async function interactions(page) {
   // --- drawing a relationship ---
   await page.locator('.ag-splitter-left .ag-splitter-toggle').click()
   await page.waitForTimeout(300)
-  await addElement('Application Component', 'Ledger')
+  await addElement('Application Component', named('Ledger'))
   await page.locator('.ag-splitter-left .ag-splitter-toggle').click()
   await page.waitForTimeout(500)
   // A new element must not land on top of an existing one — least of all on its connection
   // points, which made the element impossible to link to anything.
-  const ledgerKey = await keyOf('Ledger')
+  const ledgerKey = await keyOf(named('Ledger'))
   const ledger = await nodeAt(ledgerKey).boundingBox()
   const grownFrame = await nodeAt(system).boundingBox()
   const overlapsContainer =
@@ -872,8 +890,9 @@ async function interactions(page) {
    * as a different *kind* of thing rather than a different type of the same thing, and Archi does
    * not do it. This check exists so the vocabulary does not creep back in.
    */
-  const service = shapes.find((shape) => shape.name === 'Application Service')
-  const component = shapes.find((shape) => shape.name === 'Payment System')
+  // The service was named after its type, and that name may carry a "(n)" — see keyOf.
+  const service = shapes.find((shape) => /^Application Service( \(\d+\))?$/.test(shape.name ?? ''))
+  const component = shapes.find((shape) => shape.name === named('Payment System'))
   check(
     'a service and a component are drawn as the same rectangle',
     service && component && service.radius <= 4 && component.radius <= 4,
@@ -1293,9 +1312,14 @@ async function interactions(page) {
         b.textContent.replace(/\s+/g, ' ').trim(),
       ),
     )
+    // Three acts, in order: naming the relationship (the one thing about it that is edited,
+    // ADR-0016), leaving its line off this view, and unsaying it in the repository.
     check(
-      'a line offers hiding and deleting as different things',
-      linkActions.length === 2 && linkActions[0].startsWith('Hide on this view'),
+      'a line offers naming, hiding and deleting as different things',
+      linkActions.length === 3 &&
+        linkActions[0].startsWith('Name the relationship') &&
+        linkActions[1].startsWith('Hide on this view') &&
+        linkActions[2].startsWith('Delete from the model'),
       linkActions.join(' | '),
     )
     await page.screenshot({ path: `${outDir}/41-link-menu.png` })
@@ -1622,11 +1646,11 @@ async function interactions(page) {
   const freshCanvas = await page.locator('.ag-canvas').boundingBox()
   await dragFromPalette(page, 'Application Component', { x: freshCanvas.x + 300, y: freshCanvas.y + 200 })
   if (await page.locator('.ag-node-name-input').count()) {
-    await page.locator('.ag-node-name-input').fill('Shared')
+    await page.locator('.ag-node-name-input').fill(named('Shared'))
     await page.keyboard.press('Enter')
     await page.waitForTimeout(2500)
   }
-  const sharedKey = await keyOf('Shared')
+  const sharedKey = await keyOf(named('Shared'))
   const boxesOfShared = () => page.locator(`.ag-paper .ag-node[data-key="${sharedKey}"]`).count()
 
   const only = await nodeAt(sharedKey).first().locator('.ag-body').boundingBox()
@@ -1675,11 +1699,11 @@ async function interactions(page) {
    */
   await dragFromPalette(page, 'Application Component', { x: freshCanvas.x + 700, y: freshCanvas.y + 420 })
   if (await page.locator('.ag-node-name-input').count()) {
-    await page.locator('.ag-node-name-input').fill('User')
+    await page.locator('.ag-node-name-input').fill(named('User'))
     await page.keyboard.press('Enter')
     await page.waitForTimeout(2500)
   }
-  const userKey = await keyOf('User')
+  const userKey = await keyOf(named('User'))
   await page.getByRole('button', { name: /^Connect/ }).click()
   await clickNode(userKey)
   await page.waitForTimeout(300)
@@ -1758,11 +1782,16 @@ async function interactions(page) {
   // Connect flow is "click the source again" and silently cancels the pick.
   await dragFromPalette(page, 'Application Component', { x: freshCanvas.x + 860, y: freshCanvas.y + 560 })
   if (await page.locator('.ag-node-name-input').count()) {
-    await page.locator('.ag-node-name-input').fill('Client')
+    await page.locator('.ag-node-name-input').fill(named('Client'))
     await page.keyboard.press('Enter')
     await page.waitForTimeout(2500)
   }
-  const clientKey = await keyOf('Client')
+  const clientKey = await keyOf(named('Client'))
+  // Relationship keys are opaque now (ADR-0016): the new relationship is the line key that was
+  // not there before the gesture, not one that starts with the source's key.
+  const linkKeysBefore = await page.evaluate(() =>
+    [...document.querySelectorAll('.ag-paper .ag-link')].map((link) => link.getAttribute('data-key')),
+  )
   await page.getByRole('button', { name: /^Connect/ }).click()
   await clickNode(clientKey)
   await page.waitForTimeout(300)
@@ -1783,7 +1812,7 @@ async function interactions(page) {
   const linkKeys = await page.evaluate(() =>
     [...document.querySelectorAll('.ag-paper .ag-link')].map((link) => link.getAttribute('data-key')),
   )
-  const clientRel = linkKeys.find((key) => key?.startsWith(clientKey)) ?? null
+  const clientRel = linkKeys.find((key) => key && !linkKeysBefore.includes(key)) ?? null
   check(
     'a new relationship aimed at the duplicate is created',
     clientRel != null,
@@ -1892,7 +1921,7 @@ async function interactions(page) {
     const summary = await page.locator('.ag-import-report p').first().innerText()
     check(
       'the report counts what the file added, not what the repository holds',
-      /Added 3 elements, 2 relationships, 1 views/.test(summary),
+      /Added (3|0) elements, (2|0) relationships, 1 views/.test(summary),
       summary,
     )
     for (const details of await page.locator('.ag-import-report details').all()) {
@@ -1932,13 +1961,19 @@ async function interactions(page) {
     importedHidden.includes('1'),
     importedHidden || 'no counter',
   )
-  // Cyrillic transliterates rather than dissolving into hyphens; the key is the proof.
-  const catalogue = page.locator('.ag-paper .ag-node[data-key^="katalog-tovarov"]')
-  check('a Cyrillic name became a readable slug', (await catalogue.count()) === 1, `${await catalogue.count()} matches`)
+  // A Cyrillic name arrives as it is — nothing is derived from it any more — under an opaque id
+  // (ADR-0016). The fixture's ids are not UUID-shaped, so this one was minted here.
+  const catalogue = page.locator('.ag-paper .ag-node', { hasText: 'Каталог товаров' })
+  const catalogueKey = (await catalogue.count()) === 1 ? await catalogue.getAttribute('data-key') : null
+  check(
+    'a Cyrillic name arrives intact under an opaque id',
+    (await catalogue.count()) === 1 && /^[0-9a-f-]{36}$/.test(catalogueKey ?? ''),
+    `${await catalogue.count()} matches, key ${catalogueKey}`,
+  )
   if ((await catalogue.count()) === 1) {
     // And the file's nesting is nesting here too: the catalogue is drawn inside the host.
     const child = await catalogue.locator('.ag-body').boundingBox()
-    const hosts = await page.locator('.ag-paper .ag-node[data-key^="fixture-host"] .ag-body').boundingBox()
+    const hosts = await page.locator('.ag-paper .ag-node', { hasText: 'Fixture Host' }).locator('.ag-body').boundingBox()
     check(
       'and a node nested in the file is nested here',
       hosts != null &&

@@ -41,15 +41,15 @@ public class ImportGateway {
     }
 
     /** One drawing of an element on a view (ADR-0014), in the importer's own flat terms. */
-    public record PlacementRow(UUID id, String element, double x, double y, double width, double height, UUID parent) {}
+    public record PlacementRow(UUID id, UUID element, double x, double y, double width, double height, UUID parent) {}
 
     /** One line on a view; {@code vertices} are absolute points, as the exchange format has them. */
-    public record LineRow(UUID id, String relationship, UUID sourceNode, UUID targetNode, List<double[]> vertices) {}
+    public record LineRow(UUID id, UUID relationship, UUID sourceNode, UUID targetNode, List<double[]> vertices) {}
 
-    public void savePlacements(UUID modelId, String viewKey, List<PlacementRow> rows) {
+    public void savePlacements(UUID modelId, UUID viewId, List<PlacementRow> rows) {
         layout.save(
                 modelId,
-                viewKey,
+                viewId,
                 rows.stream()
                         .map(row -> new ViewLayoutRepository.LayoutNode(
                                 row.id(), row.element(), row.x(), row.y(), row.width(), row.height(), row.parent(),
@@ -57,14 +57,14 @@ public class ImportGateway {
                         .toList());
     }
 
-    public void saveLines(UUID modelId, String viewKey, List<LineRow> rows) {
+    public void saveLines(UUID modelId, UUID viewId, List<LineRow> rows) {
         layout.saveLinks(
                 modelId,
-                viewKey,
+                viewId,
                 rows.stream()
                         .map(row -> new ViewLayoutRepository.LayoutLink(
                                 row.id(),
-                                row.relationship(),
+                                row.relationship().toString(),
                                 row.sourceNode(),
                                 row.targetNode(),
                                 row.vertices().stream()
@@ -73,8 +73,8 @@ public class ImportGateway {
                         .toList());
     }
 
-    public void saveHidden(UUID modelId, String viewKey, List<String> relationshipKeys) {
-        layout.saveHidden(modelId, viewKey, relationshipKeys);
+    public void saveHidden(UUID modelId, UUID viewId, List<UUID> relationshipIds) {
+        layout.saveHidden(modelId, viewId, relationshipIds);
     }
 
     /**
@@ -95,7 +95,7 @@ public class ImportGateway {
                         folders.create(modelId, kind, name, parentId).id()));
     }
 
-    public void assignToFolder(UUID modelId, String kind, String key, UUID folderId) {
-        folders.assign(modelId, kind, key, folderId);
+    public void assignToFolder(UUID modelId, String kind, UUID id, UUID folderId) {
+        folders.assign(modelId, kind, id, folderId);
     }
 }

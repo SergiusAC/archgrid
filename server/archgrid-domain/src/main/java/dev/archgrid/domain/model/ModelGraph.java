@@ -1,6 +1,6 @@
 package dev.archgrid.domain.model;
 
-import dev.archgrid.domain.shared.Slug;
+import dev.archgrid.domain.shared.Id;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -24,9 +24,9 @@ import java.util.Optional;
  */
 public final class ModelGraph {
 
-    private final Map<Slug, Element> elements = new LinkedHashMap<>();
-    private final Map<Slug, Relationship> relationships = new LinkedHashMap<>();
-    private final Map<Slug, View> views = new LinkedHashMap<>();
+    private final Map<Id, Element> elements = new LinkedHashMap<>();
+    private final Map<Id, Relationship> relationships = new LinkedHashMap<>();
+    private final Map<Id, View> views = new LinkedHashMap<>();
 
     public static ModelGraph empty() {
         return new ModelGraph();
@@ -45,13 +45,35 @@ public final class ModelGraph {
         return graph;
     }
 
+    // ------------------------------------------------------------------ names
+
+    /**
+     * How names compare for uniqueness: case-insensitively, ignoring surrounding whitespace.
+     *
+     * <p>Element names and view names are each unique within a repository (docs/09), and this is
+     * the one definition of "the same name" — the validation rule, the importer's merge and the
+     * database index ({@code lower(btrim(name))}, V18) all agree on it, so nothing can slip past
+     * one and be refused by another.
+     */
+    public static String nameKey(String name) {
+        return name.strip().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /** The element carrying this name, if any — the repository-wide answer, since names are unique. */
+    public Optional<Element> elementNamed(String name) {
+        String wanted = nameKey(name);
+        return elements.values().stream()
+                .filter(element -> nameKey(element.name()).equals(wanted))
+                .findFirst();
+    }
+
     // ------------------------------------------------------------------ queries
 
-    public Optional<Element> element(Slug key) {
+    public Optional<Element> element(Id key) {
         return Optional.ofNullable(elements.get(key));
     }
 
-    public Optional<Relationship> relationship(Slug key) {
+    public Optional<Relationship> relationship(Id key) {
         return Optional.ofNullable(relationships.get(key));
     }
 
@@ -63,15 +85,15 @@ public final class ModelGraph {
         return Collections.unmodifiableCollection(relationships.values());
     }
 
-    public boolean containsElement(Slug key) {
+    public boolean containsElement(Id key) {
         return elements.containsKey(key);
     }
 
-    public boolean containsRelationship(Slug key) {
+    public boolean containsRelationship(Id key) {
         return relationships.containsKey(key);
     }
 
-    public Optional<View> view(Slug key) {
+    public Optional<View> view(Id key) {
         return Optional.ofNullable(views.get(key));
     }
 
@@ -79,12 +101,12 @@ public final class ModelGraph {
         return Collections.unmodifiableCollection(views.values());
     }
 
-    public boolean containsView(Slug key) {
+    public boolean containsView(Id key) {
         return views.containsKey(key);
     }
 
     /** Which views show this element — the other half of "where is this used". */
-    public List<View> viewsShowing(Slug elementKey) {
+    public List<View> viewsShowing(Id elementKey) {
         return views.values().stream().filter(view -> view.contains(elementKey)).toList();
     }
 
@@ -107,7 +129,7 @@ public final class ModelGraph {
      * <p>What a view shows, asked without a view: a C4 projection computes its element set and
      * needs the same answer (ADR-0007).
      */
-    public List<Relationship> relationshipsAmong(java.util.Set<Slug> keys) {
+    public List<Relationship> relationshipsAmong(java.util.Set<Id> keys) {
         return relationships.values().stream()
                 .filter(relationship ->
                         keys.contains(relationship.source()) && keys.contains(relationship.target()))
@@ -137,7 +159,7 @@ public final class ModelGraph {
      * <p>Not from a field: containment is a relationship, so "what is inside this" is a question
      * about the graph like any other.
      */
-    public List<Element> childrenOf(Slug key) {
+    public List<Element> childrenOf(Id key) {
         return relationships.values().stream()
                 .filter(ModelGraph::isContainment)
                 .filter(relationship -> key.equals(relationship.source()))
@@ -147,7 +169,7 @@ public final class ModelGraph {
     }
 
     /** Every relationship with this element at either end — what "where is this used" needs. */
-    public List<Relationship> relationshipsTouching(Slug key) {
+    public List<Relationship> relationshipsTouching(Id key) {
         return relationships.values().stream().filter(relationship -> relationship.touches(key)).toList();
     }
 
@@ -158,9 +180,9 @@ public final class ModelGraph {
      * has somehow acquired a cycle produces a finite answer instead of hanging. The validator
      * reports the cycle separately; a query is not the place to throw.
      */
-    public List<Element> ancestorsOf(Slug key) {
+    public List<Element> ancestorsOf(Id key) {
         List<Element> ancestors = new ArrayList<>();
-        List<Slug> seen = new ArrayList<>();
+        List<Id> seen = new ArrayList<>();
         seen.add(key);
         Optional<Element> current = containerOf(key);
         while (current.isPresent() && !seen.contains(current.get().key())) {
@@ -180,7 +202,7 @@ public final class ModelGraph {
      * walking to the top of a chain) and is not the place to argue with a model that shares.
      * Composition wins where both exist, because ownership is the stronger claim.
      */
-    public Optional<Element> containerOf(Slug key) {
+    public Optional<Element> containerOf(Id key) {
         return relationships.values().stream()
                 .filter(ModelGraph::isContainment)
                 .filter(relationship -> key.equals(relationship.target()))
@@ -212,15 +234,15 @@ public final class ModelGraph {
         views.put(view.key(), view);
     }
 
-    public void removeElement(Slug key) {
+    public void removeElement(Id key) {
         elements.remove(key);
     }
 
-    public void removeRelationship(Slug key) {
+    public void removeRelationship(Id key) {
         relationships.remove(key);
     }
 
-    public void removeView(Slug key) {
+    public void removeView(Id key) {
         views.remove(key);
     }
 

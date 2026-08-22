@@ -122,26 +122,26 @@ class FolderRepository {
         return false;
     }
 
-    void assignElement(UUID modelId, String elementKey, UUID folderId) {
-        jdbc.sql("update element set folder_id = :folder where model_id = :modelId and \"key\" = :key")
+    void assignElement(UUID modelId, UUID elementId, UUID folderId) {
+        jdbc.sql("update element set folder_id = :folder where model_id = :modelId and id = :key")
                 .param("folder", folderId)
                 .param("modelId", modelId)
-                .param("key", elementKey)
+                .param("key", elementId)
                 .update();
     }
 
-    void assignView(UUID modelId, String viewKey, UUID folderId) {
-        jdbc.sql("update view set folder_id = :folder where model_id = :modelId and \"key\" = :key")
+    void assignView(UUID modelId, UUID viewId, UUID folderId) {
+        jdbc.sql("update view set folder_id = :folder where model_id = :modelId and id = :key")
                 .param("folder", folderId)
                 .param("modelId", modelId)
-                .param("key", viewKey)
+                .param("key", viewId)
                 .update();
     }
 
-    /** element or view key -&gt; folder id, for whichever table is asked about. */
+    /** element or view id -&gt; folder id, for whichever table is asked about. */
     List<String[]> assignments(UUID modelId, String table) {
         List<String[]> rows = new ArrayList<>();
-        jdbc.sql("select \"key\", folder_id from %s where model_id = :modelId and folder_id is not null"
+        jdbc.sql("select id::text as \"key\", folder_id from %s where model_id = :modelId and folder_id is not null"
                         .formatted(table))
                 .param("modelId", modelId)
                 .query((ResultSet rs, int rowNum) -> {

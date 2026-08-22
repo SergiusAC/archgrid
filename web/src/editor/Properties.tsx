@@ -88,7 +88,6 @@ export default function Properties({
         {element.profile && <span className="ag-stereotype">«{element.profile}»</span>}{' '}
         {type?.name ?? element.conceptType}
       </div>
-      <code className="ag-props-key">{element.key}</code>
 
       {/*
         A press, not a lost focus.

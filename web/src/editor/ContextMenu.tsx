@@ -122,7 +122,6 @@ export default function ContextMenu({
               (type?.name ?? element.conceptType)
             )}
           </div>
-          <code>{element.key}</code>
         </header>
 
         <dl className="ag-context-facts">

@@ -3,7 +3,7 @@ package dev.archgrid.domain.model;
 import dev.archgrid.domain.metamodel.Metamodel;
 import dev.archgrid.domain.metamodel.RelationshipVerdict;
 import dev.archgrid.domain.profile.ProfileCatalog;
-import dev.archgrid.domain.shared.Slug;
+import dev.archgrid.domain.shared.Id;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -87,10 +87,14 @@ public final class ModelChange {
      *
      * <p>The returned graph is valid without qualification, by construction: whole-graph
      * violations are cut out of the candidate — an impermissible or dangling relationship is
-     * removed, a containment cycle is broken, a ghost view member is taken off — and cutting rows
-     * cannot create new violations, since validation checks what exists, never what is absent. So
-     * the loop converges, and a final validation that still complains is a programming error, not
-     * a data problem.
+     * removed, a containment cycle is broken, a ghost view member is taken off, a second holder of
+     * a name or of a relationship triple goes — and cutting rows cannot create new violations,
+     * since validation checks what exists, never what is absent. So the loop converges, and a
+     * final validation that still complains is a programming error, not a data problem.
+     *
+     * <p>The importer is expected to have merged duplicates by name and by triple before it gets
+     * here, so that what a file says twice becomes one object with its lines intact (docs/09).
+     * The cuts for those two codes are the safety net behind that, not the mechanism.
      */
     public static ImportResult applyForImport(
             ModelGraph base, List<ModelCommand> commands, Metamodel metamodel, ProfileCatalog profiles) {
@@ -115,7 +119,7 @@ public final class ModelChange {
                 return new ImportResult(candidate, discarded);
             }
             for (Violation violation : found) {
-                if (!cutOut(candidate, violation)) {
+                if (!cutOut(candidate, base, violation)) {
                     // A violation this method does not know how to cut is a rule added to
                     // validate() without a matching branch here — a defect to fix, not a file to
                     // tolerate. Failing loudly beats looping forever or returning an invalid graph.
@@ -128,13 +132,32 @@ public final class ModelChange {
         }
     }
 
-    /** Removes the culprit a whole-graph violation names. True when something was cut. */
-    private static boolean cutOut(ModelGraph graph, Violation violation) {
-        Slug subject = Slug.of(violation.subject());
+    /**
+     * Removes the culprit a whole-graph violation names. True when something was cut.
+     *
+     * @param base what the repository held before this import — so that, where the choice of what
+     *     to cut is free, what the file brought goes before what the repository already had
+     */
+    private static boolean cutOut(ModelGraph graph, ModelGraph base, Violation violation) {
+        Id subject = Id.parse(violation.subject());
 
-        if (violation.code().equals(Violation.Code.RELATIONSHIP_NOT_PERMITTED.code())) {
+        if (violation.code().equals(Violation.Code.RELATIONSHIP_NOT_PERMITTED.code())
+                || violation.code().equals(Violation.Code.DUPLICATE_RELATIONSHIP.code())) {
             graph.removeRelationship(subject);
             return true;
+        }
+        if (violation.code().equals(Violation.Code.DUPLICATE_NAME.code())) {
+            // The later holder of the name is the one named; the first keeps it. An element goes
+            // with everything that touched it, exactly as a deletion would take it.
+            if (graph.containsElement(subject)) {
+                removeElementEverywhere(graph, subject);
+                return true;
+            }
+            if (graph.containsView(subject)) {
+                graph.removeView(subject);
+                return true;
+            }
+            return false;
         }
         if (violation.code().equals(Violation.Code.DANGLING_ENDPOINT.code())) {
             if (graph.relationship(subject).isPresent()) {
@@ -145,7 +168,7 @@ public final class ModelChange {
             Optional<View> view = graph.view(subject);
             if (view.isPresent()) {
                 View pruned = view.get();
-                for (Slug member : view.get().elements()) {
+                for (Id member : view.get().elements()) {
                     if (!graph.containsElement(member)) {
                         pruned = pruned.without(member);
                     }
@@ -156,18 +179,61 @@ public final class ModelChange {
             return false;
         }
         if (violation.code().equals(Violation.Code.CONTAINMENT_CYCLE.code())) {
-            // Every element on a cycle has an incoming Composition; removing one breaks it. Which
-            // one is arbitrary, and arbitrariness is fine — the cycle itself is the impossible
-            // claim, not any particular edge of it.
-            for (Relationship relationship : graph.relationships()) {
-                if ("Composition".equals(relationship.conceptType()) && subject.equals(relationship.target())) {
-                    graph.removeRelationship(relationship.key());
-                    return true;
-                }
+            // Removing any one edge of the cycle breaks it, and which one is arbitrary as far as
+            // the language is concerned — the cycle is the impossible claim, not a particular
+            // edge. It is not arbitrary for the repository: an edge the file brought goes before
+            // one the repository already held, so that importing the same file twice cuts the
+            // same edge twice instead of swapping it for a neighbour each time.
+            Optional<Relationship> edge = cycleEdgeToCut(graph, base, subject);
+            if (edge.isPresent()) {
+                graph.removeRelationship(edge.get().key());
+                return true;
             }
             return false;
         }
         return false;
+    }
+
+    /** An edge of a Composition cycle through {@code subject}: a newly imported one if there is any. */
+    private static Optional<Relationship> cycleEdgeToCut(ModelGraph graph, ModelGraph base, Id subject) {
+        List<Relationship> cycle = compositionCycle(graph, subject, subject, new java.util.ArrayDeque<>(), new LinkedHashSet<>());
+        if (cycle == null) {
+            // Reported as a cycle, yet none found from here — an earlier cut in this pass already
+            // broke it. Nothing to do, and saying so is the honest answer.
+            return graph.relationships().stream()
+                    .filter(relationship -> "Composition".equals(relationship.conceptType())
+                            && subject.equals(relationship.target()))
+                    .findFirst();
+        }
+        return cycle.stream()
+                .filter(relationship -> !base.containsRelationship(relationship.key()))
+                .findFirst()
+                .or(() -> Optional.of(cycle.get(cycle.size() - 1)));
+    }
+
+    /** Depth-first along Composition edges from {@code at}, back to {@code start}; the path found, or null. */
+    private static List<Relationship> compositionCycle(
+            ModelGraph graph, Id start, Id at, java.util.Deque<Relationship> path, Set<Id> visited) {
+        for (Relationship relationship : graph.relationships()) {
+            if (!"Composition".equals(relationship.conceptType()) || !relationship.source().equals(at)) {
+                continue;
+            }
+            if (relationship.target().equals(start)) {
+                path.addLast(relationship);
+                List<Relationship> found = new ArrayList<>(path);
+                path.removeLast();
+                return found;
+            }
+            if (visited.add(relationship.target())) {
+                path.addLast(relationship);
+                List<Relationship> found = compositionCycle(graph, start, relationship.target(), path, visited);
+                path.removeLast();
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
     }
 
     // ------------------------------------------------------------------ command application
@@ -196,6 +262,8 @@ public final class ModelChange {
                     property.key(),
                     violations,
                     relationship -> relationship.withProperty(property.property(), property.value()));
+            case ModelCommand.RenameRelationship rename -> mutateRelationship(
+                    graph, rename.key(), violations, relationship -> relationship.withName(rename.name()));
             case ModelCommand.DeleteRelationship delete -> {
                 if (!graph.containsRelationship(delete.key())) {
                     violations.add(Violation.of(
@@ -252,7 +320,7 @@ public final class ModelChange {
             violations.add(Violation.of(
                     Violation.Code.DUPLICATE_KEY,
                     create.key(),
-                    "A view with key '" + create.key() + "' already exists in this model."));
+                    "A view with id '" + create.key() + "' already exists in this model."));
             return;
         }
         if (metamodel.viewpoint(create.viewpoint()).isEmpty()) {
@@ -291,7 +359,7 @@ public final class ModelChange {
 
     private static void mutateRelationship(
             ModelGraph graph,
-            Slug key,
+            Id key,
             List<Violation> violations,
             java.util.function.UnaryOperator<Relationship> mutation) {
         Optional<Relationship> relationship = graph.relationship(key);
@@ -308,7 +376,7 @@ public final class ModelChange {
     }
 
     private static void mutateView(
-            ModelGraph graph, Slug key, List<Violation> violations, java.util.function.UnaryOperator<View> mutation) {
+            ModelGraph graph, Id key, List<Violation> violations, java.util.function.UnaryOperator<View> mutation) {
         Optional<View> view = graph.view(key);
         if (view.isEmpty()) {
             violations.add(
@@ -328,7 +396,7 @@ public final class ModelChange {
             violations.add(Violation.of(
                     Violation.Code.DUPLICATE_KEY,
                     create.key(),
-                    "An element with key '" + create.key() + "' already exists in this model."));
+                    "An element with id '" + create.key() + "' already exists in this model."));
             return;
         }
         Optional<ProfileCatalog.ResolvedType> resolved = profiles.resolve(create.type());
@@ -351,7 +419,7 @@ public final class ModelChange {
 
     private static void mutateElement(
             ModelGraph graph,
-            Slug key,
+            Id key,
             List<Violation> violations,
             java.util.function.UnaryOperator<Element> mutation) {
         Optional<Element> element = graph.element(key);
@@ -385,12 +453,16 @@ public final class ModelChange {
                     "There is no element '" + delete.key() + "' in this model."));
             return;
         }
-        graph.relationshipsTouching(delete.key())
-                .forEach(relationship -> graph.removeRelationship(relationship.key()));
+        removeElementEverywhere(graph, delete.key());
+    }
+
+    /** The element, its relationships, and its place on every diagram — what a deletion takes. */
+    private static void removeElementEverywhere(ModelGraph graph, Id key) {
+        graph.relationshipsTouching(key).forEach(relationship -> graph.removeRelationship(relationship.key()));
         // It also has to come off every diagram that shows it. A view referring to an element
         // the repository no longer has is not a state the user can fix from the diagram.
-        graph.viewsShowing(delete.key()).forEach(view -> graph.put(view.without(delete.key())));
-        graph.removeElement(delete.key());
+        graph.viewsShowing(key).forEach(view -> graph.put(view.without(key)));
+        graph.removeElement(key);
     }
 
     private static void addRelationship(
@@ -399,7 +471,7 @@ public final class ModelChange {
             violations.add(Violation.of(
                     Violation.Code.DUPLICATE_KEY,
                     add.key(),
-                    "A relationship with key '" + add.key() + "' already exists in this model."));
+                    "A relationship with id '" + add.key() + "' already exists in this model."));
             return;
         }
         if (metamodel.relationshipType(add.type()).isEmpty()) {
@@ -409,7 +481,7 @@ public final class ModelChange {
                     "'" + add.type() + "' is not an ArchiMate relationship type."));
             return;
         }
-        for (Slug endpoint : List.of(add.source(), add.target())) {
+        for (Id endpoint : List.of(add.source(), add.target())) {
             if (!graph.containsElement(endpoint)) {
                 violations.add(Violation.of(
                         Violation.Code.DANGLING_ENDPOINT,
@@ -430,13 +502,15 @@ public final class ModelChange {
      *
      * <p>Run over the finished candidate rather than after each command, because a batch is
      * allowed to pass through intermediate states that would not be valid on their own — moving
-     * two elements past each other, for instance.
+     * two elements past each other, or swapping two names, for instance.
      */
     private static void validate(ModelGraph graph, Metamodel metamodel, List<Violation> violations) {
+        detectDuplicateNames(graph, violations);
+        detectDuplicateRelationships(graph, violations);
         detectContainmentCycles(graph, violations);
 
         for (View view : graph.views()) {
-            for (Slug member : view.elements()) {
+            for (Id member : view.elements()) {
                 if (!graph.containsElement(member)) {
                     violations.add(Violation.of(
                             Violation.Code.DANGLING_ENDPOINT,
@@ -478,6 +552,71 @@ public final class ModelChange {
     }
 
     /**
+     * Every element name, and every view name, is held by exactly one object in a repository.
+     *
+     * <p>Compared the one way {@link ModelGraph#nameKey} defines. The <em>later</em> holder is the
+     * one reported — in a graph whose order is the order things were created, that is the newcomer,
+     * and the violation tells it which existing object already has the name, which is what the
+     * architect needs in order to choose: rename this, or go and use that.
+     */
+    private static void detectDuplicateNames(ModelGraph graph, List<Violation> violations) {
+        Map<String, Element> elementsByName = new LinkedHashMap<>();
+        for (Element element : graph.elements()) {
+            Element first = elementsByName.putIfAbsent(ModelGraph.nameKey(element.name()), element);
+            if (first != null) {
+                violations.add(Violation.of(
+                        Violation.Code.DUPLICATE_NAME,
+                        element.key(),
+                        "'" + element.name() + "' is already the name of the " + first.displayType() + " '"
+                                + first.key() + "'. Element names are unique in a repository: rename one of "
+                                + "them, or use the existing element instead of creating another."));
+            }
+        }
+        Map<String, View> viewsByName = new LinkedHashMap<>();
+        for (View view : graph.views()) {
+            View first = viewsByName.putIfAbsent(ModelGraph.nameKey(view.name()), view);
+            if (first != null) {
+                violations.add(Violation.of(
+                        Violation.Code.DUPLICATE_NAME,
+                        view.key(),
+                        "A view named '" + view.name() + "' already exists ('" + first.key()
+                                + "'). View names are unique in a repository: choose another name."));
+            }
+        }
+    }
+
+    /**
+     * One relationship of a type between two elements.
+     *
+     * <p>ArchiMate allows several — two Flows between the same components, one per kind of
+     * traffic — and this repository deliberately does not (docs/09): a second identical edge is
+     * nearly always the same statement made twice, and where it is not, the difference belongs in
+     * the name or the properties of the one relationship. The later one is reported, naming the
+     * earlier, so the architect knows which to annotate.
+     */
+    private static void detectDuplicateRelationships(ModelGraph graph, List<Violation> violations) {
+        Map<String, Relationship> byTriple = new LinkedHashMap<>();
+        for (Relationship relationship : graph.relationships()) {
+            Relationship first = byTriple.putIfAbsent(relationship.triple(), relationship);
+            if (first != null) {
+                String source = graph.element(relationship.source())
+                        .map(Element::name)
+                        .orElseGet(() -> relationship.source().toString());
+                String target = graph.element(relationship.target())
+                        .map(Element::name)
+                        .orElseGet(() -> relationship.target().toString());
+                violations.add(Violation.of(
+                        Violation.Code.DUPLICATE_RELATIONSHIP,
+                        relationship.key(),
+                        relationship.conceptType() + " from '" + source + "' to '" + target
+                                + "' is already stated by relationship '" + first.key()
+                                + "'. One relationship of a type between two elements: name or annotate "
+                                + "the existing one instead of adding another."));
+            }
+        }
+    }
+
+    /**
      * No element may contain itself, directly or through a chain of Compositions.
      *
      * <p>The rule outlived the field it used to be checked on. Composition is ownership — a part
@@ -485,7 +624,7 @@ public final class ModelChange {
      * and it would send derivation and any future C4 depth walk round forever.
      */
     private static void detectContainmentCycles(ModelGraph graph, List<Violation> violations) {
-        Map<Slug, List<Slug>> contains = new LinkedHashMap<>();
+        Map<Id, List<Id>> contains = new LinkedHashMap<>();
         for (Relationship relationship : graph.relationships()) {
             if ("Composition".equals(relationship.conceptType())) {
                 contains.computeIfAbsent(relationship.source(), key -> new ArrayList<>())
@@ -493,20 +632,20 @@ public final class ModelChange {
             }
         }
 
-        Set<Slug> settled = new LinkedHashSet<>();
-        Set<Slug> reported = new LinkedHashSet<>();
-        for (Slug start : contains.keySet()) {
+        Set<Id> settled = new LinkedHashSet<>();
+        Set<Id> reported = new LinkedHashSet<>();
+        for (Id start : contains.keySet()) {
             walkContainment(start, contains, settled, new LinkedHashSet<>(), reported, violations);
         }
     }
 
     /** Depth-first with the current path in hand, so a back edge is a cycle and is named as one. */
     private static void walkContainment(
-            Slug at,
-            Map<Slug, List<Slug>> contains,
-            Set<Slug> settled,
-            Set<Slug> path,
-            Set<Slug> reported,
+            Id at,
+            Map<Id, List<Id>> contains,
+            Set<Id> settled,
+            Set<Id> path,
+            Set<Id> reported,
             List<Violation> violations) {
         if (settled.contains(at)) {
             return;
@@ -521,7 +660,7 @@ public final class ModelChange {
             }
             return;
         }
-        for (Slug inside : contains.getOrDefault(at, List.of())) {
+        for (Id inside : contains.getOrDefault(at, List.of())) {
             walkContainment(inside, contains, settled, path, reported, violations);
         }
         path.remove(at);

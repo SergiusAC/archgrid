@@ -8,7 +8,7 @@ import dev.archgrid.domain.metamodel.Layer;
 import dev.archgrid.domain.metamodel.Metamodel;
 import dev.archgrid.domain.metamodel.RelationshipCategory;
 import dev.archgrid.domain.metamodel.RelationshipType;
-import dev.archgrid.domain.shared.Slug;
+import dev.archgrid.domain.shared.Id;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -47,20 +47,29 @@ class RelationshipDerivationTest {
             .build();
 
     private static Element element(String key) {
-        return new Element(Slug.of(key), "ApplicationComponent", null, key, null, Map.of());
+        return new Element(id(key), "ApplicationComponent", null, key, null, Map.of());
     }
 
     /** Containment, as it is stored: a Composition from the whole to the part (ADR-0011). */
     private static Relationship contains(String whole, String part) {
-        return Relationship.of(Slug.of(whole + "-contains-" + part), "Composition", Slug.of(whole), Slug.of(part));
+        return Relationship.of(id(whole + "-contains-" + part), "Composition", id(whole), id(part));
     }
 
     private static Relationship relationship(String key, String type, String source, String target) {
-        return Relationship.of(Slug.of(key), type, Slug.of(source), Slug.of(target));
+        return Relationship.of(id(key), type, id(source), id(target));
     }
 
-    private static Set<Slug> visible(String... keys) {
-        return java.util.Arrays.stream(keys).map(Slug::of).collect(java.util.stream.Collectors.toSet());
+    private static Set<Id> visible(String... keys) {
+        return java.util.Arrays.stream(keys).map(RelationshipDerivationTest::id).collect(java.util.stream.Collectors.toSet());
+    }
+
+    /** Readable identities for a scenario, and the way back from an id to the name it was made from. */
+    private static final java.util.Map<Id, String> NAMES = new java.util.HashMap<>();
+
+    private static Id id(String name) {
+        Id id = Id.named(name);
+        NAMES.put(id, name);
+        return id;
     }
 
     @Test
@@ -76,10 +85,10 @@ class RelationshipDerivationTest {
                 RelationshipDerivation.derive(graph, visible("payment-service", "notification-service"), METAMODEL);
 
         assertThat(derived).singleElement().satisfies(relationship -> {
-            assertThat(relationship.source()).isEqualTo(Slug.of("payment-service"));
-            assertThat(relationship.target()).isEqualTo(Slug.of("notification-service"));
+            assertThat(relationship.source()).isEqualTo(id("payment-service"));
+            assertThat(relationship.target()).isEqualTo(id("notification-service"));
             assertThat(relationship.type()).isEqualTo(SERVING);
-            assertThat(relationship.via()).containsExactly(Slug.of("payment-api"));
+            assertThat(relationship.via()).containsExactly(id("payment-api"));
         });
     }
 
@@ -98,7 +107,7 @@ class RelationshipDerivationTest {
             // Composition is stronger than Assignment, so the chain is only as strong as
             // Assignment.
             assertThat(relationship.type()).isEqualTo(ASSIGNMENT);
-            assertThat(relationship.via()).containsExactly(Slug.of("b"));
+            assertThat(relationship.via()).containsExactly(id("b"));
         });
     }
 
@@ -191,7 +200,7 @@ class RelationshipDerivationTest {
                 RelationshipDerivation.derive(graph, visible("system", "other"), METAMODEL).get(0);
 
         assertThat(derived.type()).isEqualTo(FLOW);
-        assertThat(derived.key()).isEqualTo("derived:system:flow:other");
+        assertThat(derived.key()).isEqualTo("derived:" + id("system") + ":flow:" + id("other"));
         assertThat(derived.explain("System", "Other", List.of("Part")))
                 .isEqualTo("Flow from System to Other, derived through Part.");
     }

@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import dev.archgrid.domain.shared.Id;
 import dev.archgrid.support.PostgresContainerConfig;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -42,6 +43,19 @@ class ViewsAndFoldersApiIT {
 
     private static final String WS = "acme";
 
+    private static String named(String name) {
+        return Id.named(name).toString();
+    }
+
+    private static final String PAYMENT_SERVICE = named("payment-service");
+    private static final String KAFKA = named("kafka");
+    private static final String NOTIFICATION_SERVICE = named("notification-service");
+    private static final String PAYS_TO_KAFKA = named("pays-to-kafka");
+    private static final String KAFKA_SERVES = named("kafka-serves");
+    private static final String PAYMENTS_CONTEXT = named("payments-context");
+    private static final String MESSAGING = named("messaging");
+    private static final String CONTEXT = named("context");
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -74,12 +88,13 @@ class ViewsAndFoldersApiIT {
         head = apply(
                         null,
                         """
-                        [{"op":"create-element","key":"payment-service","type":"ApplicationComponent","name":"Payment Service"},
-                         {"op":"create-element","key":"kafka","type":"SystemSoftware","name":"Kafka"},
-                         {"op":"create-element","key":"notification-service","type":"ApplicationComponent","name":"Notification Service"},
-                         {"op":"add-relationship","key":"pays-to-kafka","type":"Flow","source":"payment-service","target":"kafka"},
-                         {"op":"add-relationship","key":"kafka-serves","type":"Serving","source":"kafka","target":"notification-service"}]
-                        """)
+                        [{"op":"create-element","key":"%1$s","type":"ApplicationComponent","name":"Payment Service"},
+                         {"op":"create-element","key":"%2$s","type":"SystemSoftware","name":"Kafka"},
+                         {"op":"create-element","key":"%3$s","type":"ApplicationComponent","name":"Notification Service"},
+                         {"op":"add-relationship","key":"%4$s","type":"Flow","source":"%1$s","target":"%2$s"},
+                         {"op":"add-relationship","key":"%5$s","type":"Serving","source":"%2$s","target":"%3$s"}]
+                        """
+                                .formatted(PAYMENT_SERVICE, KAFKA, NOTIFICATION_SERVICE, PAYS_TO_KAFKA, KAFKA_SERVES))
                 .get("commitId")
                 .asString();
     }
@@ -109,13 +124,14 @@ class ViewsAndFoldersApiIT {
         String next = apply(
                         head,
                         """
-                        [{"op":"create-view","key":"payments-context","name":"Payments context","viewpoint":"layered"},
-                         {"op":"create-view","key":"messaging","name":"Messaging","viewpoint":"technology"},
-                         {"op":"add-to-view","key":"payments-context","element":"payment-service"},
-                         {"op":"add-to-view","key":"payments-context","element":"kafka"},
-                         {"op":"add-to-view","key":"messaging","element":"kafka"},
-                         {"op":"add-to-view","key":"messaging","element":"notification-service"}]
-                        """)
+                        [{"op":"create-view","key":"%1$s","name":"Payments context","viewpoint":"layered"},
+                         {"op":"create-view","key":"%2$s","name":"Messaging","viewpoint":"technology"},
+                         {"op":"add-to-view","key":"%1$s","element":"%3$s"},
+                         {"op":"add-to-view","key":"%1$s","element":"%4$s"},
+                         {"op":"add-to-view","key":"%2$s","element":"%4$s"},
+                         {"op":"add-to-view","key":"%2$s","element":"%5$s"}]
+                        """
+                                .formatted(PAYMENTS_CONTEXT, MESSAGING, PAYMENT_SERVICE, KAFKA, NOTIFICATION_SERVICE))
                 .get("commitId")
                 .asString();
         assertThat(next).isNotBlank();
@@ -123,19 +139,20 @@ class ViewsAndFoldersApiIT {
         mockMvc.perform(get("/api/workspaces/{ws}/views", WS).with(jwt()))
                 .andExpect(jsonPath("$.length()").value(2));
 
-        mockMvc.perform(get("/api/workspaces/{ws}/views/{v}", WS, "payments-context").with(jwt()))
+        mockMvc.perform(get("/api/workspaces/{ws}/views/{v}", WS, PAYMENTS_CONTEXT).with(jwt()))
                 .andExpect(jsonPath("$.elements.length()").value(2))
                 // Both endpoints are present, so the relationship between them shows without
                 // anyone adding it.
                 .andExpect(jsonPath("$.relationships.length()").value(1))
-                .andExpect(jsonPath("$.relationships[0].key").value("pays-to-kafka"));
+                .andExpect(jsonPath("$.relationships[0].key").value(PAYS_TO_KAFKA));
 
-        mockMvc.perform(get("/api/workspaces/{ws}/views/{v}", WS, "messaging").with(jwt()))
-                .andExpect(jsonPath("$.elements[?(@.key=='kafka')]").exists())
-                .andExpect(jsonPath("$.relationships[0].key").value("kafka-serves"));
+        mockMvc.perform(get("/api/workspaces/{ws}/views/{v}", WS, MESSAGING).with(jwt()))
+                .andExpect(jsonPath("$.elements[?(@.key=='%s')]".formatted(KAFKA)).exists())
+                .andExpect(jsonPath("$.relationships[0].key").value(KAFKA_SERVES));
 
         // One Kafka in the repository, shown twice.
-        Integer kafkaRows = jdbc.sql("select count(*) from element where \"key\" = 'kafka'")
+        Integer kafkaRows = jdbc.sql("select count(*) from element where id = :id")
+                .param("id", UUID.fromString(KAFKA))
                 .query(Integer.class)
                 .single();
         assertThat(kafkaRows).isEqualTo(1);
@@ -147,11 +164,12 @@ class ViewsAndFoldersApiIT {
         apply(
                 head,
                 """
-                [{"op":"create-view","key":"partial","name":"Partial","viewpoint":"layered"},
-                 {"op":"add-to-view","key":"partial","element":"payment-service"}]
-                """);
+                [{"op":"create-view","key":"%1$s","name":"Partial","viewpoint":"layered"},
+                 {"op":"add-to-view","key":"%1$s","element":"%2$s"}]
+                """
+                        .formatted(named("partial"), PAYMENT_SERVICE));
 
-        mockMvc.perform(get("/api/workspaces/{ws}/views/{v}", WS, "partial").with(jwt()))
+        mockMvc.perform(get("/api/workspaces/{ws}/views/{v}", WS, named("partial")).with(jwt()))
                 .andExpect(jsonPath("$.elements.length()").value(1))
                 .andExpect(jsonPath("$.relationships.length()").value(0));
     }
@@ -162,15 +180,16 @@ class ViewsAndFoldersApiIT {
         String afterCreate = apply(
                         head,
                         """
-                        [{"op":"create-view","key":"doomed","name":"Doomed","viewpoint":"layered"},
-                         {"op":"add-to-view","key":"doomed","element":"kafka"}]
-                        """)
+                        [{"op":"create-view","key":"%1$s","name":"Doomed","viewpoint":"layered"},
+                         {"op":"add-to-view","key":"%1$s","element":"%2$s"}]
+                        """
+                                .formatted(named("doomed"), KAFKA))
                 .get("commitId")
                 .asString();
 
         apply(afterCreate, """
-                [{"op":"delete-view","key":"doomed"}]
-                """);
+                [{"op":"delete-view","key":"%s"}]
+                """.formatted(named("doomed")));
 
         mockMvc.perform(get("/api/workspaces/{ws}/views", WS).with(jwt()))
                 .andExpect(jsonPath("$.length()").value(0));
@@ -184,9 +203,10 @@ class ViewsAndFoldersApiIT {
         String afterCreate = apply(
                         head,
                         """
-                        [{"op":"create-view","key":"context","name":"Context","viewpoint":"layered"},
-                         {"op":"add-to-view","key":"context","element":"notification-service"}]
-                        """)
+                        [{"op":"create-view","key":"%1$s","name":"Context","viewpoint":"layered"},
+                         {"op":"add-to-view","key":"%1$s","element":"%2$s"}]
+                        """
+                                .formatted(CONTEXT, NOTIFICATION_SERVICE))
                 .get("commitId")
                 .asString();
 
@@ -194,11 +214,12 @@ class ViewsAndFoldersApiIT {
         apply(
                 afterCreate,
                 """
-                [{"op":"delete-relationship","key":"kafka-serves"},
-                 {"op":"delete-element","key":"notification-service"}]
-                """);
+                [{"op":"delete-relationship","key":"%s"},
+                 {"op":"delete-element","key":"%s"}]
+                """
+                        .formatted(KAFKA_SERVES, NOTIFICATION_SERVICE));
 
-        mockMvc.perform(get("/api/workspaces/{ws}/views/{v}", WS, "context").with(jwt()))
+        mockMvc.perform(get("/api/workspaces/{ws}/views/{v}", WS, CONTEXT).with(jwt()))
                 .andExpect(jsonPath("$.elements.length()").value(0));
     }
 
@@ -209,13 +230,34 @@ class ViewsAndFoldersApiIT {
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("""
                                         {"baseCommitId":"%s","commands":[
-                                          {"op":"create-view","key":"bad","name":"Bad","viewpoint":"nonsense"}]}
+                                          {"op":"create-view","key":"%s","name":"Bad","viewpoint":"nonsense"}]}
                                         """
-                                        .formatted(head))))
+                                        .formatted(head, named("bad")))))
                 .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.violations[0].code").value("unknown-type"))
                 .andExpect(jsonPath("$.violations[0].detail")
                         .value(org.hamcrest.Matchers.containsString("not a viewpoint")));
+    }
+
+    @Test
+    @DisplayName("two views cannot share a name, like two elements")
+    void rejects_a_duplicate_view_name() throws Exception {
+        String next = apply(head, """
+                [{"op":"create-view","key":"%s","name":"Context","viewpoint":"layered"}]
+                """.formatted(CONTEXT))
+                .get("commitId")
+                .asString();
+
+        mockMvc.perform(asContributor(post("/api/workspaces/{ws}/commands", WS)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"baseCommitId":"%s","commands":[
+                                          {"op":"create-view","key":"%s","name":"context","viewpoint":"layered"}]}
+                                        """
+                                        .formatted(next, named("context-2")))))
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.violations[0].code").value("duplicate-name"))
+                .andExpect(jsonPath("$.violations[0].subject").value(named("context-2")));
     }
 
     @Test
@@ -224,21 +266,23 @@ class ViewsAndFoldersApiIT {
         apply(
                 head,
                 """
-                [{"op":"create-view","key":"context","name":"Context","viewpoint":"layered"},
-                 {"op":"add-to-view","key":"context","element":"kafka"}]
-                """);
+                [{"op":"create-view","key":"%1$s","name":"Context","viewpoint":"layered"},
+                 {"op":"add-to-view","key":"%1$s","element":"%2$s"}]
+                """
+                        .formatted(CONTEXT, KAFKA));
         Integer commitsBefore =
                 jdbc.sql("select count(*) from model_commit").query(Integer.class).single();
 
-        mockMvc.perform(asContributor(put("/api/workspaces/{ws}/views/{v}/layout", WS, "context")
+        mockMvc.perform(asContributor(put("/api/workspaces/{ws}/views/{v}/layout", WS, CONTEXT)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("""
-                                        {"nodes":[{"element":"kafka","x":120.5,"y":240.0,"width":180.0,"height":80.0}]}
-                                        """)))
+                                        {"nodes":[{"element":"%s","x":120.5,"y":240.0,"width":180.0,"height":80.0}]}
+                                        """
+                                        .formatted(KAFKA))))
                 .andExpect(status().isOk());
 
-        mockMvc.perform(get("/api/workspaces/{ws}/views/{v}", WS, "context").with(jwt()))
-                .andExpect(jsonPath("$.layout[0].element").value("kafka"))
+        mockMvc.perform(get("/api/workspaces/{ws}/views/{v}", WS, CONTEXT).with(jwt()))
+                .andExpect(jsonPath("$.layout[0].element").value(KAFKA))
                 .andExpect(jsonPath("$.layout[0].x").value(120.5));
 
         // The whole point of ADR-0003: moving a box produced no commit.
@@ -255,13 +299,16 @@ class ViewsAndFoldersApiIT {
 
         mockMvc.perform(asContributor(put("/api/workspaces/{ws}/folders/assign", WS)
                                 .param("kind", "elements")
-                                .param("key", "kafka")
+                                .param("key", KAFKA)
                                 .param("folder", inner)))
                 .andExpect(status().isNoContent());
 
         mockMvc.perform(get("/api/workspaces/{ws}/folders", WS).param("kind", "elements").with(jwt()))
                 .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[?(@.name=='Messaging')].parent").value(outer));
+        // Filing is read alongside the graph: the listing says where Kafka is.
+        mockMvc.perform(get("/api/workspaces/{ws}/elements", WS).with(jwt()))
+                .andExpect(jsonPath("$[?(@.key=='%s')].folder".formatted(KAFKA)).value(inner));
 
         mockMvc.perform(asContributor(delete("/api/workspaces/{ws}/folders/{id}", WS, inner)))
                 .andExpect(status().isNoContent());
@@ -269,7 +316,8 @@ class ViewsAndFoldersApiIT {
         // The folder is gone; Kafka is not, and it has moved up rather than been orphaned.
         mockMvc.perform(get("/api/workspaces/{ws}/elements", WS).with(jwt()))
                 .andExpect(jsonPath("$.length()").value(3));
-        String folderOfKafka = jdbc.sql("select folder_id::text from element where \"key\" = 'kafka'")
+        String folderOfKafka = jdbc.sql("select folder_id::text from element where id = :id")
+                .param("id", UUID.fromString(KAFKA))
                 .query(String.class)
                 .single();
         assertThat(folderOfKafka).isEqualTo(outer);

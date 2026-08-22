@@ -4,13 +4,13 @@ import java.util.Objects;
 import java.util.regex.Pattern;
 
 /**
- * A stable, human-readable identifier for a modelling artifact.
+ * A stable, human-readable key for the things people name in URLs and configuration.
  *
- * <p>Every workspace, model, element, relationship and view carries both a surrogate
- * UUID and a slug. The UUID is what the system references; the slug is what humans and
- * text formats reference. Renaming an element must never change its UUID, and — once
- * the Architecture-as-Code representation exists (phase 5) — should not change its slug
- * either, because the slug is what makes a Git diff of a model readable.
+ * <p>Since docs/09 this is <em>not</em> the identity of an element, relationship or view — those
+ * carry one opaque {@link Id} each. What keeps a slug: the workspace and the model row, whose keys
+ * are URL segments an administrator chooses, and profile attributes, whose keys are property names
+ * in a file. Both are named by a person, stable by convention, and have to survive in a path or a
+ * DSL without escaping — which is what the narrow shape below is for.
  *
  * <p>The constraints are deliberately narrow. A slug that may contain uppercase letters,
  * dots or slashes cannot be embedded in a file name, a URL path segment and a DSL

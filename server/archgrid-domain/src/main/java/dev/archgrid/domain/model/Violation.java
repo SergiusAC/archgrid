@@ -10,7 +10,7 @@ import java.util.Objects;
  * violation is expected to say what was attempted and what would have been allowed instead
  * (ADR-0004). {@code code} exists so the client can react without parsing prose.
  *
- * @param subject the slug of the element or relationship at fault, for highlighting it
+ * @param subject the id of the element, relationship or view at fault, for highlighting it
  */
 public record Violation(String code, String subject, String detail) {
 
@@ -34,6 +34,20 @@ public record Violation(String code, String subject, String detail) {
         UNKNOWN_SUBJECT("unknown-subject"),
         /** A key already in use. */
         DUPLICATE_KEY("duplicate-key"),
+        /**
+         * An element or view name another one in this repository already has.
+         *
+         * <p>Names are unique per repository — a step beyond Archi, taken so that "where is
+         * QazID used" has one answer and an AI proposal naming a thing names exactly one (docs/09).
+         */
+        DUPLICATE_NAME("duplicate-name"),
+        /**
+         * A second relationship of one type between the same two elements.
+         *
+         * <p>ArchiMate permits it; this repository does not (docs/09). The existing relationship
+         * is the one to name or annotate instead.
+         */
+        DUPLICATE_RELATIONSHIP("duplicate-relationship"),
         /** Containment that would make an element its own ancestor. */
         CONTAINMENT_CYCLE("containment-cycle"),
         /** A relationship whose source or target is not in the model. */

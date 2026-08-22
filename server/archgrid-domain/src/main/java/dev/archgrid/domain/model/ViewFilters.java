@@ -1,7 +1,7 @@
 package dev.archgrid.domain.model;
 
 import dev.archgrid.domain.metamodel.Metamodel;
-import dev.archgrid.domain.shared.Slug;
+import dev.archgrid.domain.shared.Id;
 import java.util.EnumMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -33,7 +33,7 @@ public final class ViewFilters {
      * <p>An unfiltered view returns its membership unchanged, which is the overwhelmingly common
      * case and costs nothing.
      */
-    public static Set<Slug> visible(ModelGraph graph, View view, Metamodel metamodel) {
+    public static Set<Id> visible(ModelGraph graph, View view, Metamodel metamodel) {
         Objects.requireNonNull(graph, "graph must not be null");
         Objects.requireNonNull(view, "view must not be null");
         Objects.requireNonNull(metamodel, "metamodel must not be null");
@@ -46,8 +46,8 @@ public final class ViewFilters {
             byKind.computeIfAbsent(filter.kind(), kind -> new java.util.ArrayList<>()).add(filter);
         }
 
-        Set<Slug> visible = new LinkedHashSet<>();
-        for (Slug key : view.elements()) {
+        Set<Id> visible = new LinkedHashSet<>();
+        for (Id key : view.elements()) {
             graph.element(key).filter(element -> matches(element, byKind, metamodel)).ifPresent(element -> visible.add(key));
         }
         return visible;

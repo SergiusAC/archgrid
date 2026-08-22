@@ -1,6 +1,6 @@
 package dev.archgrid.domain.model;
 
-import dev.archgrid.domain.shared.Slug;
+import dev.archgrid.domain.shared.Id;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Objects;
@@ -26,7 +26,7 @@ import java.util.Set;
  *     view definition (ADR-0003): "this diagram is about the technology layer" is a documentation
  *     decision, and removing the filter brings the elements back where they were.
  */
-public record View(Slug key, String name, String viewpoint, Set<Slug> elements, Set<ViewFilter> filters) {
+public record View(Id key, String name, String viewpoint, Set<Id> elements, Set<ViewFilter> filters) {
 
     public static final int MAX_NAME_LENGTH = 200;
 
@@ -46,11 +46,11 @@ public record View(Slug key, String name, String viewpoint, Set<Slug> elements, 
         filters = Collections.unmodifiableSet(new LinkedHashSet<>(filters));
     }
 
-    public static View of(Slug key, String name, String viewpoint) {
+    public static View of(Id key, String name, String viewpoint) {
         return new View(key, name, viewpoint, Set.of(), Set.of());
     }
 
-    public boolean contains(Slug elementKey) {
+    public boolean contains(Id elementKey) {
         return elements.contains(elementKey);
     }
 
@@ -66,14 +66,14 @@ public record View(Slug key, String name, String viewpoint, Set<Slug> elements, 
         return new View(key, name, viewpoint, elements, newFilters);
     }
 
-    public View with(Slug elementKey) {
-        Set<Slug> updated = new LinkedHashSet<>(elements);
+    public View with(Id elementKey) {
+        Set<Id> updated = new LinkedHashSet<>(elements);
         updated.add(elementKey);
         return new View(key, name, viewpoint, updated, filters);
     }
 
-    public View without(Slug elementKey) {
-        Set<Slug> updated = new LinkedHashSet<>(elements);
+    public View without(Id elementKey) {
+        Set<Id> updated = new LinkedHashSet<>(elements);
         updated.remove(elementKey);
         return new View(key, name, viewpoint, updated, filters);
     }

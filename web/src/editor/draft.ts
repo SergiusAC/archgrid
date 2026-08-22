@@ -17,7 +17,7 @@ import type { Position } from './store.ts'
  * never allowed, which is the opposite of what the pipeline is for.
  */
 export interface LayoutDraft {
-  version: 1
+  version: 2
   /**
      * Which element each placement draws, by placement id.
      *
@@ -52,7 +52,7 @@ export function readDraft(workspace: string, view: string): LayoutDraft | null {
     const draft = JSON.parse(raw) as LayoutDraft
     // A draft from a future version of the app is not ours to interpret; the server's layout is
     // always a safe fallback, so forget it rather than guess.
-    return draft.version === 1 ? draft : null
+    return draft.version === 2 ? draft : null
   } catch {
     return null
   }
@@ -60,7 +60,7 @@ export function readDraft(workspace: string, view: string): LayoutDraft | null {
 
 export function writeDraft(workspace: string, view: string, draft: Omit<LayoutDraft, 'version' | 'at'>) {
   try {
-    const payload: LayoutDraft = { ...draft, version: 1, at: Date.now() }
+    const payload: LayoutDraft = { ...draft, version: 2, at: Date.now() }
     window.localStorage.setItem(key(workspace, view), JSON.stringify(payload))
   } catch {
     // A full or disabled store must not break editing. The change is still in memory and still

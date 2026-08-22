@@ -4,7 +4,7 @@ import dev.archgrid.domain.model.Element;
 import dev.archgrid.domain.model.ModelCommand;
 import dev.archgrid.domain.model.Relationship;
 import dev.archgrid.domain.model.ViewFilter;
-import dev.archgrid.domain.shared.Slug;
+import dev.archgrid.domain.shared.Id;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
@@ -23,6 +23,10 @@ import java.util.UUID;
  * <p>Commands arrive as a flat object discriminated by {@code op} rather than through Jackson
  * polymorphism. The mapping is written out by hand below, which costs a switch statement and
  * buys an error message that names the operation and the field when a client gets it wrong.
+ *
+ * <p>Every {@code key} on this surface is an object's id — a UUID in its canonical textual form
+ * (docs/09). The field kept its name because it kept its meaning: what a caller addresses an
+ * object by.
  */
 final class ModelApiDtos {
 
@@ -41,6 +45,9 @@ final class ModelApiDtos {
 
     /**
      * @param op the operation, e.g. {@code create-element}
+     * @param key the id of the object the command is about; for a creation, the id the client
+     *     chose for it — the client generates ids, so a new element can be placed and referenced
+     *     before the commit comes back
      * @param type an ArchiMate concept or, for elements, a profile defined in this model
      */
     record CommandDto(
@@ -59,7 +66,7 @@ final class ModelApiDtos {
             List<FilterDto> filters) {
 
         ModelCommand toCommand() {
-            Slug subject = slug(key, "key");
+            Id subject = id(key, "key");
             return switch (op) {
                 case "create-element" -> new ModelCommand.CreateElement(
                         subject, require(type, "type"), require(name, "name"), documentation);
@@ -71,9 +78,10 @@ final class ModelApiDtos {
                 case "add-relationship" -> new ModelCommand.AddRelationship(
                         subject,
                         require(type, "type"),
-                        slug(require(source, "source"), "source"),
-                        slug(require(target, "target"), "target"),
+                        id(require(source, "source"), "source"),
+                        id(require(target, "target"), "target"),
                         name);
+                case "rename-relationship" -> new ModelCommand.RenameRelationship(subject, name);
                 case "set-relationship-property" -> new ModelCommand.SetRelationshipProperty(
                         subject, require(property, "property"), value);
                 case "delete-relationship" -> new ModelCommand.DeleteRelationship(subject);
@@ -86,14 +94,14 @@ final class ModelApiDtos {
                         (filters == null ? List.<FilterDto>of() : filters)
                                 .stream().map(FilterDto::toFilter).toList());
                 case "delete-view" -> new ModelCommand.DeleteView(subject);
-                case "add-to-view" -> new ModelCommand.AddToView(subject, slug(require(element, "element"), "element"));
+                case "add-to-view" -> new ModelCommand.AddToView(subject, id(require(element, "element"), "element"));
                 case "remove-from-view" -> new ModelCommand.RemoveFromView(
-                        subject, slug(require(element, "element"), "element"));
+                        subject, id(require(element, "element"), "element"));
                 default -> throw new IllegalArgumentException("Unknown operation '" + op
                         + "'. Supported: create-element, rename-element, set-element-documentation, "
-                        + "set-element-property, move-element, delete-element, add-relationship, "
-                        + "delete-relationship, create-view, rename-view, set-viewpoint, delete-view, "
-                        + "add-to-view, remove-from-view.");
+                        + "set-element-property, delete-element, add-relationship, rename-relationship, "
+                        + "set-relationship-property, delete-relationship, create-view, rename-view, "
+                        + "set-viewpoint, set-view-filters, delete-view, add-to-view, remove-from-view.");
             };
         }
 
@@ -104,16 +112,12 @@ final class ModelApiDtos {
             return field;
         }
 
-        private static Slug slug(String raw, String fieldName) {
+        private static Id id(String raw, String fieldName) {
             try {
-                return Slug.of(raw);
+                return Id.parse(raw);
             } catch (IllegalArgumentException ex) {
                 throw new IllegalArgumentException("Field '" + fieldName + "' is not a valid key: " + ex.getMessage());
             }
-        }
-
-        private static Slug optionalSlug(String raw) {
-            return raw == null || raw.isBlank() ? null : Slug.of(raw);
         }
     }
 
@@ -136,7 +140,7 @@ final class ModelApiDtos {
 
         static ElementResponse from(Element element, String folder) {
             return new ElementResponse(
-                    element.key().value(),
+                    element.key().toString(),
                     element.displayType(),
                     element.conceptType(),
                     element.profileName(),
@@ -152,10 +156,10 @@ final class ModelApiDtos {
 
         static RelationshipResponse from(Relationship relationship) {
             return new RelationshipResponse(
-                    relationship.key().value(),
+                    relationship.key().toString(),
                     relationship.conceptType(),
-                    relationship.source().value(),
-                    relationship.target().value(),
+                    relationship.source().toString(),
+                    relationship.target().toString(),
                     relationship.name(),
                     relationship.properties());
         }
@@ -171,7 +175,7 @@ final class ModelApiDtos {
 
         static ViewSummaryResponse from(dev.archgrid.domain.model.View view, String folder) {
             return new ViewSummaryResponse(
-                    view.key().value(), view.name(), view.viewpoint(), folder, view.elements().size());
+                    view.key().toString(), view.name(), view.viewpoint(), folder, view.elements().size());
         }
     }
 
@@ -201,19 +205,6 @@ final class ModelApiDtos {
             String router) {}
 
     /**
-     * A relationship the model implies but nobody drew.
-     *
-     * <p>Marked apart from explicit ones on purpose: an architect must be able to tell what the
-     * model says from what follows from it, and `via` answers "why is this line here".
-     */
-    /**
-     * The graph seen as C4 around one element (ADR-0007).
-     *
-     * <p>`omitted` is not an error list: C4 represents ten of ArchiMate's sixty-two concepts, and
-     * a projection that dropped the rest in silence would look complete while hiding half the
-     * model.
-     */
-    /**
      * One condition on what a view draws.
      *
      * @param kind {@code layer} or {@code property}
@@ -236,6 +227,13 @@ final class ModelApiDtos {
         }
     }
 
+    /**
+     * The graph seen as C4 around one element (ADR-0007).
+     *
+     * <p>`omitted` is not an error list: C4 represents ten of ArchiMate's sixty-two concepts, and
+     * a projection that dropped the rest in silence would look complete while hiding half the
+     * model.
+     */
     record C4ProjectionResponse(
             String level,
             String levelName,
@@ -247,6 +245,12 @@ final class ModelApiDtos {
 
     record OmittedResponse(String key, String name, String type) {}
 
+    /**
+     * A relationship the model implies but nobody drew.
+     *
+     * <p>Marked apart from explicit ones on purpose: an architect must be able to tell what the
+     * model says from what follows from it, and `via` answers "why is this line here".
+     */
     record DerivedRelationshipResponse(String key, String type, String source, String target, List<String> via) {}
 
     /**
@@ -268,7 +272,7 @@ final class ModelApiDtos {
     /**
      * Where a line bends on this view. Presentation, like the coordinates it travels with.
      *
-     * <p>`key` is the line as the diagram knows it: a relationship key, or the computed key of a
+     * <p>`key` is the line as the diagram knows it: a relationship id, or the computed key of a
      * derived line. Not named `relationship`, because half of them are not one.
      */
     record LayoutLinkResponse(
@@ -290,9 +294,10 @@ final class ModelApiDtos {
             UUID parent,
             Integer z) {}
 
-    /** Coordinates never travel as commands: moving a box is not a model change (ADR-0003). */
     /**
-     * `router` and `hidden` are optional: a plain drag saves coordinates and must not carry an
+     * Coordinates never travel as commands: moving a box is not a model change (ADR-0003).
+     *
+     * <p>`router` and `hidden` are optional: a plain drag saves coordinates and must not carry an
      * opinion about routing, or about which lines this view leaves out.
      */
     record LayoutRequest(

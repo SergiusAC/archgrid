@@ -122,7 +122,12 @@ else's tool wrote breaks rules ours would refuse, and refusing the file wholesal
 product cannot be adopted. So `ModelChange.applyForImport` keeps everything the language permits
 and cuts out what it forbids **by name** — the discarded list is part of the response, never a log
 line — and the graph after an import is valid by construction. `POST /commands` stays strict:
-tolerance is a property of importing a foreign file, not of editing.
+tolerance is a property of importing a foreign file, not of editing. Since ADR-0016 the importer
+also **merges** rather than duplicates: an object whose id the repository has is skipped, an
+element with an existing name and type is folded into it (its lines and placements re-pointed), a
+name clash with another type is renamed `X (2)`, a restated relationship triple is folded — all
+named in the report (`skipped`, `merged`, `renamed`), and a second import of the same file adds
+nothing.
 
 `imports/` reaches the model slice only through `ImportGateway`, which is the sole public class
 there. The layout services stay package-private on purpose — an importer legitimately needs both
@@ -202,14 +207,27 @@ commits — the optimistic check on `baseCommitId` only means something if two w
 interleave between checking and writing. This works because history is linear; branching
 would need the ancestry walk the original sketch implied.
 
-Commands reference elements by **slug, not UUID**. Slugs are stable across renames, so they
-are as safe as identifiers, and they keep the command log readable, the DSL diffable and
-AI-proposed changes producible. A command stream full of UUIDs is correct and useless.
+**One identity per object: `Id(UUID)`, and nothing else** (ADR-0016, docs/09). Elements,
+relationships and views used to carry a slug beside the UUID; nobody read it, the editor
+synthesised it from the name and truncated it (a cut on a hyphen made a key the server refused,
+and the element silently failed to appear), and the importer transliterated it out of Russian.
+The `"key"` columns are gone (V18); the API field is still called `key` and holds the UUID string.
+Archi's `id-<32 hex>` is a UUID in costume, so an imported file keeps its identifiers and a second
+import of it is idempotent. Commands address objects by id; wherever a log is shown, resolve the
+id to the name — do not reintroduce a human-shaped second key.
 
-Every table carries `workspace_id`. Every addressable object carries both a UUID (stable
-across renames, what the system references) and a slug (what humans, URLs and the future
-Architecture-as-Code format reference). `Slug`'s regex is duplicated as a DB check
-constraint on purpose — the database is the last defence against a bad import.
+What replaced the slug as the human handle is the **name, with rules behind it**: element names
+are unique per repository, view names too, and a relationship is unique by `(type, source,
+target)` — deliberate steps beyond Archi and beyond ArchiMate, taken so "where is QazID used" has
+one answer. `ModelChange` checks all three and explains a refusal (`duplicate-name`,
+`duplicate-relationship`, naming the holder); the unique indexes in V18 are the last line of
+defence and surface as 409, never 500. The identity rows mirror the current name / triple for
+those indexes and clear them on deletion — a deleted element gives its name up. The one
+comparison is `ModelGraph.nameKey` = `lower(btrim(name))`; do not add a second. The repository
+gives names up before it takes them, so swapping two names in one batch passes the index.
+
+`Slug` survives for the workspace key and profile attribute keys only — things a person names
+that live in a URL or a file. Every table carries `workspace_id`.
 
 ### Identity
 

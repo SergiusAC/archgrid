@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import dev.archgrid.domain.shared.Id;
 import dev.archgrid.support.PostgresContainerConfig;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,6 +32,9 @@ import tools.jackson.databind.ObjectMapper;
  *
  * <p>A workspace holds exactly one connected graph (ADR-0008), so these paths carry no model
  * segment and the graph is provisioned on first access rather than created by a user.
+ *
+ * <p>Keys on the wire are ids (docs/09). The scenarios below name them — {@code named("kafka")} is
+ * the same UUID every time — so a test reads as a story and still sends what a client sends.
  */
 @SpringBootTest(
         properties = "spring.security.oauth2.resourceserver.jwt.jwk-set-uri=http://localhost/jwks-not-used")
@@ -40,6 +44,16 @@ import tools.jackson.databind.ObjectMapper;
 class GraphApiIT {
 
     private static final String WORKSPACE = "acme";
+
+    private static String named(String name) {
+        return Id.named(name).toString();
+    }
+
+    private static final String PAYMENT_SERVICE = named("payment-service");
+    private static final String KAFKA = named("kafka");
+    private static final String NOTIFICATION_SERVICE = named("notification-service");
+    private static final String PAYMENT_PUBLISHES = named("payment-publishes");
+    private static final String KAFKA_SERVES = named("kafka-serves-notification");
 
     @Autowired
     private MockMvc mockMvc;
@@ -91,13 +105,14 @@ class GraphApiIT {
     private static final String PAYMENT_FLOW =
             """
             [
-              {"op":"create-element","key":"payment-service","type":"ApplicationComponent","name":"Payment Service"},
-              {"op":"create-element","key":"kafka","type":"SystemSoftware","name":"Kafka"},
-              {"op":"create-element","key":"notification-service","type":"ApplicationComponent","name":"Notification Service"},
-              {"op":"add-relationship","key":"payment-publishes","type":"Flow","source":"payment-service","target":"kafka"},
-              {"op":"add-relationship","key":"kafka-serves-notification","type":"Serving","source":"kafka","target":"notification-service"}
+              {"op":"create-element","key":"%1$s","type":"ApplicationComponent","name":"Payment Service"},
+              {"op":"create-element","key":"%2$s","type":"SystemSoftware","name":"Kafka"},
+              {"op":"create-element","key":"%3$s","type":"ApplicationComponent","name":"Notification Service"},
+              {"op":"add-relationship","key":"%4$s","type":"Flow","source":"%1$s","target":"%2$s"},
+              {"op":"add-relationship","key":"%5$s","type":"Serving","source":"%2$s","target":"%3$s"}
             ]
-            """;
+            """
+                    .formatted(PAYMENT_SERVICE, KAFKA, NOTIFICATION_SERVICE, PAYMENT_PUBLISHES, KAFKA_SERVES);
 
     @Test
     @DisplayName("the graph exists on first read, without anyone creating it")
@@ -141,7 +156,7 @@ class GraphApiIT {
         mockMvc.perform(get("/api/workspaces/{ws}/elements", WORKSPACE).with(jwt()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(3))
-                .andExpect(jsonPath("$[?(@.key=='kafka')].conceptType").value("SystemSoftware"));
+                .andExpect(jsonPath("$[?(@.key=='%s')].conceptType".formatted(KAFKA)).value("SystemSoftware"));
 
         mockMvc.perform(get("/api/workspaces/{ws}/relationships", WORKSPACE).with(jwt()))
                 .andExpect(jsonPath("$.length()").value(2));
@@ -149,6 +164,13 @@ class GraphApiIT {
         mockMvc.perform(get("/api/workspaces/{ws}", WORKSPACE).with(jwt()))
                 .andExpect(jsonPath("$.elements").value(3))
                 .andExpect(jsonPath("$.relationships").value(2));
+
+        // The id the client chose is the id the database holds: one identity, no translation.
+        Integer kafkaRows = jdbc.sql("select count(*) from element where id = :id and name = 'Kafka'")
+                .param("id", UUID.fromString(KAFKA))
+                .query(Integer.class)
+                .single();
+        assertThat(kafkaRows).isEqualTo(1);
     }
 
     @Test
@@ -161,13 +183,14 @@ class GraphApiIT {
                 first.get("commitId").asString(),
                 "Billing",
                 """
-                [{"op":"create-element","key":"billing-service","type":"ApplicationComponent","name":"Billing Service"},
-                 {"op":"add-relationship","key":"billing-publishes","type":"Flow","source":"billing-service","target":"kafka"}]
-                """);
+                [{"op":"create-element","key":"%s","type":"ApplicationComponent","name":"Billing Service"},
+                 {"op":"add-relationship","key":"%s","type":"Flow","source":"%s","target":"%s"}]
+                """
+                        .formatted(named("billing-service"), named("billing-publishes"), named("billing-service"), KAFKA));
 
         mockMvc.perform(get("/api/workspaces/{ws}/relationships", WORKSPACE).with(jwt()))
                 .andExpect(jsonPath("$.length()").value(3))
-                .andExpect(jsonPath("$[?(@.target=='kafka')].source", org.hamcrest.Matchers.hasSize(2)));
+                .andExpect(jsonPath("$[?(@.target=='%s')].source".formatted(KAFKA), org.hamcrest.Matchers.hasSize(2)));
     }
 
     @Test
@@ -179,11 +202,16 @@ class GraphApiIT {
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("""
                                         {"baseCommitId":"%s","message":"bad","commands":[
-                                          {"op":"create-element","key":"payments-data","type":"DataObject","name":"Payments"},
-                                          {"op":"add-relationship","key":"bad","type":"Serving","source":"payment-service","target":"payments-data"}
+                                          {"op":"create-element","key":"%s","type":"DataObject","name":"Payments"},
+                                          {"op":"add-relationship","key":"%s","type":"Serving","source":"%s","target":"%s"}
                                         ]}
                                         """
-                                        .formatted(first.get("commitId").asString()))))
+                                        .formatted(
+                                                first.get("commitId").asString(),
+                                                named("payments-data"),
+                                                named("bad"),
+                                                PAYMENT_SERVICE,
+                                                named("payments-data")))))
                 .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.violations[0].code").value("relationship-not-permitted"))
                 .andExpect(jsonPath("$.violations[0].detail")
@@ -194,6 +222,183 @@ class GraphApiIT {
     }
 
     @Test
+    @DisplayName("a second element with a name already taken is refused, naming the holder")
+    void refuses_a_duplicate_name() throws Exception {
+        JsonNode first = applyCommands(null, "Base", PAYMENT_FLOW);
+
+        // Case and surrounding whitespace do not make it a different name.
+        mockMvc.perform(asContributor(post("/api/workspaces/{ws}/commands", WORKSPACE)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"baseCommitId":"%s","message":"dup","commands":[
+                                          {"op":"create-element","key":"%s","type":"Node","name":"  KAFKA "}
+                                        ]}
+                                        """
+                                        .formatted(first.get("commitId").asString(), named("kafka-2")))))
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.violations[0].code").value("duplicate-name"))
+                .andExpect(jsonPath("$.violations[0].subject").value(named("kafka-2")))
+                .andExpect(jsonPath("$.violations[0].detail").value(org.hamcrest.Matchers.containsString(KAFKA)));
+
+        // A rename into a taken name is the same refusal.
+        mockMvc.perform(asContributor(post("/api/workspaces/{ws}/commands", WORKSPACE)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"baseCommitId":"%s","message":"dup","commands":[
+                                          {"op":"rename-element","key":"%s","name":"Kafka"}
+                                        ]}
+                                        """
+                                        .formatted(first.get("commitId").asString(), PAYMENT_SERVICE))))
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.violations[0].code").value("duplicate-name"));
+
+        // Swapping two names in one batch passes through a duplicate state and is fine: the rule
+        // holds for the result, not for every step.
+        applyCommands(
+                first.get("commitId").asString(),
+                "Swap",
+                """
+                [{"op":"rename-element","key":"%s","name":"Kafka"},
+                 {"op":"rename-element","key":"%s","name":"Payment Service"}]
+                """
+                        .formatted(PAYMENT_SERVICE, KAFKA));
+        mockMvc.perform(get("/api/workspaces/{ws}/elements", WORKSPACE).with(jwt()))
+                .andExpect(jsonPath("$[?(@.key=='%s')].name".formatted(KAFKA)).value("Payment Service"));
+    }
+
+    @Test
+    @DisplayName("a deleted element gives its name up, so the next one may take it")
+    void a_deleted_element_frees_its_name() throws Exception {
+        String head = applyCommands(null, "Base", PAYMENT_FLOW).get("commitId").asString();
+        head = applyCommands(head, "Drop Kafka", """
+                [{"op":"delete-element","key":"%s"}]
+                """.formatted(KAFKA))
+                .get("commitId")
+                .asString();
+
+        applyCommands(head, "A new Kafka", """
+                [{"op":"create-element","key":"%s","type":"SystemSoftware","name":"Kafka"}]
+                """.formatted(named("kafka-again")));
+
+        mockMvc.perform(get("/api/workspaces/{ws}/elements", WORKSPACE).with(jwt()))
+                .andExpect(jsonPath("$[?(@.name=='Kafka')].key").value(named("kafka-again")));
+        // The old identity row is still there for the history, and no longer holds the name.
+        String oldName = jdbc.sql("select name from element where id = :id")
+                .param("id", UUID.fromString(KAFKA))
+                .query(String.class)
+                .optional()
+                .orElse(null);
+        assertThat(oldName).isNull();
+    }
+
+    @Test
+    @DisplayName("one relationship of a type between two elements: a second is refused, a named one is fine")
+    void refuses_a_duplicate_relationship() throws Exception {
+        JsonNode first = applyCommands(null, "Base", PAYMENT_FLOW);
+
+        mockMvc.perform(asContributor(post("/api/workspaces/{ws}/commands", WORKSPACE)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"baseCommitId":"%s","message":"dup","commands":[
+                                          {"op":"add-relationship","key":"%s","type":"Flow","source":"%s","target":"%s","name":"invoices"}
+                                        ]}
+                                        """
+                                        .formatted(
+                                                first.get("commitId").asString(),
+                                                named("second-flow"),
+                                                PAYMENT_SERVICE,
+                                                KAFKA))))
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.violations[0].code").value("duplicate-relationship"))
+                .andExpect(jsonPath("$.violations[0].detail").value(org.hamcrest.Matchers.containsString(PAYMENT_PUBLISHES)));
+
+        // The other direction is a different statement, and so is another type.
+        applyCommands(
+                first.get("commitId").asString(),
+                "Back and sideways",
+                """
+                [{"op":"add-relationship","key":"%s","type":"Flow","source":"%s","target":"%s"},
+                 {"op":"add-relationship","key":"%s","type":"Serving","source":"%s","target":"%s"}]
+                """
+                        .formatted(named("back"), KAFKA, PAYMENT_SERVICE, named("sideways"), PAYMENT_SERVICE, KAFKA));
+        mockMvc.perform(get("/api/workspaces/{ws}/relationships", WORKSPACE).with(jwt()))
+                .andExpect(jsonPath("$.length()").value(4));
+    }
+
+    @Test
+    @DisplayName("a relationship can be named after the fact, and unnamed again")
+    void renames_a_relationship() throws Exception {
+        String head = applyCommands(null, "Base", PAYMENT_FLOW).get("commitId").asString();
+
+        head = applyCommands(head, "Name it", """
+                [{"op":"rename-relationship","key":"%s","name":"payment events"}]
+                """.formatted(PAYMENT_PUBLISHES))
+                .get("commitId")
+                .asString();
+        mockMvc.perform(get("/api/workspaces/{ws}/relationships", WORKSPACE).with(jwt()))
+                .andExpect(jsonPath("$[?(@.key=='%s')].name".formatted(PAYMENT_PUBLISHES)).value("payment events"));
+
+        applyCommands(head, "Unname it", """
+                [{"op":"rename-relationship","key":"%s","name":null}]
+                """.formatted(PAYMENT_PUBLISHES));
+        JsonNode relationships = json.readTree(mockMvc.perform(
+                        get("/api/workspaces/{ws}/relationships", WORKSPACE).with(jwt()))
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+        boolean found = false;
+        for (JsonNode relationship : relationships) {
+            if (relationship.get("key").asString().equals(PAYMENT_PUBLISHES)) {
+                assertThat(relationship.get("name").isNull()).isTrue();
+                found = true;
+            }
+        }
+        assertThat(found).isTrue();
+    }
+
+    @Test
+    @DisplayName("the database refuses a duplicate name behind the validator's back — the last line of defence")
+    void the_schema_refuses_a_duplicate_name() throws Exception {
+        applyCommands(null, "Base", PAYMENT_FLOW);
+        UUID modelId = jdbc.sql("select id from model").query(UUID.class).single();
+
+        // A write that bypasses the pipeline entirely, as a hand-made fix in production might.
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbc.sql(
+                        "insert into element (id, model_id, name) values (:id, :model, 'kafka ')")
+                .param("id", UUID.randomUUID())
+                .param("model", modelId)
+                .update())
+                .isInstanceOf(org.springframework.dao.DuplicateKeyException.class)
+                .hasMessageContaining("element_name_unique_per_model");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbc.sql(
+                        "insert into relationship (id, model_id, concept_type, source_id, target_id) "
+                                + "values (:id, :model, 'Flow', :source, :target)")
+                .param("id", UUID.randomUUID())
+                .param("model", modelId)
+                .param("source", UUID.fromString(PAYMENT_SERVICE))
+                .param("target", UUID.fromString(KAFKA))
+                .update())
+                .isInstanceOf(org.springframework.dao.DuplicateKeyException.class)
+                .hasMessageContaining("relationship_triple_unique_per_model");
+    }
+
+    @Test
+    @DisplayName("a key that is not an id — a slug from a stale client — is a 400 that says what was expected")
+    void rejects_a_slug_as_key() throws Exception {
+        mockMvc.perform(asContributor(post("/api/workspaces/{ws}/commands", WORKSPACE)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"commands":[{"op":"create-element","key":"payment-service","type":"ApplicationComponent","name":"A"}]}
+                                        """)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("UUID")));
+
+        mockMvc.perform(get("/api/workspaces/{ws}/elements/{key}/usage", WORKSPACE, "payment-service").with(jwt()))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     @DisplayName("history records one commit per accepted change")
     void records_history() throws Exception {
         JsonNode first = applyCommands(null, "Add the payment notification flow", PAYMENT_FLOW);
@@ -201,8 +406,9 @@ class GraphApiIT {
                 first.get("commitId").asString(),
                 "Document the payment service",
                 """
-                [{"op":"set-element-documentation","key":"payment-service","documentation":"Authorises card payments."}]
-                """);
+                [{"op":"set-element-documentation","key":"%s","documentation":"Authorises card payments."}]
+                """
+                        .formatted(PAYMENT_SERVICE));
 
         mockMvc.perform(get("/api/workspaces/{ws}/commits", WORKSPACE).with(jwt()))
                 .andExpect(jsonPath("$.length()").value(2))
@@ -216,17 +422,17 @@ class GraphApiIT {
         JsonNode first = applyCommands(null, "Base", PAYMENT_FLOW);
         String head = first.get("commitId").asString();
         applyCommands(head, "Rename", """
-                [{"op":"rename-element","key":"kafka","name":"Kafka cluster"}]
-                """);
+                [{"op":"rename-element","key":"%s","name":"Kafka cluster"}]
+                """.formatted(KAFKA));
 
         mockMvc.perform(asContributor(post("/api/workspaces/{ws}/commands", WORKSPACE)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("""
                                         {"baseCommitId":"%s","message":"stale","commands":[
-                                          {"op":"rename-element","key":"kafka","name":"Something else"}
+                                          {"op":"rename-element","key":"%s","name":"Something else"}
                                         ]}
                                         """
-                                        .formatted(head))))
+                                        .formatted(head, KAFKA))))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.expectedBaseCommitId").value(head))
                 .andExpect(jsonPath("$.currentHeadCommitId").exists());
@@ -248,8 +454,9 @@ class GraphApiIT {
                 null,
                 "Add a microservice",
                 """
-                [{"op":"create-element","key":"payment-service","type":"Microservice","name":"Payment Service"}]
-                """);
+                [{"op":"create-element","key":"%s","type":"Microservice","name":"Payment Service"}]
+                """
+                        .formatted(PAYMENT_SERVICE));
 
         mockMvc.perform(get("/api/workspaces/{ws}/profiles", WORKSPACE).with(jwt()))
                 .andExpect(jsonPath("$[0].name").value("Microservice"))
@@ -280,8 +487,9 @@ class GraphApiIT {
                 null,
                 "Add a microservice",
                 """
-                [{"op":"create-element","key":"payments","type":"Microservice","name":"Payments"}]
-                """);
+                [{"op":"create-element","key":"%s","type":"Microservice","name":"Payments"}]
+                """
+                        .formatted(named("payments")));
         mockMvc.perform(get("/api/workspaces/{ws}/elements", WORKSPACE).with(jwt()))
                 .andExpect(jsonPath("$[0].profile").value("Microservice"))
                 .andExpect(jsonPath("$[0].conceptType").value("ApplicationComponent"));
@@ -325,10 +533,11 @@ class GraphApiIT {
                         null,
                         "Two elements and a line",
                         """
-                        [{"op":"create-element","key":"a","type":"ApplicationComponent","name":"A"},
-                         {"op":"create-element","key":"b","type":"ApplicationComponent","name":"B"},
-                         {"op":"add-relationship","key":"a-b","type":"Flow","source":"a","target":"b"}]
-                        """)
+                        [{"op":"create-element","key":"%s","type":"ApplicationComponent","name":"A"},
+                         {"op":"create-element","key":"%s","type":"ApplicationComponent","name":"B"},
+                         {"op":"add-relationship","key":"%s","type":"Flow","source":"%s","target":"%s"}]
+                        """
+                                .formatted(named("a"), named("b"), named("a-b"), named("a"), named("b")))
                 .get("commitId")
                 .asString();
 
@@ -336,8 +545,9 @@ class GraphApiIT {
                         head,
                         "Annotate it",
                         """
-                        [{"op":"set-relationship-property","key":"a-b","property":"protocol","value":"AMQP"}]
-                        """)
+                        [{"op":"set-relationship-property","key":"%s","property":"protocol","value":"AMQP"}]
+                        """
+                                .formatted(named("a-b")))
                 .get("commitId")
                 .asString();
         mockMvc.perform(get("/api/workspaces/{ws}/relationships", WORKSPACE).with(jwt()))
@@ -348,8 +558,9 @@ class GraphApiIT {
                 head,
                 "Take it back",
                 """
-                [{"op":"set-relationship-property","key":"a-b","property":"protocol","value":null}]
-                """);
+                [{"op":"set-relationship-property","key":"%s","property":"protocol","value":null}]
+                """
+                        .formatted(named("a-b")));
         mockMvc.perform(get("/api/workspaces/{ws}/relationships", WORKSPACE).with(jwt()))
                 .andExpect(jsonPath("$[0].properties.protocol").doesNotExist());
     }
@@ -361,8 +572,9 @@ class GraphApiIT {
                         .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_VIEWER")))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"commands":[{"op":"create-element","key":"a","type":"ApplicationComponent","name":"A"}]}
-                                """))
+                                {"commands":[{"op":"create-element","key":"%s","type":"ApplicationComponent","name":"A"}]}
+                                """
+                                .formatted(named("a"))))
                 .andExpect(status().isForbidden());
     }
 
@@ -379,8 +591,9 @@ class GraphApiIT {
         mockMvc.perform(asContributor(post("/api/workspaces/{ws}/commands", WORKSPACE)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("""
-                                        {"commands":[{"op":"frobnicate","key":"a"}]}
-                                        """)))
+                                        {"commands":[{"op":"frobnicate","key":"%s"}]}
+                                        """
+                                        .formatted(named("a")))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.detail")
                         .value(org.hamcrest.Matchers.containsString("Unknown operation 'frobnicate'")));
