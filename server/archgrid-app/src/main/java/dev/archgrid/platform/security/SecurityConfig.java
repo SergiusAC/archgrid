@@ -5,13 +5,17 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
+import org.springframework.core.convert.converter.Converter;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.authentication.AbstractAuthenticationToken;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 
@@ -51,7 +55,8 @@ class SecurityConfig {
     }
 
     @Bean
-    SecurityFilterChain apiSecurity(HttpSecurity http, JwtAuthenticationConverter jwtAuthenticationConverter)
+    SecurityFilterChain apiSecurity(
+            HttpSecurity http, Converter<Jwt, AbstractAuthenticationToken> jwtAuthenticationConverter)
             throws Exception {
         return http.securityMatcher("/api/**")
                 .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
@@ -67,10 +72,15 @@ class SecurityConfig {
                 .build();
     }
 
+    /**
+     * Written out rather than configured on {@link JwtAuthenticationConverter}, which takes a
+     * principal claim <em>name</em> and yields a null-named token when the IdP does not emit that
+     * claim. A commit has to be attributed to someone, so the fallback chain is explicit and its
+     * last link is {@code sub} — see {@link JwtPrincipalName}.
+     */
     @Bean
-    JwtAuthenticationConverter jwtAuthenticationConverter(RealmRoleGrantedAuthoritiesConverter roles) {
-        JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
-        converter.setJwtGrantedAuthoritiesConverter(roles);
-        return converter;
+    Converter<Jwt, AbstractAuthenticationToken> jwtAuthenticationConverter(
+            RealmRoleGrantedAuthoritiesConverter roles) {
+        return jwt -> new JwtAuthenticationToken(jwt, roles.convert(jwt), JwtPrincipalName.of(jwt));
     }
 }

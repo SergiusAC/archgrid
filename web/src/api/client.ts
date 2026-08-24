@@ -1,5 +1,6 @@
 import type {
   Commit,
+  CommitDiff,
   CommitResult,
   CommandRequest,
   Folder,
@@ -14,6 +15,7 @@ import type {
   ProblemDetail,
   Profile,
   C4Projection,
+  Snapshot,
   Usage,
   ViewDetail,
   ViewSummary,
@@ -154,7 +156,26 @@ export function createApi(token: string) {
         { method: 'PUT' },
       ),
 
-    commits: (workspace: string) => request<Commit[]>(`/api/workspaces/${encode(workspace)}/commits`, token),
+    /** The change log, newest first. */
+    commits: (workspace: string, limit = 100) =>
+      request<Commit[]>(`/api/workspaces/${encode(workspace)}/commits?limit=${limit}`, token),
+
+    /**
+     * What one commit changed, or what separates two.
+     *
+     * Omitting `from` asks what the commit itself did, which is the question a log entry is
+     * usually being asked. Naming a later commit as `from` is legal and yields the inverse.
+     */
+    commitDiff: (workspace: string, commit: string, from?: string | null) =>
+      request<CommitDiff>(
+        `/api/workspaces/${encode(workspace)}/commits/${encode(commit)}/diff` +
+          (from ? `?from=${encode(from)}` : ''),
+        token,
+      ),
+
+    /** The model as it stood at a commit. No layout — none was versioned (ADR-0003). */
+    snapshot: (workspace: string, commit: string) =>
+      request<Snapshot>(`/api/workspaces/${encode(workspace)}/commits/${encode(commit)}/snapshot`, token),
 
     /** The only call that changes the graph. Everything else here reads. */
     applyCommands: (workspace: string, body: CommandRequest) =>

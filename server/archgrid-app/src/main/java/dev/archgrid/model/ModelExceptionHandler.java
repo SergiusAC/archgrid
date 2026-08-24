@@ -16,11 +16,12 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  * free of feature knowledge. Spring applies both advices; this one is more specific and wins
  * for the exceptions it declares.
  */
-@RestControllerAdvice(assignableTypes = GraphController.class)
+@RestControllerAdvice(assignableTypes = {GraphController.class, HistoryController.class})
 class ModelExceptionHandler {
 
     private static final URI INVALID_MODEL = URI.create("https://archgrid.dev/problems/model-would-be-invalid");
     private static final URI STALE_BASE = URI.create("https://archgrid.dev/problems/stale-base-commit");
+    private static final URI UNKNOWN_COMMIT = URI.create("https://archgrid.dev/problems/unknown-commit");
 
     /**
      * 422 rather than 400: the request was well-formed and understood, it is the resulting model
@@ -54,6 +55,19 @@ class ModelExceptionHandler {
         problem.setType(STALE_BASE);
         problem.setProperty("expectedBaseCommitId", ex.expected());
         problem.setProperty("currentHeadCommitId", ex.actual());
+        return problem;
+    }
+
+    /**
+     * 404, and it names the id: a commit id that belongs to another workspace is as absent as one
+     * that never existed, and a reader chasing a stale link needs to be told which it was.
+     */
+    @ExceptionHandler(HistoryService.UnknownCommitException.class)
+    ProblemDetail onUnknownCommit(HistoryService.UnknownCommitException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
+        problem.setTitle("No such commit");
+        problem.setType(UNKNOWN_COMMIT);
+        problem.setProperty("commitId", ex.commitId());
         return problem;
     }
 

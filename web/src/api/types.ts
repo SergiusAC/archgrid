@@ -242,12 +242,63 @@ export interface Profile {
   attributes: { key: string; name: string; type: string }[]
 }
 
+/** One atomic, attributed change to the semantic model. Layout changes never appear here (ADR-0003). */
 export interface Commit {
   id: string
   seq: number
+  /** Null for the repository's first commit, whose predecessor is the empty graph. */
+  parentId: string | null
   author: string
   message: string | null
   createdAt: string
+}
+
+/**
+ * One attribute that differs, with both readings.
+ *
+ * A set-valued attribute — a view's membership, its filters — comes back as one entry per element
+ * gained or lost, with the other side null, so a diff is the size of the change rather than the
+ * size of the object.
+ */
+export interface DiffField {
+  /** `name`, `type`, `documentation`, `elements`, `filters`, or `property:<key>`. */
+  field: string
+  before: string | null
+  after: string | null
+}
+
+/** One object that appeared, disappeared or was edited. `fields` is empty for the first two. */
+export interface DiffChange {
+  subject: 'element' | 'relationship' | 'view'
+  verb: 'added' | 'removed' | 'changed'
+  key: string
+  type: string
+  label: string | null
+  /** A relationship's endpoints, by name as of the state they were read from. */
+  source: string | null
+  target: string | null
+  fields: DiffField[]
+}
+
+export interface CommitDiff {
+  /** Null when `to` is the first commit and there is no earlier state to name. */
+  from: Commit | null
+  to: Commit
+  summary: { added: number; removed: number; changed: number }
+  changes: DiffChange[]
+}
+
+/**
+ * The repository as it stood at a commit.
+ *
+ * The model, not the diagram: layout is unversioned (ADR-0003), so there is no historical
+ * arrangement to restore and the views come back as summaries.
+ */
+export interface Snapshot {
+  commit: Commit
+  elements: ModelElement[]
+  relationships: ModelRelationship[]
+  views: ViewSummary[]
 }
 
 export interface CommitResult {

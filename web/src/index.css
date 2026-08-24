@@ -1413,3 +1413,185 @@ body.ag-resizing {
   gap: 0.6rem;
   font-size: 0.8rem;
 }
+
+/* ---------------------------------------------------------------- history */
+
+.ag-history-note {
+  margin: 0 0 0.5rem;
+  font-size: 0.75rem;
+}
+
+.ag-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.ag-history-entry {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  border-left: 2px solid transparent;
+  padding-right: 0.3rem;
+}
+
+.ag-history-entry-selected {
+  background: var(--surface);
+  border-left-color: var(--accent);
+}
+
+/* The commit a comparison runs from, marked in the list so the two ends of it are both visible. */
+.ag-history-entry-base {
+  border-left-color: var(--ok);
+}
+
+.ag-history-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  background: none;
+  border: 0;
+  padding: 0.35rem 0.4rem;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.ag-history-open:hover {
+  background: var(--surface);
+}
+
+.ag-history-message,
+.ag-history-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ag-history-meta {
+  font-size: 0.72rem;
+}
+
+.ag-history-panel {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  z-index: 29;
+  width: 30rem;
+  max-width: calc(100% - 1.5rem);
+  max-height: calc(100% - 1.5rem);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.22);
+  font-size: 0.85rem;
+}
+
+.ag-history-panel header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.6rem 0.9rem 0.4rem;
+}
+
+.ag-history-body {
+  overflow-y: auto;
+  padding: 0.6rem 0.9rem 0.9rem;
+}
+
+.ag-history-body h4 {
+  margin: 0.8rem 0 0.3rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.ag-history-body p {
+  margin: 0.25rem 0;
+}
+
+.ag-diff-summary {
+  font-variant-numeric: tabular-nums;
+}
+
+.ag-diff-error {
+  color: var(--error);
+  padding: 0 0.9rem;
+}
+
+.ag-diff-changes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.ag-diff-change {
+  border-left: 2px solid var(--line);
+  padding-left: 0.5rem;
+}
+
+.ag-diff-change.ag-diff-verb-added {
+  border-left-color: var(--ok);
+}
+
+.ag-diff-change.ag-diff-verb-removed {
+  border-left-color: var(--error);
+}
+
+.ag-diff-change.ag-diff-verb-changed {
+  border-left-color: var(--accent);
+}
+
+.ag-diff-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem;
+}
+
+.ag-diff-mark {
+  font-variant-numeric: tabular-nums;
+  width: 0.8rem;
+  flex: none;
+}
+
+.ag-diff-fields {
+  list-style: none;
+  margin: 0.15rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  font-size: 0.78rem;
+}
+
+/* The attribute's name, in a column so a run of them lines up. */
+.ag-diff-field {
+  display: inline-block;
+  min-width: 7rem;
+  color: var(--muted);
+}
+
+.ag-diff-added {
+  color: var(--ok);
+}
+
+.ag-diff-removed {
+  color: var(--error);
+}
+
+.ag-diff-changed {
+  color: var(--accent);
+}

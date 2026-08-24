@@ -1919,9 +1919,15 @@ async function interactions(page) {
   check('the import answers with a report', importPanel != null)
   if (importPanel) {
     const summary = await page.locator('.ag-import-report p').first().innerText()
+    // Two legitimate answers, and which one comes back says what the run started from. A fresh
+    // database takes the file whole; a database that already has it takes nothing, because a
+    // second import of one file merges rather than duplicates (ADR-0016). Anything between the
+    // two is the duplication that ADR being written was meant to end.
+    const freshImport = /Added 3 elements, 2 relationships, 1 views/.test(summary)
+    const repeatImport = /Added 0 elements, 0 relationships, 0 views/.test(summary)
     check(
       'the report counts what the file added, not what the repository holds',
-      /Added (3|0) elements, (2|0) relationships, 1 views/.test(summary),
+      freshImport || repeatImport,
       summary,
     )
     for (const details of await page.locator('.ag-import-report details').all()) {
@@ -1934,11 +1940,21 @@ async function interactions(page) {
       /cycle/i.test(panelText),
       (panelText.split('\n').find((line) => /cycle/i.test(line)) ?? 'not named').slice(0, 90),
     )
-    check(
-      'and says the label had nowhere to go',
-      /text labels/i.test(panelText),
-      (panelText.split('\n').find((line) => /text labels/i.test(line)) ?? 'not named').slice(0, 90),
-    )
+    if (freshImport) {
+      check(
+        'and says the label had nowhere to go',
+        /text labels/i.test(panelText),
+        (panelText.split('\n').find((line) => /text labels/i.test(line)) ?? 'not named').slice(0, 90),
+      )
+    } else {
+      // Nothing was lost this time because nothing was read: the view was found by id and skipped
+      // whole. An import that adds nothing must say so rather than report an empty success.
+      check(
+        'a repeat import adds nothing and says the repository kept its own',
+        /already here/i.test(panelText),
+        (panelText.split('\n').find((line) => /already here/i.test(line)) ?? 'not said').slice(0, 90),
+      )
+    }
     await page.screenshot({ path: `${outDir}/53-import-report.png` })
     await page.locator('.ag-import-report .ag-banner-close').click()
     await page.waitForTimeout(300)
@@ -1985,6 +2001,163 @@ async function interactions(page) {
     )
   }
   await page.screenshot({ path: `${outDir}/54-imported-view.png` })
+
+  /*
+   * --- the change log ---
+   *
+   * Phase 5's first question: what happened here. Everything this run did was either a commit or
+   * a layout write, and the log has to tell them apart — a diagram whose boxes were dragged into
+   * place must read as unchanged, because layout is not versioned (ADR-0003). That distinction is
+   * the reason the log is worth having, and nothing but opening it proves it holds.
+   */
+  // One rename first, so the log has something known at the top of it. Asserting on whatever the
+  // import happened to do makes this depend on whether the database has seen the fixture before —
+  // and a second import of the same file legitimately does nothing at all (ADR-0016).
+  //
+  // Put back afterwards, and that is not tidiness: a fixture element left under a new name is one
+  // the next run's import no longer finds, so it imports a second copy and the idempotency check
+  // above starts failing a week later for a reason nobody can see.
+  await page.locator('.ag-paper .ag-node').first().click()
+  await page.waitForSelector('.ag-properties input', { timeout: 5000 })
+  const logNameField = page.locator('.ag-properties .ag-field input').first()
+  const nameWas = await logNameField.inputValue()
+  const nameNow = `Logged ${Date.now().toString(36)}`
+  await logNameField.fill(nameNow)
+  await page.locator('.ag-props-actions button', { hasText: 'Save' }).click()
+  await page.waitForTimeout(2500)
+
+  await page.locator('.ag-sidebar .ag-tab', { hasText: 'History' }).click()
+  await page.waitForTimeout(2000)
+  const entries = await page.locator('.ag-history-entry').count()
+  check('the History tab lists the commits', entries > 0, `${entries} entries`)
+
+  const newest = page.locator('.ag-history-entry').first()
+  const newestMeta = (await newest.locator('.ag-history-meta').innerText().catch(() => '')) ?? ''
+  // `sub` is a UUID at Keycloak and at most other IdPs. A log saying a UUID renamed the payment
+  // service is a log nobody reads, so the token's username claim is what attributes a commit.
+  check(
+    'a commit is attributed to a person, not to a subject UUID',
+    newestMeta.startsWith(USER),
+    newestMeta.replace(/\n/g, ' ').slice(0, 60),
+  )
+
+  await newest.locator('.ag-history-open').click()
+  const logPanel = await page.waitForSelector('.ag-history-panel', { timeout: 20_000 }).catch(() => null)
+  check('opening an entry shows what it changed', logPanel != null)
+  if (logPanel) {
+    await page.waitForTimeout(2000)
+    const changes = await page.locator('.ag-history-panel').innerText()
+    check(
+      'the diff counts what appeared, disappeared and was edited',
+      /\+\d+ −\d+ ~\d+/.test(changes.replace(/\s+/g, ' ')),
+      (changes.replace(/\s+/g, ' ').match(/\+\d+ −\d+ ~\d+/) ?? ['no summary'])[0],
+    )
+    // One changed element with a before and an after — not one removed and one added. That is
+    // what an opaque identity buys (ADR-0016), and matching by name would have lost it.
+    check(
+      'a rename reads as one changed element, with both readings',
+      changes.includes(nameWas) && changes.includes(nameNow),
+      `${nameWas} → ${nameNow}: ${changes.includes(nameWas) ? 'before kept' : 'before missing'}`,
+    )
+    // Named, not counted. Resolving ids in the client is impossible for what a commit deleted,
+    // so the server resolves them as of the state each was read from.
+    check(
+      'and names what it touched rather than listing ids',
+      !/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/.test(changes),
+      'no raw ids in the panel',
+    )
+    await page.screenshot({ path: `${outDir}/55-history-diff.png` })
+
+    // The fixture gets its name back now that the diff has been read. The panel keeps showing the
+    // commit it was opened on — this is a new one, not an edit of that.
+    //
+    // Found by its new label rather than by DOM order: JointJS re-renders in its own order, and
+    // `.first()` after a rename is not reliably the box that was renamed.
+    await page.locator('.ag-paper .ag-node', { hasText: nameNow }).first().click()
+    await page.waitForSelector('.ag-properties input', { timeout: 5000 })
+    await page.locator('.ag-properties .ag-field input').first().fill(nameWas)
+    await page.locator('.ag-props-actions button', { hasText: 'Save' }).click()
+    await page.waitForTimeout(2500)
+
+    await page.locator('.ag-history-panel .ag-tab', { hasText: 'State' }).click()
+    await page.waitForTimeout(2500)
+    const state = await page.locator('.ag-history-panel').innerText()
+    check(
+      'the model as it stood at that commit is readable',
+      /\d+ elements/.test(state),
+      (state.split('\n').find((line) => /elements/.test(line)) ?? '').slice(0, 60),
+    )
+    // The one thing a state view must not imply. There is no historical arrangement to restore,
+    // and a reader who thinks otherwise will trust a diagram that was never drawn that way.
+    check(
+      'and says the arrangement is today’s, not the day’s',
+      /not versioned/.test(state),
+    )
+    // A repository of any size lists hundreds of elements, and a wall of them answers nothing.
+    const stateElements = await page.locator('.ag-history-panel .ag-diff-change').count()
+    // Searched for the element this run renamed: it is certainly in the state at this commit, and
+    // certainly the only thing called that.
+    await page.locator('.ag-history-panel .ag-field input').fill(nameNow)
+    await page.waitForTimeout(600)
+    const narrowedElements = await page.locator('.ag-history-panel .ag-diff-change').count()
+    check(
+      'the state at a commit can be searched rather than scrolled',
+      narrowedElements > 0 && narrowedElements < stateElements,
+      `${stateElements} → ${narrowedElements}`,
+    )
+    await page.screenshot({ path: `${outDir}/56-history-state.png` })
+    await page.locator('.ag-history-panel .ag-field input').fill('')
+    await page.waitForTimeout(400)
+
+    await page.locator('.ag-history-panel .ag-tab', { hasText: 'Changes' }).click()
+    await page.waitForTimeout(500)
+    if (entries > 3) {
+      await page.locator('.ag-history-entry').nth(3).locator('.ag-tree-tiny').click()
+      await page.waitForTimeout(2500)
+      const compared = await page.locator('.ag-history-panel').innerText()
+      check(
+        'two commits that are not neighbours compare directly',
+        /Since #/.test(compared),
+        (compared.split('\n').find((line) => line.startsWith('Since')) ?? 'no base').slice(0, 60),
+      )
+    }
+  }
+
+  /*
+   * The claim the whole three-layer split rests on (ADR-0003): dragging a box is not a change to
+   * the architecture. Reloaded rather than merely re-read, because the log is cached for thirty
+   * seconds and a stale list would pass this without proving anything.
+   */
+  // The newest entry, not the number of them: the list is capped, so a count would stay the same
+  // whether or not a commit had been made and this check would pass by saying nothing.
+  const topBefore = await page.locator('.ag-history-entry').first().innerText()
+  const logBox = await page.locator('.ag-paper .ag-node').first().locator('.ag-body').boundingBox()
+  if (logBox) {
+    await page.mouse.move(logBox.x + logBox.width / 2, logBox.y + logBox.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(logBox.x + logBox.width / 2 + 40, logBox.y + logBox.height / 2 + 220, { steps: 12 })
+    await page.mouse.up()
+    await page.waitForTimeout(600)
+    // If it landed inside something, the editor asks what the nesting means. Not this test's
+    // question — decline, and the move stays a move.
+    if ((await page.locator('.ag-picker').count()) > 0) {
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(300)
+    }
+    await page.keyboard.press('Control+s')
+    await page.waitForTimeout(2500)
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await openRepository(page)
+    await page.locator('.ag-sidebar .ag-tab', { hasText: 'History' }).click()
+    await page.waitForTimeout(2500)
+    const topAfter = await page.locator('.ag-history-entry').first().innerText()
+    const seqOf = (entry) => (entry.match(/#(\d+)/) ?? [, '?'])[1]
+    check(
+      'moving a box and saving makes no commit',
+      seqOf(topAfter) === seqOf(topBefore) && seqOf(topBefore) !== '?',
+      `#${seqOf(topBefore)} → #${seqOf(topAfter)}`,
+    )
+  }
 
   report()
 }

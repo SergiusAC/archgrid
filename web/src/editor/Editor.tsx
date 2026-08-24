@@ -24,6 +24,7 @@ import { freeName, newKey } from './keys.ts'
 import LinkMenu, { type LinkTarget } from './LinkMenu.tsx'
 import Explorer from './Explorer.tsx'
 import FolderTree, { type TreeItem } from './FolderTree.tsx'
+import { HistoryList, HistoryPanel } from './History.tsx'
 import MagicMenu from './MagicMenu.tsx'
 import Palette from './Palette.tsx'
 import Properties from './Properties.tsx'
@@ -91,7 +92,16 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   const projected = useRef<{ view: string; layout: ReturnType<typeof c4Layout> } | null>(null)
   const exportToken = useRef(0)
   const [hiddenOpen, setHiddenOpen] = useState(false)
-  const [sidebar, setSidebar] = useState<'views' | 'palette' | 'repository'>('views')
+  const [sidebar, setSidebar] = useState<'views' | 'palette' | 'repository' | 'history'>('views')
+  /**
+   * What the change log is being asked about.
+   *
+   * `commit` is the entry the panel is open on, `base` the one a reader picked to compare from —
+   * null meaning the entry's own parent, which is the question a log entry is usually asked.
+   */
+  const [logCommit, setLogCommit] = useState<string | null>(null)
+  const [logBase, setLogBase] = useState<string | null>(null)
+  const [logMode, setLogMode] = useState<'changes' | 'state'>('changes')
   // The element whose name is being typed in place, straight after creation.
   const [editingKey, setEditingKey] = useState<string | null>(null)
   // Where a line was dropped on empty canvas, and what it came from.
@@ -149,6 +159,28 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
   const elementFolders = useQuery({
     queryKey: ['folders', workspace, 'elements'],
     queryFn: () => api.folders(workspace, 'elements'),
+  })
+
+  /**
+   * The change log, fetched only while it is being read.
+   *
+   * A repository of any size has a long one and nobody looks at it on most visits; loading it
+   * with the graph would be paid for on every open for the sake of a tab.
+   */
+  const commits = useQuery({
+    queryKey: ['commits', workspace],
+    enabled: sidebar === 'history',
+    queryFn: () => api.commits(workspace),
+  })
+  const commitDiff = useQuery({
+    queryKey: ['commit-diff', workspace, logCommit, logBase],
+    enabled: logCommit != null,
+    queryFn: () => api.commitDiff(workspace, logCommit!, logBase),
+  })
+  const commitSnapshot = useQuery({
+    queryKey: ['commit-snapshot', workspace, logCommit],
+    enabled: logCommit != null && logMode === 'state',
+    queryFn: () => api.snapshot(workspace, logCommit!),
   })
   useEffect(() => {
     fittedFor.current = null
@@ -396,6 +428,8 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       queryClient.invalidateQueries({ queryKey: ['views', workspace] }),
       queryClient.invalidateQueries({ queryKey: ['view', workspace] }),
       queryClient.invalidateQueries({ queryKey: ['usage', workspace] }),
+      // A command is a commit, so the log the reader is looking at is now one entry short.
+      queryClient.invalidateQueries({ queryKey: ['commits', workspace] }),
     ])
   }, [queryClient, workspace])
 
@@ -1665,6 +1699,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
           queryClient.invalidateQueries({ queryKey: ['views', workspace] }),
           queryClient.invalidateQueries({ queryKey: ['view', workspace] }),
           queryClient.invalidateQueries({ queryKey: ['folders', workspace] }),
+          queryClient.invalidateQueries({ queryKey: ['commits', workspace] }),
         ])
       } catch (error) {
         setMessage({
@@ -1973,7 +2008,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
       {!leftCollapsed && (
       <div className="ag-sidebar">
         <div className="ag-tabs" role="tablist">
-          {(['views', 'palette', 'repository'] as const).map((tab) => (
+          {(['views', 'palette', 'repository', 'history'] as const).map((tab) => (
             <button
               key={tab}
               type="button"
@@ -1985,6 +2020,7 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
               {tab === 'views' && `Views (${views.data?.length ?? 0})`}
               {tab === 'palette' && 'Palette'}
               {tab === 'repository' && `Repository (${allElements.length})`}
+              {tab === 'history' && 'History'}
             </button>
           ))}
         </div>
@@ -2055,6 +2091,24 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
             onSelect={(key) => setSelected([key])}
             onAddToView={addToView}
             {...folderActions('elements')}
+          />
+        )}
+
+        {sidebar === 'history' && (
+          <HistoryList
+            commits={commits.data ?? []}
+            loading={commits.isPending}
+            selected={logCommit}
+            base={logBase}
+            headCommitId={headCommitId}
+            onSelect={(commit) => setLogCommit(commit)}
+            onCompare={(commit) => {
+              setLogBase(commit)
+              // A base with nothing to compare it to is a dead end; open the newest entry.
+              if (commit && !logCommit) {
+                setLogCommit(commits.data?.[0]?.id ?? null)
+              }
+            }}
           />
         )}
       </div>
@@ -2260,6 +2314,26 @@ export default function Editor({ api, workspace, metamodel, profiles }: EditorPr
               ×
             </button>
           </div>
+        )}
+
+        {/* What a commit changed, and the model as it stood — over the canvas, where there is
+            room for a before and an after side by side. */}
+        {logCommit && (
+          <HistoryPanel
+            diff={commitDiff.data}
+            snapshot={commitSnapshot.data}
+            mode={logMode}
+            onMode={setLogMode}
+            loading={commitDiff.isPending || (logMode === 'state' && commitSnapshot.isPending)}
+            error={
+              commitDiff.error instanceof Error
+                ? commitDiff.error.message
+                : commitSnapshot.error instanceof Error
+                  ? commitSnapshot.error.message
+                  : null
+            }
+            onClose={() => setLogCommit(null)}
+          />
         )}
 
         {/* The import's report, whole: what was dropped is part of the answer, not a log line. */}

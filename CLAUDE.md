@@ -13,9 +13,11 @@ principle, from which most design decisions follow:
 The project is at **phase 6a (import) in progress** on a nine-phase plan. Phases 0–4 are closed:
 foundation, the ArchiMate metamodel, the command pipeline, views with folders, C4 projections,
 view filters and an editor of roughly Archi's capability exist, and an ArchiMate exchange file
-now imports whole — model, diagrams and filing. **Phase 5 was skipped for now** and its contents
-do not exist: no history UI, no DSL, no generated documentation, no full-text search. Nor does
-anything past 6a — export, the other importers, reconciliation, AI, enterprise readiness. Before
+now imports whole — model, diagrams and filing. **Phase 5 went out of order and only its first
+item is done**: the change log — commits, the diff of any two, the model as it stood at one — is in,
+the rest of phase 5 is not, so there is no DSL, no generated documentation and no full-text search.
+Nor does anything past 6a — export, the other importers, reconciliation, AI, enterprise readiness.
+Before
 proposing work, read `docs/03-roadmap.md`
 to see which phase the request belongs to — much of what looks "missing" is deliberately
 deferred. `docs/04-domain-model.md` explains the entities and, in particular, the four levels
@@ -206,6 +208,14 @@ The sequence is allocated under a row lock on `model`, which also serialises con
 commits — the optimistic check on `baseCommitId` only means something if two writers cannot
 interleave between checking and writing. This works because history is linear; branching
 would need the ancestry walk the original sketch implied.
+
+Reading an old state is `ModelGraphRepository.loadAt(modelId, seq)` — the same queries as HEAD with
+the range predicate instead of `to_seq is null`. Both spellings are kept deliberately: HEAD has a
+partial index behind it and runs on every command, so it must not pay for history. **A state at a
+commit is the model, not the diagram** — layout is unversioned by design (ADR-0003), so there is no
+historical arrangement to restore and any UI showing one owes the user that sentence. The diff
+itself is `GraphDiff` in the domain, matching objects by identity and never by name: matching by
+name turns a rename into a deletion plus a creation and loses the only fact in the commit.
 
 **One identity per object: `Id(UUID)`, and nothing else** (ADR-0016, docs/09). Elements,
 relationships and views used to carry a slug beside the UUID; nobody read it, the editor

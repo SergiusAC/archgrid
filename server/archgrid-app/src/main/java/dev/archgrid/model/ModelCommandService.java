@@ -164,9 +164,4 @@ public class ModelCommandService {
     public ProfileCatalog profiles(UUID modelId) {
         return graphs.loadProfiles(modelId, metamodel);
     }
-
-    @Transactional(readOnly = true)
-    public List<ModelGraphRepository.CommitRow> history(UUID modelId, int limit) {
-        return graphs.history(modelId, limit);
-    }
 }

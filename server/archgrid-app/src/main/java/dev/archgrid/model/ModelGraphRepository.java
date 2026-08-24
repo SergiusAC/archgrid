@@ -71,11 +71,49 @@ class ModelGraphRepository {
     }
 
     ModelGraph loadCurrent(UUID modelId) {
-        Map<Id, Map<String, String>> elementProperties = loadProperties(modelId, "element");
-        Map<Id, Map<String, String>> relationshipProperties = loadProperties(modelId, "relationship");
+        return load(modelId, null);
+    }
 
-        List<Element> elements = jdbc.sql(
-                        """
+    /**
+     * The graph as it stood at a commit — the state phase 5 lets an architect look back at.
+     *
+     * <p>The semantic model only. Layout is not versioned (ADR-0003), so there is no historical
+     * arrangement to read and there never will be: dragging a box makes no commit. A caller
+     * drawing this on a canvas is drawing today's coordinates around yesterday's model, and has
+     * to say so.
+     *
+     * @param seq the commit's sequence number, not its id — the ranges are over the sequence
+     */
+    ModelGraph loadAt(UUID modelId, long seq) {
+        return load(modelId, seq);
+    }
+
+    /**
+     * The predicate that decides which version rows are open.
+     *
+     * <p>Two spellings rather than one general form. HEAD has a partial index behind it ({@code
+     * where to_seq is null}) and is the query that runs on every command; a range scan there would
+     * pay for history on every write.
+     *
+     * @param seq null for HEAD
+     */
+    private static String openAt(String alias, Long seq) {
+        return seq == null
+                ? alias + ".to_seq is null"
+                : "(%1$s.from_seq <= :seq and (%1$s.to_seq is null or %1$s.to_seq > :seq))".formatted(alias);
+    }
+
+    private static JdbcClient.StatementSpec at(JdbcClient.StatementSpec statement, Long seq) {
+        return seq == null ? statement : statement.param("seq", seq);
+    }
+
+    private ModelGraph load(UUID modelId, Long seq) {
+        Map<Id, Map<String, String>> elementProperties = loadProperties(modelId, "element", seq);
+        Map<Id, Map<String, String>> relationshipProperties = loadProperties(modelId, "relationship", seq);
+
+        List<Element> elements = at(
+                        jdbc.sql(
+                                        """
                         select e.id as element_id,
                                ev.concept_type,
                                p.name as profile_name,
@@ -84,10 +122,12 @@ class ModelGraphRepository {
                         from element_version ev
                         join element e on e.id = ev.element_id
                         left join profile p on p.id = ev.profile_id
-                        where e.model_id = :modelId and ev.to_seq is null
+                        where e.model_id = :modelId and %s
                         order by lower(ev.name), e.id
-                        """)
-                .param("modelId", modelId)
+                        """
+                                                .formatted(openAt("ev", seq)))
+                                .param("modelId", modelId),
+                        seq)
                 .query((rs, rowNum) -> {
                     Id key = Id.of(rs.getObject("element_id", UUID.class));
                     return new Element(
@@ -100,8 +140,9 @@ class ModelGraphRepository {
                 })
                 .list();
 
-        List<Relationship> relationships = jdbc.sql(
-                        """
+        List<Relationship> relationships = at(
+                        jdbc.sql(
+                                        """
                         select r.id as relationship_id,
                                rv.concept_type,
                                rv.source_id,
@@ -109,10 +150,12 @@ class ModelGraphRepository {
                                rv.name
                         from relationship_version rv
                         join relationship r on r.id = rv.relationship_id
-                        where r.model_id = :modelId and rv.to_seq is null
+                        where r.model_id = :modelId and %s
                         order by r.id
-                        """)
-                .param("modelId", modelId)
+                        """
+                                                .formatted(openAt("rv", seq)))
+                                .param("modelId", modelId),
+                        seq)
                 .query((rs, rowNum) -> {
                     Id key = Id.of(rs.getObject("relationship_id", UUID.class));
                     return new Relationship(
@@ -125,20 +168,23 @@ class ModelGraphRepository {
                 })
                 .list();
 
-        return ModelGraph.of(elements, relationships, loadViews(modelId));
+        return ModelGraph.of(elements, relationships, loadViews(modelId, seq));
     }
 
-    private List<View> loadViews(UUID modelId) {
+    private List<View> loadViews(UUID modelId, Long seq) {
         Map<Id, Set<Id>> members = new LinkedHashMap<>();
-        jdbc.sql(
-                        """
+        at(
+                        jdbc.sql(
+                                        """
                         select ve.view_id, ve.element_id
                         from view_element ve
                         join view v on v.id = ve.view_id
-                        where v.model_id = :modelId and ve.to_seq is null
+                        where v.model_id = :modelId and %s
                         order by ve.element_id
-                        """)
-                .param("modelId", modelId)
+                        """
+                                                .formatted(openAt("ve", seq)))
+                                .param("modelId", modelId),
+                        seq)
                 .query((ResultSet rs, int rowNum) -> {
                     members.computeIfAbsent(Id.of(rs.getObject("view_id", UUID.class)), key -> new LinkedHashSet<>())
                             .add(Id.of(rs.getObject("element_id", UUID.class)));
@@ -146,15 +192,18 @@ class ModelGraphRepository {
                 })
                 .list();
 
-        return jdbc.sql(
-                        """
+        return at(
+                        jdbc.sql(
+                                        """
                         select v.id as view_id, vv.name, vv.viewpoint, vv.filters::text as filters
                         from view_version vv
                         join view v on v.id = vv.view_id
-                        where v.model_id = :modelId and vv.to_seq is null
+                        where v.model_id = :modelId and %s
                         order by lower(vv.name), v.id
-                        """)
-                .param("modelId", modelId)
+                        """
+                                                .formatted(openAt("vv", seq)))
+                                .param("modelId", modelId),
+                        seq)
                 .query((ResultSet rs, int rowNum) -> {
                     Id key = Id.of(rs.getObject("view_id", UUID.class));
                     return new View(
@@ -168,18 +217,18 @@ class ModelGraphRepository {
     }
 
     /** Properties are expanded by PostgreSQL rather than parsed here — {@code jsonb_each_text} is exact and cheap. */
-    private Map<Id, Map<String, String>> loadProperties(UUID modelId, String entity) {
+    private Map<Id, Map<String, String>> loadProperties(UUID modelId, String entity, Long seq) {
         String sql =
                 """
                 select owner.id as owner_id, kv.key as property_key, kv.value as property_value
                 from %1$s_version v
                 join %1$s owner on owner.id = v.%1$s_id,
                 lateral jsonb_each_text(v.properties) kv
-                where owner.model_id = :modelId and v.to_seq is null
+                where owner.model_id = :modelId and %2$s
                 """
-                        .formatted(entity);
+                        .formatted(entity, openAt("v", seq));
         Map<Id, Map<String, String>> byOwner = new LinkedHashMap<>();
-        jdbc.sql(sql).param("modelId", modelId).query((ResultSet rs, int rowNum) -> {
+        at(jdbc.sql(sql).param("modelId", modelId), seq).query((ResultSet rs, int rowNum) -> {
                     byOwner.computeIfAbsent(Id.of(rs.getObject("owner_id", UUID.class)), key -> new LinkedHashMap<>())
                             .put(rs.getString("property_key"), rs.getString("property_value"));
                     return null;
@@ -605,27 +654,41 @@ class ModelGraphRepository {
 
     // ------------------------------------------------------------------ history
 
-    record CommitRow(UUID id, long seq, String author, String message, java.time.Instant createdAt) {}
+    /**
+     * One commit.
+     *
+     * @param parentId null for the first commit of a repository, whose parent is the empty graph
+     */
+    record CommitRow(UUID id, long seq, UUID parentId, String author, String message, java.time.Instant createdAt) {}
+
+    private static final String COMMIT_COLUMNS = "id, seq, parent_id, author, message, created_at";
+
+    private static CommitRow readCommit(ResultSet rs) throws java.sql.SQLException {
+        return new CommitRow(
+                rs.getObject("id", UUID.class),
+                rs.getLong("seq"),
+                rs.getObject("parent_id", UUID.class),
+                rs.getString("author"),
+                rs.getString("message"),
+                rs.getTimestamp("created_at").toInstant());
+    }
 
     List<CommitRow> history(UUID modelId, int limit) {
-        return jdbc.sql("select id, seq, author, message, created_at from model_commit "
+        return jdbc.sql("select " + COMMIT_COLUMNS + " from model_commit "
                         + "where model_id = :modelId order by seq desc limit :limit")
                 .param("modelId", modelId)
                 .param("limit", limit)
-                .query((ResultSet rs, int rowNum) -> new CommitRow(
-                        rs.getObject("id", UUID.class),
-                        rs.getLong("seq"),
-                        rs.getString("author"),
-                        rs.getString("message"),
-                        rs.getTimestamp("created_at").toInstant()))
+                .query((ResultSet rs, int rowNum) -> readCommit(rs))
                 .list();
     }
 
-    Optional<UUID> resolveCommit(UUID modelId, UUID commitId) {
-        return jdbc.sql("select id from model_commit where model_id = :modelId and id = :commitId")
+    /** Scoped to the model on purpose: a commit id from another workspace must read as absent, not as found. */
+    Optional<CommitRow> commit(UUID modelId, UUID commitId) {
+        return jdbc.sql("select " + COMMIT_COLUMNS + " from model_commit "
+                        + "where model_id = :modelId and id = :commitId")
                 .param("modelId", modelId)
                 .param("commitId", commitId)
-                .query(UUID.class)
+                .query((ResultSet rs, int rowNum) -> readCommit(rs))
                 .optional();
     }
 }

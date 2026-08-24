@@ -475,14 +475,6 @@ class GraphController {
         folders.assign(graphId(workspaceKey), kind, Id.parse(key).value(), folder);
     }
 
-    @GetMapping("/commits")
-    List<ModelApiDtos.CommitResponseItem> commits(
-            @PathVariable String workspaceKey, @RequestParam(defaultValue = "50") int limit) {
-        return commands.history(graphId(workspaceKey), Math.clamp(limit, 1, 500)).stream()
-                .map(ModelApiDtos.CommitResponseItem::from)
-                .toList();
-    }
-
     private Workspace workspace(String workspaceKey) {
         return workspaces
                 .findByKey(dev.archgrid.domain.shared.Slug.of(workspaceKey))

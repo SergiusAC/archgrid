@@ -9,7 +9,6 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Size;
-import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -353,10 +352,4 @@ final class ModelApiDtos {
         }
     }
 
-    record CommitResponseItem(UUID id, long seq, String author, String message, Instant createdAt) {
-
-        static CommitResponseItem from(ModelGraphRepository.CommitRow row) {
-            return new CommitResponseItem(row.id(), row.seq(), row.author(), row.message(), row.createdAt());
-        }
-    }
 }
